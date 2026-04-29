@@ -1,0 +1,12 @@
+{
+  "blockers": [
+    "unresolved leakage"
+  ],
+  "checks": [
+    "split"
+  ],
+  "decision": "go",
+  "evidence": [
+    "review"
+  ]
+}

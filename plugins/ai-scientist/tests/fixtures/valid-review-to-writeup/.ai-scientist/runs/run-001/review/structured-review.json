@@ -1,0 +1,16 @@
+{
+  "verdict": "accept",
+  "leakage": {
+    "passed": true
+  },
+  "split_integrity": {
+    "passed": true
+  },
+  "baseline_comparison": {
+    "baseline": 0.7,
+    "best": 0.75
+  },
+  "strictness_mode_criteria": {
+    "scientist": "covered"
+  }
+}

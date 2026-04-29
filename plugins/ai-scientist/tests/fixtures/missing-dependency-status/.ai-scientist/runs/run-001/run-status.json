@@ -1,0 +1,28 @@
+{
+  "run_id": "run-001",
+  "active_phase": "launch",
+  "status": "validated",
+  "strictness_mode": "scientist",
+  "last_validation": {
+    "gate": "final_launch",
+    "exit_code": 0
+  },
+  "validation_history": [
+    {
+      "gate": "ideation_to_research",
+      "exit_code": 0
+    },
+    {
+      "gate": "research_to_review",
+      "exit_code": 0
+    },
+    {
+      "gate": "review_to_writeup",
+      "exit_code": 0
+    },
+    {
+      "gate": "final_launch",
+      "exit_code": 0
+    }
+  ]
+}

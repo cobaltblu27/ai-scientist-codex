@@ -1,0 +1,11 @@
+{
+  "strictness_mode": "scientist",
+  "target_repo": "/tmp/target",
+  "benchmark": "toy-benchmark",
+  "split": "fixed-train-val-test",
+  "api_budgets": {
+    "ideation": 2,
+    "research": 3,
+    "review": 1
+  }
+}

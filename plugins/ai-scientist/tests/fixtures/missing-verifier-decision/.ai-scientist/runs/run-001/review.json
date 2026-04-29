@@ -1,0 +1,19 @@
+{
+  "split_integrity": {
+    "status": "pass"
+  },
+  "leakage": {
+    "status": "pass"
+  },
+  "baseline_comparison": {
+    "status": "pass",
+    "delta": 0.2
+  },
+  "strictness_mode_criteria": {
+    "scientist": "pass"
+  },
+  "verdict": {
+    "decision": "accept",
+    "negative_writeup_required": false
+  }
+}

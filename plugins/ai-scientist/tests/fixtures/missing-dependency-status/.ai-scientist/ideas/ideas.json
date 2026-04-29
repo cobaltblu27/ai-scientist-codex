@@ -1,0 +1,15 @@
+{
+  "ideas": [
+    {
+      "title": "Toy idea",
+      "hypothesis": "A small change improves held-out score",
+      "method": "bounded experiment",
+      "expected_evidence": [
+        "baseline beat",
+        "leakage pass"
+      ],
+      "risk": "toy fixture",
+      "evaluation_plan": "compare fixed split"
+    }
+  ]
+}

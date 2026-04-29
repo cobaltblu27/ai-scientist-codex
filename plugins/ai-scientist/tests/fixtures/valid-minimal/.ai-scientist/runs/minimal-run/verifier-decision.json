@@ -1,0 +1,14 @@
+{
+  "blockers": [],
+  "checks": [
+    "split",
+    "leakage",
+    "baseline",
+    "mode"
+  ],
+  "decision": "go",
+  "evidence": [
+    "nodes/node-1",
+    "review/structured-review.json"
+  ]
+}

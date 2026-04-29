@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "planned_dependencies"
+  ],
+  "properties": {
+    "planned_dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "approved",
+              "rejected",
+              "not_needed"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

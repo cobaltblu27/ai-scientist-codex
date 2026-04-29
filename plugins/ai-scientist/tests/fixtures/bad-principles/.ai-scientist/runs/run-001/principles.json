@@ -1,0 +1,50 @@
+{
+  "principles": [
+    {
+      "id": "no_leakage",
+      "gates": [],
+      "evidence_artifacts": [
+        "nodes/node-1/leakage.json"
+      ]
+    },
+    {
+      "id": "fixed_split",
+      "gates": [
+        "research_to_review",
+        "review_to_writeup"
+      ],
+      "evidence_artifacts": [
+        "nodes/node-1/split-integrity.json"
+      ]
+    },
+    {
+      "id": "honest_metrics",
+      "gates": [
+        "research_to_review",
+        "launch"
+      ],
+      "evidence_artifacts": [
+        "baseline/metrics.json",
+        "nodes/node-1/metrics.json"
+      ]
+    },
+    {
+      "id": "dependency_approval",
+      "gates": [
+        "ideation_to_research"
+      ],
+      "evidence_artifacts": [
+        "dependency-plan.json"
+      ]
+    },
+    {
+      "id": "api_budget",
+      "gates": [
+        "ideation_to_research"
+      ],
+      "evidence_artifacts": [
+        "api-ledger.jsonl"
+      ]
+    }
+  ]
+}

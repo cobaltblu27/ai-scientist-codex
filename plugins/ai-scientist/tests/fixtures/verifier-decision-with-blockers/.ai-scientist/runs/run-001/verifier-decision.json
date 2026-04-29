@@ -1,0 +1,13 @@
+{
+  "decision": "go",
+  "checks": [
+    "static",
+    "fixtures"
+  ],
+  "evidence": [
+    "review/structured-review.json"
+  ],
+  "blockers": [
+    "missing evidence"
+  ]
+}

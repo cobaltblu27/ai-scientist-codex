@@ -1,0 +1,12 @@
+{
+  "planned_dependencies": [
+    {
+      "name": "numpy",
+      "status": "approved"
+    },
+    {
+      "name": "unused-lib",
+      "status": "not_needed"
+    }
+  ]
+}

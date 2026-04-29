@@ -1,0 +1,11 @@
+{
+  "run_id": "run-001",
+  "active_phase": "research",
+  "status": "stale",
+  "strictness_mode": "scientist",
+  "last_validation": {
+    "gate": "ideation_to_research",
+    "exit_code": 1
+  },
+  "validation_history": []
+}

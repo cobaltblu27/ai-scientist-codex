@@ -1,0 +1,9 @@
+{
+  "verdict": {
+    "baseline_comparison": "pass",
+    "decision": "accept",
+    "leakage": "pass",
+    "split_integrity": "pass",
+    "strictness_mode_criteria": "scientist"
+  }
+}

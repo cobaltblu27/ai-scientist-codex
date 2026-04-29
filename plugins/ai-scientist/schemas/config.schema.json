@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "strictness_mode",
+    "target_repo",
+    "api_budgets"
+  ],
+  "properties": {
+    "strictness_mode": {
+      "enum": [
+        "scientist",
+        "researcher",
+        "balanced",
+        "builder",
+        "engineer"
+      ]
+    },
+    "target_repo": {
+      "type": "string"
+    },
+    "benchmark": {
+      "type": "string"
+    },
+    "split_policy": {
+      "type": "string"
+    },
+    "api_budgets": {
+      "type": "object"
+    },
+    "s2_enabled": {
+      "type": "boolean"
+    }
+  }
+}

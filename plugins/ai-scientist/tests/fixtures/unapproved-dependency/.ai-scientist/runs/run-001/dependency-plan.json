@@ -1,0 +1,14 @@
+{
+  "planned_dependencies": [
+    {
+      "name": "numpy",
+      "reason": "available numerical baseline",
+      "status": "pending"
+    },
+    {
+      "name": "pandas",
+      "reason": "not needed for fixture",
+      "status": "not_needed"
+    }
+  ]
+}

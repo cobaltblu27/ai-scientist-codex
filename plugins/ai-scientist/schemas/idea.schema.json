@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "ideas"
+  ],
+  "properties": {
+    "ideas": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "hypothesis",
+          "expected_metric",
+          "risks"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "hypothesis": {
+            "type": "string"
+          },
+          "novelty_rationale": {
+            "type": "string"
+          },
+          "required_data": {
+            "type": "string"
+          },
+          "expected_metric": {
+            "type": "string"
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "minimum_evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

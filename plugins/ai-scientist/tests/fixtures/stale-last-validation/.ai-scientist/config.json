@@ -1,0 +1,9 @@
+{
+  "api_budgets": {
+    "ideation": 2,
+    "research": 3,
+    "review": 1
+  },
+  "strictness_mode": "scientist",
+  "target_repo": "/tmp/target"
+}

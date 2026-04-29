@@ -1,0 +1,22 @@
+{
+  "principles": [
+    {
+      "evidence_artifacts": [
+        "nodes/node-1/leakage-check.json"
+      ],
+      "gates": [
+        "research_to_review"
+      ],
+      "id": "no_leakage"
+    },
+    {
+      "evidence_artifacts": [
+        "nodes/node-1/split-integrity.json"
+      ],
+      "gates": [
+        "research_to_review"
+      ],
+      "id": "fixed_split"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "decision": "go",
+  "checks": [
+    "static"
+  ],
+  "evidence": [],
+  "blockers": [
+    "missing evidence"
+  ]
+}

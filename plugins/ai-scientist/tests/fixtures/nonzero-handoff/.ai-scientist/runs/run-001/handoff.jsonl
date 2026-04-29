@@ -1,0 +1,1 @@
+{"run_id": "run-001", "from_phase": "x", "to_phase": "research", "gate": "ideation_to_research", "owner": "executor", "reviewer": "review", "verifier": "verifier", "evidence_path": "x", "validator_exit_code": 1, "approved": true, "approved_at": "2026-04-29T00:00:00Z"}

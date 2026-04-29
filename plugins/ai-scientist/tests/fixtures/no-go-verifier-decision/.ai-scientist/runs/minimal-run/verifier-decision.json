@@ -1,0 +1,10 @@
+{
+  "blockers": [],
+  "checks": [
+    "split"
+  ],
+  "decision": "no_go",
+  "evidence": [
+    "review"
+  ]
+}

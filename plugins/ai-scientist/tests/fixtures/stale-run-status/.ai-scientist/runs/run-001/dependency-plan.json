@@ -1,0 +1,14 @@
+{
+  "planned_dependencies": [
+    {
+      "name": "numpy",
+      "purpose": "fixture math",
+      "status": "approved"
+    },
+    {
+      "name": "matplotlib",
+      "purpose": "not needed for fixture",
+      "status": "not_needed"
+    }
+  ]
+}

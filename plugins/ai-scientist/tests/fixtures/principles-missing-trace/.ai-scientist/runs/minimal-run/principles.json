@@ -1,0 +1,9 @@
+{
+  "principles": [
+    {
+      "evidence_artifacts": [],
+      "gates": [],
+      "id": "no_leakage"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "decision": "go",
+  "checks": [
+    {
+      "name": "leakage",
+      "passed": true
+    },
+    {
+      "name": "split",
+      "passed": true
+    },
+    {
+      "name": "baseline",
+      "passed": true
+    }
+  ],
+  "evidence": [
+    "runs/run-001/journal.json"
+  ],
+  "blockers": [
+    "missing replication"
+  ]
+}

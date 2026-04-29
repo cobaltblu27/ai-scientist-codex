@@ -1,0 +1,76 @@
+{
+  "principles": {
+    "fixed_benchmark_split": {
+      "gates": [
+        "ideation_to_research",
+        "research_to_review",
+        "review_to_writeup",
+        "final_launch"
+      ],
+      "evidence_artifacts": [
+        "config.json",
+        "review.json"
+      ]
+    },
+    "no_leakage": {
+      "gates": [
+        "ideation_to_research",
+        "research_to_review",
+        "review_to_writeup",
+        "final_launch"
+      ],
+      "evidence_artifacts": [
+        "config.json",
+        "review.json"
+      ]
+    },
+    "no_deceptive_metrics": {
+      "gates": [
+        "ideation_to_research",
+        "research_to_review",
+        "review_to_writeup",
+        "final_launch"
+      ],
+      "evidence_artifacts": [
+        "config.json",
+        "review.json"
+      ]
+    },
+    "evidence_trail": {
+      "gates": [
+        "ideation_to_research",
+        "research_to_review",
+        "review_to_writeup",
+        "final_launch"
+      ],
+      "evidence_artifacts": [
+        "config.json",
+        "review.json"
+      ]
+    },
+    "dependency_approval": {
+      "gates": [
+        "ideation_to_research",
+        "research_to_review",
+        "review_to_writeup",
+        "final_launch"
+      ],
+      "evidence_artifacts": [
+        "config.json",
+        "review.json"
+      ]
+    },
+    "api_budget_logging": {
+      "gates": [
+        "ideation_to_research",
+        "research_to_review",
+        "review_to_writeup",
+        "final_launch"
+      ],
+      "evidence_artifacts": [
+        "config.json",
+        "review.json"
+      ]
+    }
+  }
+}

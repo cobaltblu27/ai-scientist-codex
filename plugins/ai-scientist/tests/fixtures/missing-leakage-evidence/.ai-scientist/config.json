@@ -1,0 +1,10 @@
+{
+  "strictness_mode": "scientist",
+  "target_repo": ".",
+  "benchmark": "accuracy",
+  "split_policy": "fixed train/test split",
+  "api_budgets": {
+    "ideation": 2,
+    "research": 2
+  }
+}
