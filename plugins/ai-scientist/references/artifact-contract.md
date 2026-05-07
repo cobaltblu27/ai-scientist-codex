@@ -6,6 +6,9 @@ Target repositories keep all plugin state in `.ai-scientist/` so ordinary projec
 
 - `.ai-scientist/config.json` — target repository path, strictness mode, benchmark/split policy, API budgets, optional `S2_API_KEY` enablement flag, and cache paths.
 - `.ai-scientist/ideas/ideas.json` — array of structured candidate ideas from `ideation`.
+- `.ai-scientist/logs/<run-id>/ideation-run.json` — ideation orchestration audit log containing prompt, agent steps, reflection decisions, finalized/skipped counts, and run metadata.
+- `.ai-scientist/logs/<run-id>/agents/*.json` — per-agent proposal, reflection/refinement, and finalization prompt/output records. These are retained for auditability.
+- `.ai-scientist/logs/<run-id>/semantic-scholar-cache/*.json` — cached Python Semantic Scholar search results keyed by query hash.
 - `.ai-scientist/runs/<run-id>/dependency-plan.json` — planned packages and per-package status: `approved`, `rejected`, or `not_needed`.
 - `.ai-scientist/runs/<run-id>/api-ledger.jsonl` — one JSON object per API call or cache hit, including phase, provider, budget, and cache key where applicable.
 - `.ai-scientist/runs/<run-id>/journal.json` — chronological decisions, commands, observations, and rationale.
@@ -31,7 +34,16 @@ All phase transitions run `scripts/validate_run.py`. A non-zero validator exit b
 
 ### Ideation to research
 
-Requires ideas, config, dependency approval statuses, initialized API ledger, current run status validation, and an approved handoff.
+Requires ideas, config, dependency approval statuses, initialized API ledger, current run status validation, an approved handoff, and retained ideation orchestration logs under `.ai-scientist/logs/<run-id>/`.
+
+The Codex-native ideation orchestrator must:
+
+- read the starting point from a prompt string, not a Markdown workshop file;
+- fail before starting if `S2_API_KEY` is unset;
+- use Python for Semantic Scholar search and API ledger writes;
+- launch Codex agent tasks for proposal, reflection/refinement, and finalization instead of calling external LLM provider APIs directly;
+- skip and log ideas that do not finalize within the configured reflection budget;
+- keep intermediate JSON audit artifacts under `.ai-scientist/logs/<run-id>/`.
 
 ### Research to review
 

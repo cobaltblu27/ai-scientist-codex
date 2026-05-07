@@ -20,10 +20,16 @@
           "id": {
             "type": "string"
           },
+          "title": {
+            "type": "string"
+          },
           "hypothesis": {
             "type": "string"
           },
           "novelty_rationale": {
+            "type": "string"
+          },
+          "related_work": {
             "type": "string"
           },
           "required_data": {
@@ -31,6 +37,12 @@
           },
           "expected_metric": {
             "type": "string"
+          },
+          "experiments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "risks": {
             "type": "array",
@@ -43,6 +55,19 @@
             "items": {
               "type": "string"
             }
+          },
+          "semantic_scholar_queries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_run_id": {
+            "type": "string"
+          },
+          "reflection_count": {
+            "type": "integer",
+            "minimum": 1
           }
         }
       }

@@ -15,6 +15,7 @@ The plugin is intentionally evidence-first: research state is written to local `
 - [Repository layout](#repository-layout)
 - [Install or use locally](#install-or-use-locally)
 - [Quick start](#quick-start)
+- [Ideation orchestrator](#ideation-orchestrator)
 - [Typical workflow](#typical-workflow)
   - [Step 1: Generate ideas](#step-1-generate-ideas)
   - [Step 2: Plan and run research](#step-2-plan-and-run-research)
@@ -200,6 +201,48 @@ You can also confirm that negative fixtures fail closed. For example, this shoul
 python3 plugins/ai-scientist/scripts/validate_run.py \
   plugins/ai-scientist/tests/fixtures/missing-leakage-evidence \
   --gate research_to_review
+```
+
+## Ideation orchestrator
+
+The `ideation` skill is backed by a real Python orchestration loop:
+
+```text
+plugins/ai-scientist/scripts/ideation_orchestrator.py
+```
+
+The orchestrator adapts AI-Scientist-v2's brainstorm/search/reflect/finalize pattern into Codex plugin form:
+
+1. Python reads a research prompt from `--prompt` or stdin.
+2. Python fails before starting unless `S2_API_KEY` is set.
+3. Python launches Codex agent tasks for proposal generation, reflection/refinement, and finalization.
+4. Python calls Semantic Scholar directly and writes API/cache events to `.ai-scientist/runs/<run-id>/api-ledger.jsonl`.
+5. Each idea runs up to the configured reflection budget. Ideas that do not finalize are skipped and logged.
+6. Final ideas are written to `.ai-scientist/ideas/ideas.json` using the plugin idea schema.
+7. Intermediate JSON audit artifacts are retained under `.ai-scientist/logs/<run-id>/`.
+
+Default loop settings are `--num-ideas 10` and `--num-reflections 5`.
+
+Example production run:
+
+```bash
+S2_API_KEY="$S2_API_KEY" python3 plugins/ai-scientist/scripts/ideation_orchestrator.py \
+  --target-repo . \
+  --prompt "Generate ideas for improving the current benchmark without changing the split." \
+  --num-ideas 10 \
+  --num-reflections 5
+```
+
+For local smoke testing without launching Codex agents or calling the live Semantic Scholar API, use the fixture runner and fixture search results. This still requires `S2_API_KEY` to be set, matching production preflight behavior:
+
+```bash
+S2_API_KEY=dummy python3 plugins/ai-scientist/scripts/ideation_orchestrator.py \
+  --target-repo /tmp/ai-scientist-smoke \
+  --prompt "Fixture prompt for benchmark-preserving ideas." \
+  --num-ideas 1 \
+  --num-reflections 1 \
+  --agent-runner fixture \
+  --semantic-scholar-fixture plugins/ai-scientist/tests/fixtures/semantic-scholar/minimal-results.json
 ```
 
 ## Typical workflow

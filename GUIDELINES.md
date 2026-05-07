@@ -6,13 +6,15 @@ These guidelines define how to maintain and use this plugin safely. They apply t
 
 1. Keep the plugin Codex-native: use skills, local artifacts, schemas, and deterministic validation.
 2. Do not import, invoke, shell out to, wrap, vendor, or require an external reference implementation at runtime.
-3. Keep the public surface to exactly four primary skills unless a future version explicitly changes the product contract:
+3. Ideation orchestration may shell out to Codex CLI agent tasks; it must not call external LLM provider APIs directly.
+4. Python may call Semantic Scholar directly during ideation, but `S2_API_KEY` must be present before the loop starts and every search/cache event must be logged.
+5. Keep the public surface to exactly four primary skills unless a future version explicitly changes the product contract:
    - `ideation`
    - `research-loop`
    - `review`
    - `writeup`
-4. Store run state in target repositories under `.ai-scientist/`.
-5. Treat `plugins/ai-scientist/scripts/validate_run.py` as the fail-closed validation spine for phase gates.
+6. Store run state in target repositories under `.ai-scientist/`.
+7. Treat `plugins/ai-scientist/scripts/validate_run.py` as the fail-closed validation spine for phase gates.
 
 ## Scientific integrity rules
 
@@ -32,6 +34,8 @@ A valid run should include:
 
 - `.ai-scientist/config.json`
 - `.ai-scientist/ideas/ideas.json`
+- `.ai-scientist/logs/<run-id>/ideation-run.json`
+- `.ai-scientist/logs/<run-id>/agents/*.json`
 - `.ai-scientist/runs/<run-id>/dependency-plan.json`
 - `.ai-scientist/runs/<run-id>/api-ledger.jsonl`
 - `.ai-scientist/runs/<run-id>/journal.json`
