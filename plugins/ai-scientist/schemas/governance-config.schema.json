@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "strictness_mode", "run_root_policy"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "strictness_mode": {"enum": ["scientist", "researcher", "balanced", "builder", "engineer"]},
+    "metric_contract_defaults": {"type": "object"},
+    "dependency_governance": {"type": "object"},
+    "api_governance": {"type": "object"},
+    "run_root_policy": {"type": "string"}
+  }
+}

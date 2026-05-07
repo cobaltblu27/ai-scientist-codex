@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["selected_node", "metric_key", "metric_direction", "baseline_metric", "selected_metric", "reason"],
+  "properties": {
+    "selected_node": {"type": "string"},
+    "selected_node_id": {"type": "string"},
+    "metric_key": {"type": "string"},
+    "metric_direction": {"enum": ["maximize", "minimize"]},
+    "baseline_metric": {"type": "number"},
+    "selected_metric": {"type": "number"},
+    "comparison_operator": {"enum": [">", "<"]},
+    "comparator": {"enum": [">", "<"]},
+    "success_threshold": {"type": "number"},
+    "threshold_satisfied": {"type": "boolean"},
+    "threshold_result": {"type": ["boolean", "string"]},
+    "artifact_snapshot": {"type": ["string", "object"]},
+    "lineage": {"type": "array", "items": {"type": "string"}},
+    "reason": {"type": "string"}
+  }
+}

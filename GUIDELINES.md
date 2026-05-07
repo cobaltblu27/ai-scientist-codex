@@ -8,13 +8,14 @@ These guidelines define how to maintain and use this plugin safely. They apply t
 2. Do not import, invoke, shell out to, wrap, vendor, or require an external reference implementation at runtime.
 3. Ideation orchestration may shell out to Codex CLI agent tasks; it must not call external LLM provider APIs directly.
 4. Python may call Semantic Scholar directly during ideation, but `S2_API_KEY` must be present before the loop starts and every search/cache event must be logged.
-5. Keep the public surface to exactly four primary skills unless a future version explicitly changes the product contract:
+5. Ideation outputs must be scientifically substantive: require an actual mechanism/insight, concrete related work, an executable plan, baseline/ablation design, risks, and minimum evidence before research execution.
+6. Keep the public surface to exactly four primary skills unless a future version explicitly changes the product contract:
    - `ideation`
    - `research-loop`
    - `review`
    - `writeup`
-6. Store run state in target repositories under `.ai-scientist/`.
-7. Treat `plugins/ai-scientist/scripts/validate_run.py` as the fail-closed validation spine for phase gates.
+7. Store run state in target repositories under `.ai-scientist/`.
+8. Treat `plugins/ai-scientist/scripts/validate_run.py` as the fail-closed validation spine for phase gates.
 
 ## Scientific integrity rules
 

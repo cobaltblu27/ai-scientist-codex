@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["node_id", "action", "strictness_mode", "status"],
+  "properties": {
+    "node_id": {"type": "string"},
+    "parent_node_id": {"type": ["string", "null"]},
+    "action": {"enum": ["draft", "debug", "improve", "tuning", "ablation"]},
+    "strictness_mode": {"enum": ["scientist", "researcher", "balanced", "builder", "engineer"]},
+    "status": {"type": "string"},
+    "metrics_path": {"type": "string"},
+    "prompt_path": {"type": "string"},
+    "runtime_mutation_check_path": {"type": "string"}
+  }
+}

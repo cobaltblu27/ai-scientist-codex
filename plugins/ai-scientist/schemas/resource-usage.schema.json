@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "node_id": {"type": "string"},
+    "started_at": {"type": "string"},
+    "ended_at": {"type": "string"},
+    "duration_sec": {"type": "number"},
+    "elapsed_sec": {"type": "number"},
+    "cpu_cores": {"type": ["number", "string"]},
+    "gpus": {"type": ["integer", "string"]},
+    "memory_mb": {"type": ["number", "string"]},
+    "exit_code": {"type": "integer"},
+    "return_code": {"type": "integer"},
+    "resource_limits": {
+      "type": "object",
+      "properties": {
+        "requested": {"type": "object"},
+        "enforced": {"type": "object"}
+      }
+    }
+  }
+}

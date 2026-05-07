@@ -1,12 +1,31 @@
 {
-  "run_id": "run-001",
-  "phase": "writeup",
-  "status": "validated",
-  "strictness_mode": "scientist",
-  "selected_node": "node-001",
+  "artifact_snapshot": "a7aec890499096b7cc37788d5c1b1d69dc8b4d023b53791a6b561a0192e9c8fa",
   "last_validation": {
+    "artifact_snapshot": "a7aec890499096b7cc37788d5c1b1d69dc8b4d023b53791a6b561a0192e9c8fa",
+    "exit_code": 0,
     "gate": "research_to_review",
-    "exit_code": 0
+    "metric_direction": "maximize",
+    "metric_key": "score",
+    "selected_node": "node-001",
+    "validated_at": "2026-01-01T00:00:00Z",
+    "validation_mode": "evidence"
   },
-  "negative_or_blocked_writeup": false
+  "last_validations": {
+    "research_to_review": {
+      "artifact_snapshot": "a7aec890499096b7cc37788d5c1b1d69dc8b4d023b53791a6b561a0192e9c8fa",
+      "exit_code": 0,
+      "gate": "research_to_review",
+      "metric_direction": "maximize",
+      "metric_key": "score",
+      "selected_node": "node-001",
+      "validated_at": "2026-01-01T00:00:00Z",
+      "validation_mode": "evidence"
+    }
+  },
+  "negative_or_blocked_writeup": false,
+  "phase": "research",
+  "run_id": "run-001",
+  "selected_node": "node-001",
+  "status": "research_to_review_ready",
+  "strictness_mode": "scientist"
 }

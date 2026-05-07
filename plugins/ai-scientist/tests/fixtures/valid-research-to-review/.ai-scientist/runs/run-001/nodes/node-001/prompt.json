@@ -1,0 +1,16 @@
+{
+  "action": "improve",
+  "metadata": {
+    "fixture": true
+  },
+  "metric_contract": {
+    "metric_direction": "maximize",
+    "metric_key": "score",
+    "success_threshold": 0.71
+  },
+  "node_id": "node-001",
+  "schema_version": "agent-manifest-v1",
+  "strictness_mode": "scientist",
+  "template_id": "improve",
+  "template_version": "fixture-v1"
+}

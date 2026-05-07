@@ -1,7 +1,10 @@
 {
-  "scientist": [
-    "multi-seed placeholder",
-    "ablation placeholder",
-    "causal evidence placeholder"
-  ]
+  "scientist": {
+    "ablation_summary": true,
+    "experiment_rationale": true,
+    "limitations": true,
+    "reproducibility_note": true,
+    "split_leakage_evidence": true,
+    "tuning_summary": true
+  }
 }

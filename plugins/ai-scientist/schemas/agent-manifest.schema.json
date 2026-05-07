@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["files"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "summary": {"type": "string"},
+    "files": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "command": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "commands": {"type": "array", "items": {"type": "object"}},
+    "expected_metrics": {"type": "object"},
+    "expected_artifacts": {"type": "array", "items": {"type": "string"}},
+    "mode_deliverables": {"type": "object"},
+    "risks": {"type": "array", "items": {"type": "string"}}
+  },
+  "anyOf": [{"required": ["command"]}, {"required": ["commands"]}]
+}

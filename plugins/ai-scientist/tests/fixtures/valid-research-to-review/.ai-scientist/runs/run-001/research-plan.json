@@ -1,0 +1,9 @@
+{
+  "baseline_command": "python train.py --baseline",
+  "metric_direction": "maximize",
+  "metric_key": "score",
+  "run_id": "run-001",
+  "split_policy": "fixed train/test split",
+  "strictness_mode": "scientist",
+  "success_threshold": 0.71
+}

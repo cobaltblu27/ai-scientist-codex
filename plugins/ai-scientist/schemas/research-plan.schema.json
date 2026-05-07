@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["run_id", "strictness_mode", "metric_key", "metric_direction"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "idea_id": {"type": "string"},
+    "strictness_mode": {"enum": ["scientist", "researcher", "balanced", "builder", "engineer"]},
+    "metric_key": {"type": "string", "minLength": 1},
+    "metric_direction": {"enum": ["maximize", "minimize"]},
+    "success_threshold": {"type": "number"},
+    "split_policy": {"type": "string"},
+    "baseline_command": {"type": "string"},
+    "required_deliverables": {"type": "array", "items": {"type": "string"}}
+  }
+}

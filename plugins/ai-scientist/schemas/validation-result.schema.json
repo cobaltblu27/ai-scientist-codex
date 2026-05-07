@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["gate", "validation_mode", "exit_code", "validated_at"],
+  "properties": {
+    "gate": {"type": "string"},
+    "validation_mode": {"enum": ["evidence", "final"]},
+    "exit_code": {"type": "integer"},
+    "validator_exit_code": {"type": "integer"},
+    "validated_at": {"type": "string"},
+    "selected_node": {"type": "string"},
+    "metric_key": {"type": "string"},
+    "metric_direction": {"enum": ["maximize", "minimize"]},
+    "artifact_snapshot": {"type": ["string", "object"]},
+    "artifact_hash": {"type": "string"}
+  }
+}

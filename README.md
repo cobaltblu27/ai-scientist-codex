@@ -215,10 +215,10 @@ The orchestrator adapts AI-Scientist-v2's brainstorm/search/reflect/finalize pat
 
 1. Python reads a research prompt from `--prompt` or stdin.
 2. Python fails before starting unless `S2_API_KEY` is set.
-3. Python launches Codex agent tasks for proposal generation, reflection/refinement, and finalization.
+3. Python launches Codex agent tasks for proposal generation, reflection/refinement, and finalization. Production defaults use `gpt-5.5` with `xhigh` reasoning for thoughtful ideation.
 4. Python calls Semantic Scholar directly and writes API/cache events to `.ai-scientist/runs/<run-id>/api-ledger.jsonl`.
 5. Each idea runs up to the configured reflection budget. Ideas that do not finalize are skipped and logged.
-6. Final ideas are written to `.ai-scientist/ideas/ideas.json` using the plugin idea schema.
+6. Final ideas are written to `.ai-scientist/ideas/ideas.json` using the plugin idea schema. Each finalized idea must include scientific insight, concrete related work, an abstract, an executable plan, experiments/ablations, risks, and minimum evidence.
 7. Intermediate JSON audit artifacts are retained under `.ai-scientist/logs/<run-id>/`.
 
 Default loop settings are `--num-ideas 10` and `--num-reflections 5`.
