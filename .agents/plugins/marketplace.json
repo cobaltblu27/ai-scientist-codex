@@ -1,0 +1,20 @@
+{
+  "name": "ai-scientist-codex",
+  "interface": {
+    "displayName": "AI Scientist Codex"
+  },
+  "plugins": [
+    {
+      "name": "ai-scientist",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ai-scientist"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
