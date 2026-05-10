@@ -416,23 +416,25 @@ class CodexAgentRunner(AgentRunner):
         write_json(schema_path, schema)
         cmd = [
             self.codex_cmd,
+            "--ask-for-approval",
+            "never",
+        ]
+        if self.model:
+            cmd += ["--model", self.model]
+        if self.reasoning_effort:
+            cmd += ["--config", f'model_reasoning_effort="{self.reasoning_effort}"']
+        cmd += [
             "exec",
             "--cd",
             str(self.target_repo),
             "--sandbox",
             "read-only",
-            "--ask-for-approval",
-            "never",
             "--output-schema",
             str(schema_path),
             "--output-last-message",
             str(output_path),
             "-",
         ]
-        if self.model:
-            cmd[2:2] = ["--model", self.model]
-        if self.reasoning_effort:
-            cmd[2:2] = ["--config", f'model_reasoning_effort="{self.reasoning_effort}"']
         started = utc_now()
         try:
             proc = subprocess.run(

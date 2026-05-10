@@ -47,7 +47,7 @@ class FixtureRunner(AgentRunner):
 
 class CodexRunner(AgentRunner):
     def run(self, prompt: dict[str, Any], config: ResearchConfig) -> dict[str, Any]:
-        cmd = [config.codex_cmd, "exec", "--sandbox", "read-only", "--ask-for-approval", "never"]
+        cmd = [config.codex_cmd, "--ask-for-approval", "never", "exec", "--sandbox", "read-only"]
         schema = Path(__file__).resolve().parents[2] / "schemas" / "agent-manifest.schema.json"
         if schema.exists():
             cmd += ["--output-schema", str(schema)]
