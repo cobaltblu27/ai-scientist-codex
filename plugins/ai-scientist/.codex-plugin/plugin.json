@@ -18,6 +18,7 @@
     "verification"
   ],
   "skills": "./skills/",
+  "hooks": "./hooks.json",
   "interface": {
     "displayName": "AI Scientist",
     "shortDescription": "Run ideation, research loops, reviews, and writeups with strict scientific gates.",
@@ -33,7 +34,7 @@
     "privacyPolicyURL": "https://openai.com/policies/row-privacy-policy/",
     "termsOfServiceURL": "https://openai.com/policies/row-terms-of-use/",
     "defaultPrompt": [
-      "Use ideation to generate experiment ideas for this repo.",
+      "/ideate Generate experiment ideas for this repo.",
       "Run research-loop on the selected idea with strict scientist mode.",
       "Review this run and produce a writeup only if the verifier gate passes."
     ],

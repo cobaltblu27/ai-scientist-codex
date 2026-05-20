@@ -6,8 +6,8 @@ These guidelines define how to maintain and use this plugin safely. They apply t
 
 1. Keep the plugin Codex-native: use skills, local artifacts, schemas, and deterministic validation.
 2. Do not import, invoke, shell out to, wrap, vendor, or require an external reference implementation at runtime.
-3. Ideation orchestration may shell out to Codex CLI agent tasks; it must not call external LLM provider APIs directly.
-4. Python may call Semantic Scholar directly during ideation, but `S2_API_KEY` must be present before the loop starts and every search/cache event must be logged.
+3. Ideation runs in the live Codex session through hooks and durable state. It must not launch nested Codex sessions for proposal/reflection/finalization.
+4. Python may call Semantic Scholar directly during ideation. `S2_API_KEY` is optional, but every search/cache event must be logged.
 5. Ideation outputs must be scientifically substantive: require an actual mechanism/insight, concrete related work, an executable plan, baseline/ablation design, risks, and minimum evidence before research execution.
 6. Keep the public surface to exactly four primary skills unless a future version explicitly changes the product contract:
    - `ideation`
@@ -35,8 +35,13 @@ A valid run should include:
 
 - `.ai-scientist/config.json`
 - `.ai-scientist/ideas/ideas.json`
+- `.ai-scientist/state/active-ideation.json`
+- `.ai-scientist/runs/<run-id>/ideation-state.json`
+- `.ai-scientist/runs/<run-id>/actions/*.json`
+- `.ai-scientist/runs/<run-id>/drafts/*.json`
+- `.ai-scientist/runs/<run-id>/reflections/*.md`
 - `.ai-scientist/logs/<run-id>/ideation-run.json`
-- `.ai-scientist/logs/<run-id>/agents/*.json`
+- `.ai-scientist/runs/<run-id>/semantic-scholar-cache/*.json`
 - `.ai-scientist/runs/<run-id>/dependency-plan.json`
 - `.ai-scientist/runs/<run-id>/api-ledger.jsonl`
 - `.ai-scientist/runs/<run-id>/journal.json`
@@ -69,7 +74,8 @@ Before claiming a change is complete, run at minimum:
 
 ```bash
 python3 -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python3 plugins/ai-scientist/scripts/validate_run.py plugins/ai-scientist/tests/fixtures/valid-minimal --gate all
+python3 -m json.tool plugins/ai-scientist/hooks.json >/dev/null
+python3 -m unittest discover -s plugins/ai-scientist/tests -p 'test_*.py'
 ```
 
 For gate changes, also run the relevant positive and negative fixtures. Negative fixtures must fail for the intended reason class.

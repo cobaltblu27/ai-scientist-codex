@@ -5,15 +5,17 @@ Target repositories keep all plugin state in `.ai-scientist/` so ordinary projec
 ## Required root artifacts
 
 - `.ai-scientist/config.json` — target repository path, strictness mode, benchmark/split policy, API budgets, optional root defaults, and optional metric contract defaults. Fresh research targets create this non-destructively; existing files are preserved unless explicitly updated by the orchestrator.
-- `.ai-scientist/ideas/ideas.json` — array of structured candidate ideas. Ideation-produced ideas are proposal-grade records with `hypothesis`, `scientific_insight`, required `related_work`, `abstract`, `novelty_rationale`, executable `execution_plan`, `experiments`, `risks`, and `minimum_evidence`. Fresh research targets bootstrap this from `--idea-json`; existing registries must not be deleted.
+- `.ai-scientist/ideas/ideas.json` — array of structured candidate ideas. Ideation-produced ideas are proposal-grade records with `hypothesis`, `scientific_insight`, required `related_work`, `abstract`, `novelty_rationale`, executable `execution_plan` steps with dataset/model/evaluation fields, `experiments`, `risks`, and `minimum_evidence`. Fresh research targets bootstrap this from `--idea-json`; existing registries must not be deleted.
+- `.ai-scientist/state/active-ideation.json` — pointer to the active hook-driven ideation run when one is active or blocked.
 - Optional root mirrors/summaries: `.ai-scientist/dependency-plan.json`, `.ai-scientist/dependency-status.json`, `.ai-scientist/api-ledger.jsonl`, and `.ai-scientist/principles.json`. These are supplementary only; run-owned governance artifacts are authoritative for validation.
-- `.ai-scientist/logs/<run-id>/ideation-run.json` and `.ai-scientist/logs/<run-id>/agents/*.json` — ideation audit logs when the ideation flow is used.
-- `.ai-scientist/logs/<run-id>/semantic-scholar-cache/*.json` — cached Semantic Scholar search results keyed by query hash when that API is enabled.
+- `.ai-scientist/logs/<run-id>/ideation-run.json` — ideation summary log when the ideation flow is used.
+- `.ai-scientist/logs/<run-id>/semantic-scholar-cache/*.json` — mirrored cached Semantic Scholar search results keyed by query hash when that API is enabled.
 
 ## Required run artifacts
 
 Every active run under `.ai-scientist/runs/<run-id>/` owns the authoritative artifacts for that run:
 
+- `ideation-state.json`, `actions/*.json`, `drafts/*.json`, `reflections/*.md`, and `semantic-scholar-cache/*.json` — hook-driven ideation state, snapshots, proposal drafts, reflection transcripts, and authoritative search cache.
 - `research-plan.json` — selected idea/run plan, `strictness_mode`, `metric_key`, `metric_direction` (`maximize` or `minimize`), optional `success_threshold`, split policy, baseline command, and mode requirements.
 - `dependency-plan.json` — requested packages/system tools.
 - `dependency-status.json` — approval state for requested dependencies. Unapproved or blocked dependencies prevent research handoff.

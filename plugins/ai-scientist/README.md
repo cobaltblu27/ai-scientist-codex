@@ -37,24 +37,16 @@ Research runs declare `metric_key` and `metric_direction` in `research-plan.json
 
 The selected node in `selection.json` is authoritative; validators do not infer success by taking the maximum legacy `score` across nodes.
 
-## Ideation orchestrator
+## Ideation loop
 
-The ideation skill is backed by:
-
-```bash
-plugins/ai-scientist/scripts/ideation_orchestrator.py
-```
-
-It reads a research prompt directly, requires `S2_API_KEY`, launches Codex agent tasks for proposal/reflection/finalization, and stores intermediate JSON audit logs under `.ai-scientist/logs/<run-id>/`. Production ideation defaults to `--codex-model gpt-5.5 --codex-reasoning-effort xhigh`.
-
-Finalized ideas are proposal-grade records, not bare metric tickets. The idea schema requires a falsifiable hypothesis, actual scientific insight, concrete related work, conference-style abstract, novelty rationale, required data, expected metric, executable step-by-step plan, experiments, risks, and minimum evidence.
-
-Example:
+The ideation skill is hook/state driven. Start it with an explicit marker:
 
 ```bash
-S2_API_KEY="$S2_API_KEY" python3 plugins/ai-scientist/scripts/ideation_orchestrator.py \
-  --target-repo . \
-  --prompt "Generate ideas for improving the current benchmark without changing the split." \
-  --num-ideas 10 \
-  --num-reflections 5
+/ideate Generate ideas for improving the current benchmark without changing the split.
 ```
+
+Codex performs proposal, reflection, and finalization in the live session. Python helpers only manage durable state, one-shot Semantic Scholar lookup, snapshots, strict idea validation, filesystem-diff checks, and phase-gate artifacts. `S2_API_KEY` is optional; without it Semantic Scholar may rate-limit more aggressively.
+
+Finalized ideas are proposal-grade records, not bare metric tickets. The idea schema requires a falsifiable hypothesis, actual scientific insight, concrete related work, conference-style abstract, novelty rationale, required data, expected metric, executable step-by-step plan with dataset/model/evaluation fields, experiments, risks, and minimum evidence.
+
+The historical `scripts/ideation_orchestrator.py` entrypoint now initializes hook-driven state for compatibility; it does not launch nested Codex agents.

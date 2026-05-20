@@ -31,7 +31,7 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertGreaterEqual(execution_plan["minItems"], 4)
         self.assertEqual(
             set(execution_plan["items"]["required"]),
-            {"step", "purpose", "method", "success_criteria"},
+            {"step", "purpose", "dataset", "model", "evaluation", "method", "success_criteria"},
         )
 
     def test_persisted_idea_schema_matches_required_related_work_contract(self) -> None:

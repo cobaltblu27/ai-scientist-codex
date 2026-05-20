@@ -64,7 +64,7 @@ It helps with:
 - defining the research goal
 - clarifying benchmark and split constraints
 - choosing a strictness mode
-- optionally using Semantic Scholar through `S2_API_KEY`
+- optionally using Semantic Scholar, with `S2_API_KEY` for higher throughput
 - producing structured JSON ideas
 - initializing non-invasive `.ai-scientist/` metadata
 
@@ -73,6 +73,8 @@ Expected artifacts include:
 ```text
 .ai-scientist/config.json
 .ai-scientist/ideas/ideas.json
+.ai-scientist/state/active-ideation.json
+.ai-scientist/runs/<run-id>/ideation-state.json
 ```
 
 Ideation should not mutate target repository code. The only permitted target repository writes during ideation are `.ai-scientist/` artifacts.
@@ -184,65 +186,52 @@ For local development, point your Codex/plugin tooling at `plugins/ai-scientist`
 
 ## Quick start
 
-From this repository root, verify the plugin manifest and the valid minimal fixture:
+From this repository root, verify the plugin manifest and the primary fixtures:
 
 ```bash
 python3 -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
 python3 plugins/ai-scientist/scripts/validate_run.py \
-  plugins/ai-scientist/tests/fixtures/valid-minimal \
-  --gate all
+  plugins/ai-scientist/tests/fixtures/valid-ideation-to-research \
+  --gate ideation_to_research
+python3 plugins/ai-scientist/scripts/validate_run.py \
+  plugins/ai-scientist/tests/fixtures/valid-research-to-review \
+  --gate research_to_review --validation-mode final
 ```
 
-A successful run prints a `PASS` message.
-
-You can also confirm that negative fixtures fail closed. For example, this should fail because leakage evidence is missing:
+Successful validator runs print `PASS` messages. The test suite covers negative fixtures and hook/state regressions:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py \
-  plugins/ai-scientist/tests/fixtures/missing-leakage-evidence \
-  --gate research_to_review
+python3 -m unittest discover -s plugins/ai-scientist/tests -p 'test_*.py'
 ```
 
 ## Ideation orchestrator
 
-The `ideation` skill is backed by a real Python orchestration loop:
+The `ideation` skill is backed by hook-driven state helpers:
 
 ```text
-plugins/ai-scientist/scripts/ideation_orchestrator.py
+plugins/ai-scientist/hooks.json
+plugins/ai-scientist/scripts/ideation_hook.py
+plugins/ai-scientist/scripts/ideation_state.py
 ```
 
-The orchestrator adapts AI-Scientist-v2's brainstorm/search/reflect/finalize pattern into Codex plugin form:
+The loop adapts AI-Scientist-v2's brainstorm/search/reflect/finalize pattern into Codex plugin form:
 
-1. Python reads a research prompt from `--prompt` or stdin.
-2. Python fails before starting unless `S2_API_KEY` is set.
-3. Python launches Codex agent tasks for proposal generation, reflection/refinement, and finalization. Production defaults use `gpt-5.5` with `xhigh` reasoning for thoughtful ideation.
-4. Python calls Semantic Scholar directly and writes API/cache events to `.ai-scientist/runs/<run-id>/api-ledger.jsonl`.
-5. Each idea runs up to the configured reflection budget. Ideas that do not finalize are skipped and logged.
-6. Final ideas are written to `.ai-scientist/ideas/ideas.json` using the plugin idea schema. Each finalized idea must include scientific insight, concrete related work, an abstract, an executable plan, experiments/ablations, risks, and minimum evidence.
-7. Intermediate JSON audit artifacts are retained under `.ai-scientist/logs/<run-id>/`.
+1. `UserPromptSubmit` starts only on `/ideate ...`, `$ai-scientist ideate ...`, or `ai-scientist: ideate ...`.
+2. Codex reasons in the live session and returns one action per turn: search, finalize, or skip.
+3. Python helpers persist state, snapshots, Semantic Scholar cache/ledger entries, and final artifacts.
+4. `Stop` continuation is bounded by state counters to avoid infinite loops.
+5. Final validation checks filesystem diffs, state transitions, idea quality, schemas, and `ideation_to_research`.
 
 Default loop settings are `--num-ideas 10` and `--num-reflections 5`.
 
-Example production run:
+Compatibility initialization from the repository root:
 
 ```bash
-S2_API_KEY="$S2_API_KEY" python3 plugins/ai-scientist/scripts/ideation_orchestrator.py \
+python3 plugins/ai-scientist/scripts/ideation_orchestrator.py \
   --target-repo . \
   --prompt "Generate ideas for improving the current benchmark without changing the split." \
-  --num-ideas 10 \
-  --num-reflections 5
-```
-
-For local smoke testing without launching Codex agents or calling the live Semantic Scholar API, use the fixture runner and fixture search results. This still requires `S2_API_KEY` to be set, matching production preflight behavior:
-
-```bash
-S2_API_KEY=dummy python3 plugins/ai-scientist/scripts/ideation_orchestrator.py \
-  --target-repo /tmp/ai-scientist-smoke \
-  --prompt "Fixture prompt for benchmark-preserving ideas." \
   --num-ideas 1 \
-  --num-reflections 1 \
-  --agent-runner fixture \
-  --semantic-scholar-fixture plugins/ai-scientist/tests/fixtures/semantic-scholar/minimal-results.json
+  --num-reflections 5
 ```
 
 ## Typical workflow
@@ -254,7 +243,7 @@ Ask Codex to use the `ideation` skill with a research prompt.
 Example prompt:
 
 ```text
-Use ideation to propose experiments for improving this model on the current benchmark.
+Use `/ideate` to propose experiments for improving this model on the current benchmark.
 Use scientist mode unless another mode is justified.
 ```
 
@@ -565,7 +554,8 @@ Before claiming a change is complete, run at least:
 
 ```bash
 python3 -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python3 plugins/ai-scientist/scripts/validate_run.py plugins/ai-scientist/tests/fixtures/valid-minimal --gate all
+python3 -m json.tool plugins/ai-scientist/hooks.json >/dev/null
+python3 -m unittest discover -s plugins/ai-scientist/tests -p 'test_*.py'
 ```
 
 ## Status
