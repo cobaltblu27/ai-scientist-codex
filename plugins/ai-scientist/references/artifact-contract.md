@@ -1,100 +1,71 @@
 # AI Scientist Artifact Contract
 
-Target repositories keep all plugin state in `.ai-scientist/` so ordinary project files remain auditable separately from research governance artifacts. The plugin is Codex-native and must not import, invoke, shell into, or wrap `AI-Scientist-v2` at runtime.
+Target repositories keep all plugin state in `.ai-scientist/` so ordinary project files remain auditable separately from research governance artifacts.
 
-## Required root artifacts
+## Required root and run artifacts
 
-- `.ai-scientist/config.json` — target repository path, strictness mode, benchmark/split policy, API budgets, optional root defaults, and optional metric contract defaults. Fresh research targets create this non-destructively; existing files are preserved unless explicitly updated by the orchestrator.
-- `.ai-scientist/ideas/ideas.json` — array of structured candidate ideas. Ideation-produced ideas are proposal-grade records with `hypothesis`, `scientific_insight`, required `related_work`, `abstract`, `novelty_rationale`, executable `execution_plan` steps with dataset/model/evaluation fields, `experiments`, `risks`, and `minimum_evidence`. Fresh research targets bootstrap this from `--idea-json`; existing registries must not be deleted.
-- `.ai-scientist/state/active-ideation.json` — pointer to the active hook-driven ideation run when one is active or blocked.
-- Optional root mirrors/summaries: `.ai-scientist/dependency-plan.json`, `.ai-scientist/dependency-status.json`, `.ai-scientist/api-ledger.jsonl`, and `.ai-scientist/principles.json`. These are supplementary only; run-owned governance artifacts are authoritative for validation.
-- `.ai-scientist/logs/<run-id>/ideation-run.json` — ideation summary log when the ideation flow is used.
-- `.ai-scientist/logs/<run-id>/semantic-scholar-cache/*.json` — mirrored cached Semantic Scholar search results keyed by query hash when that API is enabled.
+- `.ai-scientist/config.json` — optional target-repository override for plugin defaults from `plugins/ai-scientist/config/config.json`.
+- `.ai-scientist/active-run.json` — current run pointer used by the AI Scientist Codex Stop hook.
+- `.ai-scientist/runs/<run-id>/ideas.json` — generation-order array of terminal valid idea objects from `ideation`, including `evaluation`, `score`, and `rank` where applicable.
+- `.ai-scientist/runs/<run-id>/logs/...` — ideation-only draft, critic, ranking, and Semantic Scholar cache records retained for auditability.
+- `.ai-scientist/runs/<run-id>/config.json` — frozen run configuration and contracts, including workspace plan, dependency plan, benchmark contract, resource config, strictness mode, seed policy, and selection weights.
+- `.ai-scientist/runs/<run-id>/loop-state.json` — mutable progress state, official node statuses, resources, subagent ledger, orchestration cursor, and Stop-hook gate state.
+- `.ai-scientist/runs/<run-id>/journal.jsonl` — append-only audit stream for orchestration decisions, API calls, Stop-hook events, resource events, handoff events, and notable validations.
+- `.ai-scientist/runs/<run-id>/selection.json` — interim/final ranking, component scores, manual override rationale, and selected-node details.
+- `.ai-scientist/runs/<run-id>/run-status.json` — optional derived user-facing status snapshot; not a source of truth.
 
-## Required run artifacts
-
-Every active run under `.ai-scientist/runs/<run-id>/` owns the authoritative artifacts for that run:
-
-- `ideation-state.json`, `actions/*.json`, `drafts/*.json`, `reflections/*.md`, and `semantic-scholar-cache/*.json` — hook-driven ideation state, snapshots, proposal drafts, reflection transcripts, and authoritative search cache.
-- `research-plan.json` — selected idea/run plan, `strictness_mode`, `metric_key`, `metric_direction` (`maximize` or `minimize`), optional `success_threshold`, split policy, baseline command, and mode requirements.
-- `dependency-plan.json` — requested packages/system tools.
-- `dependency-status.json` — approval state for requested dependencies. Unapproved or blocked dependencies prevent research handoff.
-- `api-ledger.jsonl` — append-only API/model usage audit, including an explicit no-calls entry for fixture/offline runs.
-- `principles.json` — run-owned principles derived from target-root `GUIDELINES.md`, CLI options, and idea metadata. `GUIDELINES.md` means the target repository file, not plugin-local docs.
-- `baseline/` — `command.log`, `metrics.json`, `split_integrity.json`, `leakage_check.json`, and `runtime-mutation-check.json`.
-- `nodes/<node-id>/` — experiment node artifacts listed below.
-- `dispatcher-events.jsonl` — append-only FIFO/resource scheduling events.
-- `selection.json` — selected node, declared metric contract, baseline metric, selected metric, comparison operator, threshold result when present, lineage, artifact snapshot, and reason.
-- `journal.json` — chronological decisions, commands, observations, failures, and rationale.
-- `run-status.json` — active phase/status, strictness mode, selected node, legacy `last_validation`, and authoritative plural `last_validations.<gate>`. New writers should write both; validators read plural first and use singular only as compatibility fallback.
-- `handoff.jsonl` — append-only phase transition approvals.
-- `verifier-decisions/research_to_review.json` — gate-specific research handoff decision using `approved`, `blocked`, or `rejected`.
-- `verifier-decision.json` — existing launch/final decision using `go` or `no_go`; it is not a research handoff artifact and must not be overloaded.
+Do not create separate v1 research-loop ledgers for dependency plans, API calls,
+Stop-hook events, handoffs, resource state, or orchestrator locks. Store those
+under `config.json`, `journal.jsonl`, or `loop-state.json` as appropriate.
+Normal state mutation must go through
+`scripts/ai_scientist_state_cli.py`; hand-editing `loop-state.json` is a manual
+recovery path, not normal orchestration.
 
 ## Experiment node contract
 
-Each `.ai-scientist/runs/<run-id>/nodes/<node-id>/` directory must contain:
+Each `.ai-scientist/runs/<run-id>/nodes/<node-id>/` directory should contain:
 
-- `node.json` — node id, parent id, action (`draft`, `debug`, `improve`, `tuning`, or `ablation`), strictness mode, and status.
-- `prompt.json` — prompt metadata emitted before agent execution: action, strictness mode, node id, parent node id, template id/version, idea metadata, metric contract, split policy, root guidance summary/presence, required deliverables, and expected manifest schema version. Prompts instruct manifest-only output; Codex does not write directly to the target repo.
-- `agent-manifest.json` and `manifest-validation.json` — read-only Codex/fixture manifest and Python validation result before materialization.
-- `workspace/` — node-local materialized generated files.
-- `command.log` — command, exit code, and relevant output paths.
-- `metrics.json` — must include the declared `metric_key`; optional `score` is only a compatibility alias.
-- `split_integrity.json` and `leakage_check.json` — pass/fail split and leakage evidence.
-- `result_summary.json` — result, limitations, and baseline comparison.
-- `mode_deliverables.json` — active strictness-mode deliverables.
-- `resource_usage.json` — bounded CPU/GPU/memory/time usage evidence.
-- `runtime-mutation-check.json` — pass/fail evidence that commands did not mutate unexpected repository paths outside `.ai-scientist/`/the node workspace.
+- `node.json` — canonical per-node evidence. Reviewed nodes include `node_id`, `status`, `benchmark_contract_version`, `metrics_ref` or `metrics`, `split_integrity.pass`, `leakage_check.pass`, `result_summary`, `mode_deliverables`, `trials`, and evidence/log refs.
+- `workspace/` — copied per-node mutable workspace.
+- `trials/<trial-id>/...` — raw command logs, stdout/stderr, benchmark-produced metrics, patches, and other large/raw artifacts.
 
-## Metric and selection contract
-
-Research validation is direction-aware:
-
-- `research-plan.json`, `selection.json`, and validation metadata record `metric_key` and `metric_direction`.
-- For `maximize`, selected metric must be greater than baseline; threshold success means selected metric is `>= success_threshold`.
-- For `minimize`, selected metric must be lower than baseline; threshold success means selected metric is `<= success_threshold`.
-- Validators compare the selected node named by `selection.json`; they do not choose the max score across all nodes.
-- Optional `score` may mirror the declared metric for compatibility but is not authoritative when `metric_key` is declared.
+Split integrity, leakage status, result summary, mode deliverables, worker
+reports, adapter-extension requests, and rich reasoning belong in `node.json`
+unless they are too large/raw for the compact node artifact.
 
 ## Phase gates
 
 All phase transitions run `scripts/validate_run.py`. A non-zero validator exit blocks the next phase.
 
+Hard continuation also requires the project-local Codex Stop hook installed by `scripts/install_codex_hooks.py`. The hook reads `active-run.json` and `loop-state.json`; active phases or terminal phases without a passing `completion_audit` return `decision: "block"` to Codex.
+
 ### Ideation to research
 
-Requires ideas, config, dependency approval statuses, initialized API ledger, current run status validation, an approved handoff, and retained ideation orchestration logs under `.ai-scientist/logs/<run-id>/` when ideation produced the run.
+Requires at least one researchable candidate under the frozen mode config, generated run config, dependency approval statuses, run-local `ideas.json`, finalized ranking, and an approved handoff journal entry.
+Modes that require Semantic Scholar evidence must also include journal `api_call` entries. Also requires `loop-state.json` to include a terminal successful `ideation` phase with a passing `completion_audit`.
 
-### Research to review: two-phase protocol
+The Codex-native ideation orchestrator must:
 
-Research handoff uses separate evidence and final validation modes to avoid circularity.
+- read the starting point from a prompt string, not a Markdown workshop file;
+- use project-local Stop-hook state so active ideation blocks session end;
+- use the current Codex session as orchestrator and never run a Python-owned nested Codex loop;
+- record subagent intents before generation, criticism, and ranking;
+- write terminal ideas to `.ai-scientist/runs/<run-id>/ideas.json` with `evaluation` values of `ACCEPTED`, `ACCEPTED_WITHOUT_REFERENCE`, or `REJECTED`;
+- run a dedicated ranking agent after generation; ranking scores all terminal ideas and assigns dense `rank` only to plain `ACCEPTED` ideas;
+- end as `EXHAUSTED_NO_CANDIDATE` with a denied handoff when no researchable candidate exists;
+- keep intermediate JSON audit artifacts under `.ai-scientist/runs/<run-id>/logs/`.
 
-1. Evidence validation, before handoff exists:
+### Research to review
 
-   ```bash
-   python3 plugins/ai-scientist/scripts/validate_run.py <target> \
-     --gate research_to_review --run-id <run-id> --validation-mode evidence
-   ```
-
-   Evidence mode checks scientific and artifact evidence only: governance artifacts, research plan, baseline/node metrics, selected-node direction-aware comparison, threshold semantics, split/leakage checks, prompt/action/mode metadata, mode deliverables, resource usage, dispatcher events, runtime mutation evidence, and selection freshness. It intentionally does **not** require `last_validation`, `handoff.jsonl`, or a gate-specific verifier decision.
-
-2. After evidence validation succeeds, writers record validation metadata in both `run-status.json.last_validation` and `run-status.json.last_validations.research_to_review`, then append an approved `handoff.jsonl` record for `research_to_review`.
-
-3. The verifier/finalizer writes `verifier-decisions/research_to_review.json` with `decision: "approved"` only when the approved handoff and the evidence snapshot are acceptable. `blocked` or `rejected` prevent final validation.
-
-4. Final transition validation:
-
-   ```bash
-   python3 plugins/ai-scientist/scripts/validate_run.py <target> \
-     --gate research_to_review --run-id <run-id> --validation-mode final
-   ```
-
-   Final mode reruns evidence checks and additionally requires current successful validation metadata, an approved handoff, and an approved gate-specific verifier decision referencing the same snapshot. `--validation-mode final` is the default for backward-compatible CLI behavior.
+Requires baseline metrics, command logs, at least one experiment node, split integrity evidence, leakage evidence, baseline beat when required by the active mode, active-mode deliverables, final selection evidence, and an approved handoff journal entry.
+Also requires `loop-state.json` to include a completed `research` phase with a passing `completion_audit`, accepted selected node, and no unresolved node states.
+For `scientist` and `researcher` modes, accepted nodes also require passing
+novelty evidence in `node.json`.
 
 ### Review to writeup
 
-Requires structured review, verdict, leakage/split/baseline/mode criteria coverage, current run status validation, and an approved handoff. Rejected runs must block writeup or be clearly marked as failed/negative.
+Requires structured review, verdict, leakage/split/baseline/mode criteria coverage, canonical state validation, and an approved handoff journal entry. Rejected runs must block writeup or be clearly marked as failed/negative.
 
 ### Launch
 
-Requires `verifier-decision.json` with `decision: "go"` and no blockers. Launch validation preserves the existing `go`/`no_go` semantics and does not inspect `verifier-decisions/research_to_review.json`.
+Requires `verifier-decision.json` with `decision: "go"` and no blockers.

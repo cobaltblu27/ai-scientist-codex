@@ -1,0 +1,85 @@
+{
+  "active": false,
+  "completed_at": "2026-04-29T00:00:00Z",
+  "completion_audit": {
+    "passed": true,
+    "prompt_to_artifact_checklist": [
+      "Minimal run has completed ideation and research phase records"
+    ],
+    "verification_evidence": [
+      "loop-state.json completed_phases contains ideation and research"
+    ]
+  },
+  "completed_phases": {
+    "ideation": {
+      "active": false,
+      "completed_at": "2026-04-29T00:00:00Z",
+      "completion_audit": {
+        "passed": true,
+        "prompt_to_artifact_checklist": [
+          "One requested idea was attempted and finalized"
+        ],
+        "verification_evidence": [
+          ".ai-scientist/ideas/ideas.json contains finalized idea-001"
+        ]
+      },
+      "phase": "ideation",
+      "phase_status": "complete",
+      "run_id": "minimal-run",
+      "schema_version": 1,
+      "state": {
+        "current_idea_index": 1,
+        "current_reflection_round": 1,
+        "finalized_count": 1,
+        "idea_states": {
+          "idea-001": {
+            "finalization_decision": "finalize",
+            "reflection_count": 1,
+            "status": "finalized"
+          }
+        },
+        "num_ideas_required": 1,
+        "num_reflections_required": 1,
+        "s2_query_count": 1,
+        "skipped_count": 0
+      }
+    },
+    "research": {
+      "active": false,
+      "completed_at": "2026-04-29T00:00:00Z",
+      "completion_audit": {
+        "passed": true,
+        "prompt_to_artifact_checklist": [
+          "Baseline and accepted node evidence are present"
+        ],
+        "verification_evidence": [
+          ".ai-scientist/runs/minimal-run/nodes/node-1 contains metrics and integrity checks"
+        ]
+      },
+      "phase": "research",
+      "phase_status": "complete",
+      "run_id": "minimal-run",
+      "schema_version": 1,
+      "state": {
+        "baseline_status": "complete",
+        "current_node": "node-1",
+        "iteration": 1,
+        "max_iterations": 1,
+        "node_queue": [],
+        "nodes": {
+          "node-1": {
+            "attempt": 1,
+            "status": "accepted"
+          }
+        },
+        "selected_node": "node-1"
+      }
+    }
+  },
+  "phase": "review",
+  "phase_status": "complete",
+  "run_id": "minimal-run",
+  "schema_version": 1,
+  "state": {},
+  "updated_at": "2026-04-29T00:00:00Z"
+}

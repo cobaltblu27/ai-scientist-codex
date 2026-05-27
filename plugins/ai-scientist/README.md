@@ -1,52 +1,96 @@
 # AI Scientist Codex Plugin
 
-This plugin provides Codex-native research workflows inspired by AI-scientist style automation without wrapping, importing, or invoking any external reference implementation such as `AI-Scientist-v2`. It is skill-first and stores auditable run state in the target repository under `.ai-scientist/`.
+This plugin provides Codex-native research workflows inspired by AI-scientist style automation without wrapping or invoking any external reference implementation. It is skill-first and stores auditable run state in the target repository under `.ai-scientist/`.
 
 ## Skills
 
-- `ideation` — run a Codex-agent ideation loop from a prompt, with Python-managed Semantic Scholar search, reflection/refinement, finalization, and non-invasive artifacts.
-- `research-loop` — run bounded experiments with explicit metric contracts, prompt/manifests, runtime mutation checks, governance artifacts, and two-phase research handoff validation.
+- `ideation` — run an agent-driven Codex ideation loop from an inline prompt, with deterministic Python state helpers, optional Semantic Scholar evidence, versioned drafts, ranking, and non-invasive artifacts.
+- `research-loop` — plan dependencies, run bounded experiments, log API use, and enforce phase gates.
 - `review` — evaluate evidence for leakage, split integrity, baseline comparison, and mode criteria.
 - `writeup` — generate a final report with explicit disclosure, limitations, and negative-result handling.
+
+## Python launcher
+
+Command examples use `python` for portability. Replace it with the launcher
+provided by the target environment, such as `uv run python`,
+`conda run -n <env> python`, `micromamba run -n <env> python`, `python3`, or an
+absolute interpreter path. Do not assume a specific environment manager.
+
+## Hard continuation setup
+
+AI Scientist can install a project-local Codex Stop hook so active runs cannot
+silently end before their loop state and completion audit pass:
+
+```bash
+python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo>
+python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo> --check
+```
+
+The hook is standalone: it reads `.ai-scientist/active-run.json` and
+`.ai-scientist/runs/<run-id>/loop-state.json`, emits `decision: "block"` for
+active or incomplete phases, and does not depend on OMX or `oh-my-codex`.
 
 ## Artifact contract
 
 See `references/artifact-contract.md`. Validate run artifacts with:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate ideation_to_research
-python3 plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate research_to_review --validation-mode evidence
-python3 plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate research_to_review --validation-mode final
-python3 plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate review_to_writeup
-python3 plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate launch
-python3 plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate principles
+python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate ideation_to_research
+python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate research_to_review
+python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate review_to_writeup
+python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate launch
+python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate principles
 ```
 
-`research_to_review` defaults to `--validation-mode final`. Evidence mode is for pre-handoff scientific/artifact validation and intentionally avoids circular requirements on handoff and gate-specific verifier decisions. Final mode requires the approved handoff plus `.ai-scientist/runs/<run-id>/verifier-decisions/research_to_review.json` with `decision: "approved"`.
+The validator is deterministic and fail-closed: missing evidence, malformed JSON/JSONL, non-approved handoffs, non-zero validator exits, no-go verifier decisions, or incomplete principle traceability return a non-zero exit.
 
-The existing launch artifact `.ai-scientist/runs/<run-id>/verifier-decision.json` keeps its `go`/`no_go` semantics and is not used as the research handoff verifier decision.
+## Research loop helper
 
-The validator is deterministic and fail-closed: missing evidence, malformed JSON/JSONL, stale validation metadata, failed split/leakage checks, unexpected runtime mutations, non-approved handoffs, blocked gate verifier decisions, non-zero validator exits, no-go launch decisions, or incomplete principle traceability return a non-zero exit.
-
-## Research loop metric contract
-
-Research runs declare `metric_key` and `metric_direction` in `research-plan.json` and `selection.json`:
-
-- `maximize`: selected metric must be greater than baseline; threshold means selected `>= success_threshold`.
-- `minimize`: selected metric must be lower than baseline; threshold means selected `<= success_threshold`.
-
-The selected node in `selection.json` is authoritative; validators do not infer success by taking the maximum legacy `score` across nodes.
-
-## Ideation loop
-
-The ideation skill is hook/state driven. Start it with an explicit marker:
+The research loop is orchestrated by the current Codex session, not by a Python
+process that launches nested Codex agents. Use the helper CLI only for state and
+audit mutations:
 
 ```bash
-/ideate Generate ideas for improving the current benchmark without changing the split.
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py --target-repo <target-repo> research start --run-id <run-id>
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py --target-repo <target-repo> resource run --node-id <node-id> --trial-id <trial-id> -- <command>
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py --target-repo <target-repo> selection finalize --selected-node <node-id>
 ```
 
-Codex performs proposal, reflection, and finalization in the live session. Python helpers only manage durable state, one-shot Semantic Scholar lookup, snapshots, strict idea validation, filesystem-diff checks, and phase-gate artifacts. `S2_API_KEY` is optional; without it Semantic Scholar may rate-limit more aggressively.
+The helper writes compact v1 artifacts under `.ai-scientist/runs/<run-id>/` and
+logs state transitions, resource events, validation, and handoff records to
+`journal.jsonl`.
 
-Finalized ideas are proposal-grade records, not bare metric tickets. The idea schema requires a falsifiable hypothesis, actual scientific insight, concrete related work, conference-style abstract, novelty rationale, required data, expected metric, executable step-by-step plan with dataset/model/evaluation fields, experiments, risks, and minimum evidence.
+## Ideation orchestrator
 
-The historical `scripts/ideation_orchestrator.py` entrypoint now initializes hook-driven state for compatibility; it does not launch nested Codex agents.
+The ideation skill is agent-driven. The current Codex session is the long-running
+orchestrator; Python only records deterministic state through:
+
+```bash
+plugins/ai-scientist/scripts/ai_scientist_state_cli.py
+```
+
+Install the project-local Stop hook first. Then start ideation state, use
+`ideation resume --prompt` to get the next cursor action, spawn native Codex
+subagents for generation/criticism/ranking, and record their outputs with
+`ideation intent ...`, `idea ...`, and `ideation rank-finalize`. Do not use the
+retired `ideation_orchestrator.py` loop or nested `codex exec`.
+
+Generated run metadata is stored under `.ai-scientist/runs/<run-id>/config.json`.
+Target repositories may use `.ai-scientist/config.json` as a config override for
+plugin defaults from `plugins/ai-scientist/config/config.json`.
+
+Example:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo . \
+  ideation start \
+  --run-id ideation-001 \
+  --prompt "Generate ideas for improving the current benchmark without changing the split." \
+  --num-ideas 10
+```
+
+Ideation writes terminal ideas to `.ai-scientist/runs/<run-id>/ideas.json`.
+`ideation complete` produces a research-ready handoff only; it does not start the
+research loop. `EXHAUSTED_NO_CANDIDATE` is terminal for the Stop hook but still
+fails the `ideation_to_research` validator.

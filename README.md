@@ -4,6 +4,11 @@ A Codex-native plugin for auditable research workflows: **ideation**, **bounded 
 
 The plugin is intentionally evidence-first: research state is written to local `.ai-scientist/` artifacts, phase transitions are validated by a deterministic helper, and final claims require explicit verifier approval.
 
+Command examples use `python` for portability. Replace it with the launcher
+provided by the target environment, such as `uv run python`,
+`conda run -n <env> python`, `micromamba run -n <env> python`, `python3`, or an
+absolute interpreter path. Do not assume a specific environment manager.
+
 ## Table of contents
 
 - [Overview](#overview)
@@ -64,17 +69,15 @@ It helps with:
 - defining the research goal
 - clarifying benchmark and split constraints
 - choosing a strictness mode
-- optionally using Semantic Scholar, with `S2_API_KEY` for higher throughput
-- producing structured JSON ideas
+- optionally using Semantic Scholar through `S2_API_KEY` (missing keys warn loudly for live searches)
+- producing ranked structured JSON ideas with `ACCEPTED`, `ACCEPTED_WITHOUT_REFERENCE`, or `REJECTED` evaluation
 - initializing non-invasive `.ai-scientist/` metadata
 
 Expected artifacts include:
 
 ```text
-.ai-scientist/config.json
-.ai-scientist/ideas/ideas.json
-.ai-scientist/state/active-ideation.json
-.ai-scientist/runs/<run-id>/ideation-state.json
+.ai-scientist/runs/<run-id>/config.json
+.ai-scientist/runs/<run-id>/ideas.json
 ```
 
 Ideation should not mutate target repository code. The only permitted target repository writes during ideation are `.ai-scientist/` artifacts.
@@ -89,7 +92,7 @@ It manages:
 
 - dependency planning before execution
 - approval state for dependencies
-- API budgeting and `api-ledger.jsonl`
+- API budgeting and `journal.jsonl` API-call records
 - baseline evidence
 - experiment node evidence
 - leakage checks
@@ -152,16 +155,19 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
         ├── references/
         │   └── artifact-contract.md
         ├── schemas/
-        │   ├── api-ledger.schema.json
         │   ├── config.schema.json
-        │   ├── dependency-plan.schema.json
-        │   ├── handoff.schema.json
         │   ├── idea.schema.json
         │   ├── journal.schema.json
+        │   ├── active-run.schema.json
+        │   ├── loop-state.schema.json
         │   ├── principles.schema.json
         │   ├── run-status.schema.json
         │   └── verifier-decision.schema.json
         ├── scripts/
+        │   ├── ai_scientist_state.py
+        │   ├── ai_scientist_stop_hook.py
+        │   ├── ideation_orchestrator.py
+        │   ├── install_codex_hooks.py
         │   └── validate_run.py
         ├── skills/
         │   ├── ideation/SKILL.md
@@ -184,54 +190,80 @@ plugins/ai-scientist/.codex-plugin/plugin.json
 
 For local development, point your Codex/plugin tooling at `plugins/ai-scientist` or copy that directory into your local plugin workspace.
 
-## Quick start
-
-From this repository root, verify the plugin manifest and the primary fixtures:
+For hard continuation, install the project-local Codex Stop hook in the target repository:
 
 ```bash
-python3 -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python3 plugins/ai-scientist/scripts/validate_run.py \
-  plugins/ai-scientist/tests/fixtures/valid-ideation-to-research \
-  --gate ideation_to_research
-python3 plugins/ai-scientist/scripts/validate_run.py \
-  plugins/ai-scientist/tests/fixtures/valid-research-to-review \
-  --gate research_to_review --validation-mode final
+python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo>
+python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo> --check
 ```
 
-Successful validator runs print `PASS` messages. The test suite covers negative fixtures and hook/state regressions:
+The hook is standalone and reads `.ai-scientist/active-run.json` plus
+`.ai-scientist/runs/<run-id>/loop-state.json`. It returns `decision: "block"`
+while a run is active or lacks passing completion audit evidence.
+
+## Quick start
+
+From this repository root, verify the plugin manifest and the valid minimal fixture:
 
 ```bash
-python3 -m unittest discover -s plugins/ai-scientist/tests -p 'test_*.py'
+python -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
+python plugins/ai-scientist/scripts/validate_run.py \
+  plugins/ai-scientist/tests/fixtures/valid-minimal \
+  --gate all
+```
+
+A successful run prints a `PASS` message.
+
+You can also confirm that negative fixtures fail closed. For example, this should fail because leakage evidence is missing:
+
+```bash
+python plugins/ai-scientist/scripts/validate_run.py \
+  plugins/ai-scientist/tests/fixtures/missing-leakage-evidence \
+  --gate research_to_review
 ```
 
 ## Ideation orchestrator
 
-The `ideation` skill is backed by hook-driven state helpers:
+The `ideation` skill is backed by an agent-driven loop:
 
 ```text
-plugins/ai-scientist/hooks.json
-plugins/ai-scientist/scripts/ideation_hook.py
-plugins/ai-scientist/scripts/ideation_state.py
+plugins/ai-scientist/scripts/ai_scientist_state_cli.py
 ```
 
-The loop adapts AI-Scientist-v2's brainstorm/search/reflect/finalize pattern into Codex plugin form:
+The current Codex session is the orchestrator. Python only manages deterministic
+state, Semantic Scholar recording, validation, and handoff artifacts:
 
-1. `UserPromptSubmit` starts only on `/ideate ...`, `$ai-scientist ideate ...`, or `ai-scientist: ideate ...`.
-2. Codex reasons in the live session and returns one action per turn: search, finalize, or skip.
-3. Python helpers persist state, snapshots, Semantic Scholar cache/ledger entries, and final artifacts.
-4. `Stop` continuation is bounded by state counters to avoid infinite loops.
-5. Final validation checks filesystem diffs, state transitions, idea quality, schemas, and `ideation_to_research`.
+1. `ideation start` records the prompt, frozen config, run-local `ideas.json`,
+   `loop-state.json`, and `journal.jsonl`.
+2. `ideation resume --prompt` returns the next cursor action for the main Codex
+   orchestrator.
+3. Native Codex subagents generate ideas, critique drafts, and rank candidates.
+4. Helper commands record drafts, Semantic Scholar evidence, critic verdicts,
+   final idea decisions, ranking, and terminal run state.
+5. The project-local Stop hook blocks ending until ideation reaches
+   `COMPLETED`, `COMPLETED_BUDGET_EXHAUSTED`, `EXHAUSTED_NO_CANDIDATE`, or
+   `CANCELLED`.
 
-Default loop settings are `--num-ideas 10` and `--num-reflections 5`.
+Default loop settings are `--num-ideas 10`, `--reflection-budget 10`, and
+`--strictness-mode scientist`.
 
-Compatibility initialization from the repository root:
+Example start:
 
 ```bash
-python3 plugins/ai-scientist/scripts/ideation_orchestrator.py \
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --target-repo . \
+  ideation start \
+  --run-id ideation-001 \
   --prompt "Generate ideas for improving the current benchmark without changing the split." \
-  --num-ideas 1 \
-  --num-reflections 5
+  --num-ideas 10
+```
+
+Then continue from the cursor:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo . \
+  ideation resume --run-id ideation-001 --prompt
 ```
 
 ## Typical workflow
@@ -243,7 +275,7 @@ Ask Codex to use the `ideation` skill with a research prompt.
 Example prompt:
 
 ```text
-Use `/ideate` to propose experiments for improving this model on the current benchmark.
+Use ideation to propose experiments for improving this model on the current benchmark.
 Use scientist mode unless another mode is justified.
 ```
 
@@ -251,13 +283,15 @@ Expected artifacts:
 
 ```text
 .ai-scientist/config.json
-.ai-scientist/ideas/ideas.json
+.ai-scientist/active-run.json
+.ai-scientist/runs/<run-id>/ideas.json
+.ai-scientist/runs/<run-id>/loop-state.json
 ```
 
 Validate the transition into research when the run artifacts are prepared:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate ideation_to_research
+python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate ideation_to_research
 ```
 
 ### Step 2: Plan and run research
@@ -274,18 +308,18 @@ Preserve the benchmark split, plan dependencies first, and use balanced mode.
 Expected artifacts include:
 
 ```text
-.ai-scientist/runs/<run-id>/dependency-plan.json
-.ai-scientist/runs/<run-id>/api-ledger.jsonl
+.ai-scientist/runs/<run-id>/config.json
+.ai-scientist/runs/<run-id>/journal.jsonl
 .ai-scientist/runs/<run-id>/baseline/
 .ai-scientist/runs/<run-id>/nodes/
+.ai-scientist/runs/<run-id>/loop-state.json
 .ai-scientist/runs/<run-id>/run-status.json
-.ai-scientist/runs/<run-id>/handoff.jsonl
 ```
 
 Before moving to review, validate:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate research_to_review
+python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate research_to_review
 ```
 
 ### Step 3: Review the run
@@ -309,7 +343,7 @@ Expected artifact:
 Validate the transition into writeup:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate review_to_writeup
+python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate review_to_writeup
 ```
 
 ### Step 4: Write the final report
@@ -326,7 +360,7 @@ Include disclosure, strictness mode, benchmark split, limitations, and reproduci
 Before publication or final launch, validate:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
+python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
 ```
 
 ## Artifact contract
@@ -342,11 +376,9 @@ A typical run looks like this:
     ideas.json
   runs/
     <run-id>/
-      dependency-plan.json
-      api-ledger.jsonl
-      journal.json
+      config.json
+      journal.jsonl
       run-status.json
-      handoff.jsonl
       verifier-decision.json
       principles.json
       baseline/
@@ -391,20 +423,20 @@ Every transition is intended to fail closed if required evidence is missing or i
 
 Requires:
 
-- at least one idea in `ideas/ideas.json`
+- at least one researchable candidate in `runs/<run-id>/ideas.json`
 - `config.json` with strictness mode, target repo, and API budgets
-- `dependency-plan.json` with every planned dependency marked as one of:
+- `config.json` with dependency plan entries marked as one of:
   - `approved`
   - `rejected`
   - `not_needed`
-- initialized `api-ledger.jsonl`
-- approved `handoff.jsonl` record
+- at least one `journal.jsonl` API-call record
+- approved `journal.jsonl` handoff record
 - passing validator result
 
 Validation command:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate ideation_to_research
+python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate ideation_to_research
 ```
 
 ### Research to review
@@ -420,13 +452,13 @@ Requires:
 - result summary
 - mode-specific deliverables
 - best node beats baseline under the declared benchmark
-- approved `handoff.jsonl` record
+- approved `journal.jsonl` handoff record
 - passing validator result
 
 Validation command:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate research_to_review
+python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate research_to_review
 ```
 
 ### Review to writeup
@@ -439,13 +471,13 @@ Requires:
 - split integrity assessment
 - baseline comparison
 - strictness-mode criteria
-- approved `handoff.jsonl` record
+- approved `journal.jsonl` handoff record
 - passing validator result
 
 Validation command:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate review_to_writeup
+python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate review_to_writeup
 ```
 
 ### Launch or final approval
@@ -468,7 +500,7 @@ Example:
 Validation command:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
+python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
 ```
 
 ## Validator usage
@@ -482,12 +514,12 @@ plugins/ai-scientist/scripts/validate_run.py
 Supported gates:
 
 ```bash
-python3 plugins/ai-scientist/scripts/validate_run.py <target> --gate ideation_to_research
-python3 plugins/ai-scientist/scripts/validate_run.py <target> --gate research_to_review
-python3 plugins/ai-scientist/scripts/validate_run.py <target> --gate review_to_writeup
-python3 plugins/ai-scientist/scripts/validate_run.py <target> --gate launch
-python3 plugins/ai-scientist/scripts/validate_run.py <target> --gate principles
-python3 plugins/ai-scientist/scripts/validate_run.py <target> --gate all
+python plugins/ai-scientist/scripts/validate_run.py <target> --gate ideation_to_research
+python plugins/ai-scientist/scripts/validate_run.py <target> --gate research_to_review
+python plugins/ai-scientist/scripts/validate_run.py <target> --gate review_to_writeup
+python plugins/ai-scientist/scripts/validate_run.py <target> --gate launch
+python plugins/ai-scientist/scripts/validate_run.py <target> --gate principles
+python plugins/ai-scientist/scripts/validate_run.py <target> --gate all
 ```
 
 `<target>` can be a target repository, a fixture root, or an `.ai-scientist/` directory.
@@ -553,9 +585,8 @@ When changing the artifact contract, update these together:
 Before claiming a change is complete, run at least:
 
 ```bash
-python3 -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python3 -m json.tool plugins/ai-scientist/hooks.json >/dev/null
-python3 -m unittest discover -s plugins/ai-scientist/tests -p 'test_*.py'
+python -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
+python plugins/ai-scientist/scripts/validate_run.py plugins/ai-scientist/tests/fixtures/valid-minimal --gate all
 ```
 
 ## Status

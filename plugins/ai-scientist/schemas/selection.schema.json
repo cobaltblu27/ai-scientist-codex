@@ -1,21 +1,76 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["selected_node", "metric_key", "metric_direction", "baseline_metric", "selected_metric", "reason"],
+  "required": [
+    "schema_version",
+    "run_id",
+    "selection_status",
+    "selected_node",
+    "ranked_nodes",
+    "updated_at"
+  ],
   "properties": {
-    "selected_node": {"type": "string"},
-    "selected_node_id": {"type": "string"},
-    "metric_key": {"type": "string"},
-    "metric_direction": {"enum": ["maximize", "minimize"]},
-    "baseline_metric": {"type": "number"},
-    "selected_metric": {"type": "number"},
-    "comparison_operator": {"enum": [">", "<"]},
-    "comparator": {"enum": [">", "<"]},
-    "success_threshold": {"type": "number"},
-    "threshold_satisfied": {"type": "boolean"},
-    "threshold_result": {"type": ["boolean", "string"]},
-    "artifact_snapshot": {"type": ["string", "object"]},
-    "lineage": {"type": "array", "items": {"type": "string"}},
-    "reason": {"type": "string"}
-  }
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "selection_status": {
+      "enum": [
+        "interim",
+        "final"
+      ]
+    },
+    "provisional": {
+      "type": "boolean"
+    },
+    "selected_node": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ranked_nodes": {
+      "description": "Final selection must rank every accepted node from loop-state.json.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "node_id"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "selection_score": {
+            "type": "number"
+          },
+          "score_components": {
+            "type": "object"
+          },
+          "rationale": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "manual_override": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "rationale": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
 }

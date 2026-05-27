@@ -4,157 +4,134 @@
   "required": [
     "ideas"
   ],
-  "additionalProperties": false,
   "properties": {
     "ideas": {
       "type": "array",
-      "minItems": 1,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "title",
-          "hypothesis",
-          "scientific_insight",
-          "related_work",
-          "abstract",
-          "novelty_rationale",
-          "required_data",
-          "expected_metric",
-          "execution_plan",
-          "experiments",
-          "risks",
-          "minimum_evidence"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Stable idea identifier."
-          },
-          "title": {
-            "type": "string",
-            "minLength": 12,
-            "description": "Catchy, specific research-proposal title."
-          },
-          "hypothesis": {
-            "type": "string",
-            "minLength": 80,
-            "description": "Falsifiable central hypothesis, including why this setting tests it better than simpler alternatives."
-          },
-          "scientific_insight": {
-            "type": "string",
-            "minLength": 120,
-            "description": "The non-obvious mechanism, causal story, or conceptual reframing that makes the idea scientifically interesting."
-          },
-          "related_work": {
-            "type": "string",
-            "minLength": 120,
-            "description": "Concrete related work, what each line of work does, and how this idea is not a trivial extension."
-          },
-          "abstract": {
-            "type": "string",
-            "minLength": 180,
-            "description": "Conference-style proposal abstract summarizing problem, method, expected result, and why it matters."
-          },
-          "novelty_rationale": {
-            "type": "string",
-            "minLength": 80,
-            "description": "Specific novelty claim grounded in the related work and target benchmark/repository context."
-          },
-          "required_data": {
-            "type": "string",
-            "minLength": 40
-          },
-          "expected_metric": {
-            "type": "string",
-            "minLength": 40
-          },
-          "execution_plan": {
-            "type": "array",
-            "minItems": 4,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-                  "required": [
-                    "step",
-                    "purpose",
-                    "dataset",
-                    "model",
-                    "evaluation",
-                    "method",
-                    "success_criteria"
-                  ],
-              "properties": {
-                "step": {
-                  "type": "string",
-                  "minLength": 8
-                },
-                  "purpose": {
-                    "type": "string",
-                    "minLength": 20
-                  },
-                  "dataset": {
-                    "type": "string",
-                    "minLength": 8
-                  },
-                  "model": {
-                    "type": "string",
-                    "minLength": 8
-                  },
-                  "evaluation": {
-                    "type": "string",
-                    "minLength": 8
-                  },
-                  "method": {
-                    "type": "string",
-                    "minLength": 40
-                },
-                "success_criteria": {
-                  "type": "string",
-                  "minLength": 20
-                }
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "evaluation",
+              "rank",
+              "score",
+              "upstream",
+              "normalized",
+              "source_run_id",
+              "reflection_count",
+              "literature_search_count"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "evaluation": {
+                "enum": [
+                  "ACCEPTED",
+                  "ACCEPTED_WITHOUT_REFERENCE",
+                  "REJECTED"
+                ]
+              },
+              "rank": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              },
+              "score": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 100
+              },
+              "novelty_score": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 100
+              },
+              "feasibility_score": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 100
+              },
+              "evidence_score": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 100
+              },
+              "repo_fit_score": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 100
+              },
+              "upstream": {
+                "type": "object"
+              },
+              "normalized": {
+                "type": "object"
+              },
+              "source_run_id": {
+                "type": "string"
+              },
+              "reflection_count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "literature_search_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "manual_selection_only": {
+                "type": "boolean"
               }
             }
           },
-          "experiments": {
-            "type": "array",
-            "minItems": 2,
-            "items": {
-              "type": "string",
-              "minLength": 40
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "hypothesis",
+              "expected_metric",
+              "risks"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "hypothesis": {
+                "type": "string"
+              },
+              "expected_metric": {
+                "type": "string"
+              },
+              "risks": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
-          },
-          "risks": {
-            "type": "array",
-            "minItems": 2,
-            "items": {
-              "type": "string",
-              "minLength": 20
-            }
-          },
-          "minimum_evidence": {
-            "type": "array",
-            "minItems": 4,
-            "items": {
-              "type": "string",
-              "minLength": 30
-            }
-          },
-          "semantic_scholar_queries": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "source_run_id": {
-            "type": "string"
-          },
-          "reflection_count": {
-            "type": "integer",
-            "minimum": 1
           }
-        }
+        ]
       }
     }
   }

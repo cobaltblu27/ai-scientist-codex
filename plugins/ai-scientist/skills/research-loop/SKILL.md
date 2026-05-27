@@ -1,80 +1,385 @@
 ---
 name: research-loop
-description: Execute bounded Codex-native experiment loops with dependency planning, API ledgers, strictness modes, metric contracts, runtime mutation checks, and fail-closed .ai-scientist/ phase gates.
+description: Execute a Codex-native, Stop-hook-enforced research loop from one selected idea, with auditable node workspaces, benchmark evidence, selection, and fail-closed phase gates.
 ---
 
 # Research Loop
 
-Use this skill to run selected ideas against a target repository while preserving benchmark and split integrity. The workflow is Codex-native: no runtime import, shell invocation, or wrapper dependency on `AI-Scientist-v2`.
+Use this skill to turn one selected idea into one or more experiment nodes, run them against the target repository benchmark, and select a validated result. The current Codex session is the research orchestrator. Python helper commands persist state and audit evidence; they do not own the loop and must not spawn Codex.
 
-## Required CLI shape
+## Non-Negotiable Rules
 
-A research run must declare the benchmark contract explicitly:
+1. Do not run a Python orchestrator, nested `codex exec`, or any process that owns the research loop.
+2. Mutate research state only through `plugins/ai-scientist/scripts/ai_scientist_state_cli.py` or the same deterministic helper APIs. Do not hand-edit `loop-state.json`, `active-run.json`, `selection.json`, or `node.json` during normal execution.
+3. Keep the project-local Stop hook installed and active. If Stop hook blocks, resume from the recorded cursor; do not bypass it.
+4. A research run consumes exactly one selected idea. Ideation may produce multiple candidates, but each research run freezes one idea as input.
+5. Use copy-based per-node workspaces under `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/`. Do not use git worktrees in v1.
+6. Do not mutate source files outside `.ai-scientist/` as part of the research loop. All experiment code changes happen in node workspaces.
+7. Official baseline, benchmark, and final-validation commands go through `resource run` so command specs, stdout/stderr, metrics, cwd, env, and resource events are auditable.
+8. No mode permits leakage, split manipulation, train/test contamination, deceptive scoring, hidden cherry-picking, or unlogged benchmark changes.
+9. In non-yolo dependency mode, do not request or install mid-loop dependencies. Work with the frozen environment or reject the node.
+10. Do not complete research while any node, subagent, or blocking resource remains unresolved.
+
+## Source-Of-Truth Artifacts
+
+All run state lives under `.ai-scientist/`:
+
+- `.ai-scientist/active-run.json`: current run pointer used by the Stop hook.
+- `.ai-scientist/runs/<run-id>/config.json`: frozen mode, selected idea snapshot, dependency plan, workspace plan, benchmark contract, resource config, seed policy, and selection thresholds.
+- `.ai-scientist/runs/<run-id>/loop-state.json`: active cursor, baseline status, official node statuses, subagent ledger, resource ledger, and selected node.
+- `.ai-scientist/runs/<run-id>/journal.jsonl`: append-only audit stream.
+- `.ai-scientist/runs/<run-id>/selection.json`: final ranked selection.
+- `.ai-scientist/runs/<run-id>/baseline-workspace/`: copied baseline source.
+- `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/`: mutable node workspace.
+- `.ai-scientist/runs/<run-id>/nodes/<node-id>/node.json`: official node evidence.
+- `.ai-scientist/runs/<run-id>/nodes/<node-id>/trials/<trial-id>/`: command logs, stdout, stderr, and command specs from `resource run`.
+
+`run-status.json` may exist only as derived user-facing output. It is not source of truth.
+
+## Python Launcher
+
+Command examples use `python` for portability. Treat it as a placeholder for the
+Python launcher provided by the target environment: `uv run python`,
+`conda run -n <env> python`, `micromamba run -n <env> python`, `python3`, or an
+absolute interpreter path.
+
+Use the launcher that can import and run the plugin helper scripts and, for
+official benchmark commands, can access the target project's runtime. Do not
+assume this development server's `micromamba` layout exists on other machines.
+If the target repo has `.venv`, `uv.lock`, `pyproject.toml`,
+`environment.yml`, `conda` metadata, or project docs, follow that environment.
+Do not silently switch Python launchers mid-run; if the right environment is
+unclear and the command is required, ask or fail fast with a clear blocker.
+
+## Strictness Modes
+
+Default mode is `scientist`. Mode is frozen once the research run starts.
+
+- `scientist`: maintain a publishable claim, strict split/leakage discipline, fixed split seeds, fair model seeds, multi-seed final confirmation, ablations, novelty evidence, and causal link between method and result.
+- `researcher`: maintain a research hypothesis with meaningful ablation and reproducibility; limited pragmatic tuning is allowed after hypothesis validation.
+- `balanced`: beat baseline credibly, preserve split integrity, include lightweight ablation or sensitivity evidence.
+- `builder`: optimize for practical held-out performance with transparent tuning and leakage checks; novelty is optional.
+- `engineer`: optimize for strong credible score, fixed benchmark/split, leakage checks, and selection/tuning log; novelty is optional.
+
+Fixed split seeds apply to all modes. Scientist/researcher should also avoid abusing training seeds; builder/engineer may use pragmatic tuning if it is logged and does not manipulate the split.
+
+## Dependency And Environment Policy
+
+Before research starts, inspect imports, benchmark entrypoint, likely experiment architecture, and missing dependencies. Store the frozen dependency plan in `config.json`.
+
+Dependency statuses must be explicit:
+
+- `approved`
+- `rejected`
+- `not_needed`
+
+Default mode is frozen dependencies. In frozen mode, agents must not ask for mid-loop dependency installs; prompts should tell workers to work with the available environment. In yolo mode, agents may install packages, but every install must be local to the run when possible and logged.
+
+If environment/package corruption, missing core dependencies, CUDA/toolchain changes, or reproducibility-affecting changes are needed, stop and escalate to the user.
+
+## Startup
+
+Install/check the Stop hook:
 
 ```bash
-python3 plugins/ai-scientist/scripts/research_orchestrator.py \
-  --target-repo <repo> \
-  --idea-json <idea.json> \
-  --strictness-mode balanced \
-  --baseline-command '<command>' \
-  --metric-key <metric-name> \
-  --metric-direction maximize \
-  --success-threshold <optional-number> \
-  --split-policy '<fixed split description>' \
-  --agent-runner codex
+python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo>
 ```
 
-Use `--metric-direction minimize` for losses/errors. Fresh targets without `.ai-scientist/` require `--idea-json` so the orchestrator can create `.ai-scientist/ideas/ideas.json` non-destructively.
+Start a research run:
 
-## Required artifacts
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  research start \
+  --run-id <run-id> \
+  --strictness-mode scientist \
+  --json '<frozen config/state payload>'
+```
 
-All run state lives under `.ai-scientist/`. Research validation expects run-owned governance artifacts: `research-plan.json`, `dependency-plan.json`, `dependency-status.json`, `api-ledger.jsonl`, `principles.json`, `run-status.json`, `selection.json`, `dispatcher-events.jsonl`, `handoff.jsonl`, `verifier-decisions/research_to_review.json`, and launch-only `verifier-decision.json`.
+The payload should include any known selected idea snapshot, benchmark command, dependency plan, workspace plan, seed policy, and initial state overrides. If the selected idea came from ideation, copy the selected canonical idea, ranking rationale, mode config snapshot, and evidence summary into this research run. Later ideation edits must not mutate this research input.
 
-`run-status.json.last_validations.<gate>` is authoritative. `last_validation` is still written and read as a legacy fallback.
+Resume:
 
-## Strictness modes
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  research resume --run-id <run-id>
+```
 
-Default mode is `balanced` unless the orchestrator/target config chooses otherwise.
+The resume response returns `next_action` and `next_action_details`. Follow that cursor. To update cursor after completing a step:
 
-- `scientist`: reproducibility note, experiment rationale, split/leakage evidence, ablation summary, tuning summary, limitations.
-- `researcher`: rationale, related-risk notes, reproducibility note, ablation or sensitivity evidence, limitations.
-- `balanced`: rationale, split/leakage evidence, result summary, and at least one validation-oriented deliverable.
-- `builder`: runnable artifact summary, command log, metrics, integration notes, known risks.
-- `engineer`: minimal patch/experiment summary, command log, metrics, rollback notes.
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  research set-next-action --run-id <run-id> --lane <lane> --reason "<reason>"
+```
 
-No mode permits leakage, split manipulation, deceptive scoring, unapproved dependency use, or unexpected repository mutation.
+Use lanes such as `setup`, `dependency_plan`, `workspace`, `baseline`, `node_work`, `node_validation`, `selection`, `completion_audit`, or `handoff`.
 
-## Dependency, API, and mutation controls
+## Workspace Setup
 
-1. Plan dependencies before execution in `dependency-plan.json`.
-2. Record approvals in `dependency-status.json`; blocked/unapproved dependencies block handoff.
-3. Log external API/model usage, or explicit no-calls fixture evidence, to `api-ledger.jsonl`.
-4. Codex agents return manifests only. Python validates paths and materializes files inside the node workspace.
-5. Every baseline/node command records `runtime-mutation-check.json`; unexpected mutations outside allowed `.ai-scientist/`/workspace paths block selection and handoff.
+Initialize the baseline workspace:
 
-## Workflow
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  workspace init --run-id <run-id> --source <target-repo>
+```
 
-1. Map the target repo, dataset, loader, benchmark, metric key/direction, threshold, and split policy.
-2. Create baseline artifacts: command log, metrics, split/leakage checks, and runtime mutation evidence.
-3. For each experiment node, emit `prompt.json` with action/mode/metric metadata before agent execution, validate the manifest, run bounded commands, and record metrics, resource usage, split/leakage, mutation checks, result summary, and mode deliverables.
-4. Write `selection.json` naming the selected node and direction-aware comparison to baseline.
-5. Run evidence validation before any handoff:
+This creates `.ai-scientist/runs/<run-id>/baseline-workspace/`. Essential configs are copied. Caches/generated outputs are ignored. Large-but-needed resources may be linked read-only according to the frozen workspace plan. If a required large data file cannot be safely copied/linked, fail fast with logs.
 
-   ```bash
-   python3 plugins/ai-scientist/scripts/validate_run.py <target> \
-     --gate research_to_review --run-id <run-id> --validation-mode evidence
-   ```
+Create a node workspace:
 
-6. Only after evidence validation exits 0, write validation metadata to both `last_validation` and `last_validations.research_to_review`, append the approved `handoff.jsonl` record, and write `verifier-decisions/research_to_review.json` with `approved|blocked|rejected`.
-7. Run final transition validation:
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node create-workspace --run-id <run-id> --node-id node-001 --reason "start first approach"
+```
 
-   ```bash
-   python3 plugins/ai-scientist/scripts/validate_run.py <target> \
-     --gate research_to_review --run-id <run-id> --validation-mode final
-   ```
+Each node is one research direction. Hyperparameter sweeps, ablations, and sane local debugging for that direction happen inside the same node. Child/new nodes are for meaningfully different approaches or follow-up ideas, not for minor parameter variants.
 
-A non-zero evidence or final validator exit blocks review. Do not substitute launch `verifier-decision.json` (`go|no_go`) for the gate-specific verifier decision.
+## Benchmark Contract
 
-## Completion
+The benchmark command is the official entrypoint contract for baseline and node comparison. It should be flexible enough for node workspaces to tune internal implementation details, but comparable enough that baseline and node scores share the same metric semantics.
 
-Return the selected node, metric key/direction, baseline and selected metric values, threshold result if present, leakage/split status, mutation-check status, strictness mode, evidence/final validation commands, and artifact paths. Report negative or blocked outcomes honestly.
+Official commands must be run with `resource run`:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  resource run \
+  --run-id <run-id> \
+  --node-id node-001 \
+  --trial-id trial-001 \
+  --purpose benchmark \
+  --cwd <node-workspace> \
+  --metrics-json '{"score": 0.73}' \
+  --benchmark-contract-version v1 \
+  --gpu \
+  -- <benchmark command and args>
+```
+
+Use `--gpu` only when the command actually needs GPU. V1 helper uses a minimal GPU lease and sets `CUDA_VISIBLE_DEVICES=0`. CPU-only official commands should still use `resource run` without `--gpu` for audit evidence.
+
+Worker/local smoke tests may run directly inside a node workspace, but official baseline, benchmark, final validation, and selected-node evidence must use `resource run`.
+
+## Node Lifecycle
+
+Official node statuses:
+
+- `planned`: workspace/approach exists but implementation has not started.
+- `implementing`: code changes are being made.
+- `running`: benchmark or substantial experiment is running.
+- `buggy`: command failed or behavior is broken; failure signature required.
+- `repairing`: active repair/debugging.
+- `candidate`: result looks potentially acceptable and needs validation.
+- `validating`: split/leakage/final checks are running.
+- `accepted`: node is valid and eligible for selection.
+- `invalid`: node cannot be trusted or fails required gates.
+- `rejected`: node is not selected or not worth continuing; reason required.
+
+Record transitions:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node transition \
+  --run-id <run-id> \
+  --node-id node-001 \
+  --status implementing \
+  --reason "implement selected idea"
+```
+
+Use `--json` to update node evidence:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node transition \
+  --run-id <run-id> \
+  --node-id node-001 \
+  --status accepted \
+  --reason "passes benchmark and validation" \
+  --json '{"node":{"benchmark_contract_version":"v1","metrics":{"score":0.81},"split_integrity":{"pass":true},"leakage_check":{"pass":true},"result_summary":"...","mode_deliverables":{"ablation":"..."}}}'
+```
+
+Accepted node evidence must include:
+
+- `benchmark_contract_version`
+- `metrics` or `metrics_ref`
+- `split_integrity.pass: true`
+- `leakage_check.pass: true`
+- `result_summary`
+- `mode_deliverables`
+- at least one trial record
+- for scientist/researcher, novelty evidence when required by validator/config
+
+Rejected/invalid nodes need a clear rejection reason or failure signature.
+
+## Bug Repair
+
+Let node workers debug themselves when practical; waiting for the orchestrator on every error burns tokens. There is no hard repair-attempt limit. The orchestrator should intervene when the same failure repeats without new information, when the worker requests a decision, or when an environment/reproducibility blocker appears.
+
+Buggy node records should include:
+
+- failure signature
+- command
+- exit code
+- error path/log path
+- retryability
+- next action
+
+Do not complete research with any node in `buggy`, `repairing`, `candidate`, `planned`, `implementing`, `running`, or `validating`.
+
+## Subagents
+
+Use native Codex subagents only for bounded, auditable work. Subagents are workers, not loop owners. The main orchestrator owns state transitions and final decisions.
+
+Good subagent tasks:
+
+- repo/benchmark mapping
+- setup/workspace planning
+- implementing one node in one node workspace
+- debugging one node
+- split/leakage validation
+- scientific critique
+- final selection review
+
+Parallelism is allowed across different nodes. Do not run multiple workers mutating the same node workspace at once. If GPU is needed, queue GPU-backed work through `resource run` and avoid oversubscribing VRAM.
+
+When spawning a worker, include:
+
+- exact node id and workspace path
+- allowed write scope
+- benchmark command/contract
+- strictness mode
+- selected idea summary
+- dependency policy
+- instruction that the worker is not alone in the codebase, must not revert others' edits, and must adapt to existing changes
+- required final output: files changed, commands run, metrics, failure signature if failed, and recommended node status
+
+Record subagent status:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  subagent update \
+  --run-id <run-id> \
+  --subagent-id worker-node-001 \
+  --node-id node-001 \
+  --status completed_unintegrated \
+  --json '{"summary":"implemented approach","workspace_path":"..."}'
+```
+
+Allowed subagent statuses:
+
+- `planned`
+- `running`
+- `blocked_on_resource`
+- `completed_unintegrated`
+- `failed_unreviewed`
+- `integrated`
+- `rejected_with_reason`
+- `abandoned_with_reason`
+
+Before completion, every subagent must be terminal: `integrated`, `rejected_with_reason`, or `abandoned_with_reason`.
+
+## Selection
+
+After one or more accepted nodes exist, run final selection manually as orchestrator or spawn a short-lived selection/review agent. Scores help, but the orchestrator may make the final judgment by reading node evidence.
+
+Selection payload:
+
+```json
+{
+  "selected_node": "node-001",
+  "ranked_nodes": [
+    {
+      "node_id": "node-001",
+      "score": 82,
+      "rationale": "Best validated result with clean split and acceptable ablation"
+    }
+  ],
+  "rationale": "Why this node is selected",
+  "manual_override": null
+}
+```
+
+Record selection:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  selection finalize --run-id <run-id> --json '<selection JSON>'
+```
+
+`selection finalize` requires the selected node to be accepted in `loop-state.json` and all accepted nodes to appear in `ranked_nodes`.
+
+## Completion And Handoff
+
+Before completion:
+
+1. Baseline is complete.
+2. All subagents are terminal.
+3. Blocking resources are resolved.
+4. Every node is terminal: `accepted`, `invalid`, or `rejected`.
+5. Selected node exists and is `accepted`.
+6. `selection.json` is final and matches `loop-state.json`.
+7. Node evidence satisfies `validate_run.py --gate research_to_review`.
+
+Complete research with a passing audit:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  research complete --run-id <run-id> --json '{"passed":true,"prompt_to_artifact_checklist":["baseline complete","selected node accepted","selection finalized"],"verification_evidence":["validate_run.py --gate research_to_review passed"]}'
+```
+
+Then run validator:
+
+```bash
+python plugins/ai-scientist/scripts/validate_run.py \
+  <target-repo> --gate research_to_review --run-id <run-id>
+```
+
+Record validation:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  validation record --run-id <run-id> --gate research_to_review --exit-code 0 --command "validate_run.py <target-repo> --gate research_to_review --run-id <run-id>"
+```
+
+Record approved handoff:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  handoff record --run-id <run-id> --gate research_to_review --exit-code 0 --approved --reason "research evidence ready for review"
+```
+
+Stop hook should allow ending only after completion, validation record, and approved handoff record exist.
+
+Cancel only when explicitly requested or impossible to continue:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  research cancel --run-id <run-id> --reason "<reason>"
+```
+
+## Final Response
+
+Report:
+
+- run id and strictness mode
+- selected idea id/input summary
+- baseline score and selected node score
+- selected node id and why it was selected
+- split/leakage status
+- ablation/reproducibility evidence appropriate to mode
+- validator command and result
+- handoff status
+- artifact paths for `config.json`, `loop-state.json`, `selection.json`, selected `node.json`, and important trial logs
+
+Do not claim review/writeup has started unless the user explicitly asks for the next phase.

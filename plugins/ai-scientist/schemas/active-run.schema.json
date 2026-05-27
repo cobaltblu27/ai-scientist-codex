@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "phase",
+    "status",
+    "updated_at",
+    "target_repo"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "target_repo": {
+      "type": "string"
+    },
+    "codex_session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "codex_thread_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}
