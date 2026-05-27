@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -150,6 +151,17 @@ def idea_is_researchable(idea: dict[str, Any], preset: dict[str, Any]) -> bool:
         return bool(preset.get("allow_selection_without_reference"))
     return False
 
+
+def artifact_snapshot(run: Path) -> str:
+    ignored = {"handoff.jsonl", "run-status.json", "journal.json", "evidence-validation-output.json", "final-validation-output.json", "verifier-decision.json"}
+    h = hashlib.sha256()
+    for path in sorted(run.rglob("*")):
+        if path.is_file() and path.name not in ignored and "verifier-decisions" not in path.parts:
+            h.update(str(path.relative_to(run)).encode())
+            h.update(path.read_bytes())
+    return h.hexdigest()
+
+
 def check_ideation_to_research(root: Path, run: Path) -> None:
     cfg = check_config(root, run)
     preset = ideation_mode_preset(cfg)
@@ -199,6 +211,7 @@ def check_ideation_to_research(root: Path, run: Path) -> None:
     check_handoff(run, "ideation_to_research")
     check_loop_completion(root, run, "ideation")
 
+
 def metric_score(metrics: dict[str, Any]) -> float:
     if "score" not in metrics:
         raise ValidationError("metrics must include numeric score")
@@ -207,13 +220,50 @@ def metric_score(metrics: dict[str, Any]) -> float:
     except (TypeError, ValueError) as exc:
         raise ValidationError("metrics score must be numeric") from exc
 
-def check_research_to_review(root: Path, run: Path) -> None:
+
+def comparison_passes(selected_score: float, baseline_score: float, direction: str) -> bool:
+    if direction == "minimize":
+        return selected_score < baseline_score
+    return selected_score > baseline_score
+
+
+def check_research_file_artifacts(root: Path, run: Path) -> None:
     cfg = check_config(root, run)
     baseline = load_json(run / "baseline" / "metrics.json")
     baseline_score = metric_score(baseline)
     command_log = run / "baseline" / "command.log"
     if not command_log.exists() or not command_log.read_text().strip():
         raise ValidationError("baseline command.log is required")
+    selection = load_json(run / "selection.json")
+    selected_node = selection.get("selected_node")
+    if not isinstance(selected_node, str) or not selected_node:
+        raise ValidationError("selection.json selected_node is required")
+    node_dir = run / "nodes" / selected_node
+    node_json = load_json(node_dir / "node.json")
+    if node_json.get("status") not in {"completed", "accepted"}:
+        raise ValidationError(f"selected node is not completed/accepted: {selected_node}")
+    metrics = load_json(node_dir / "metrics.json")
+    selected_score = metric_score(metrics)
+    metric_direction = selection.get("metric_direction") or load_json(run / "research-plan.json").get("metric_direction", "maximize")
+    if metric_direction not in {"maximize", "minimize"}:
+        raise ValidationError("metric_direction must be maximize or minimize")
+    if not comparison_passes(selected_score, baseline_score, metric_direction):
+        raise ValidationError("selected node must beat baseline under declared benchmark")
+    for path in [
+        run / "dependency-plan.json",
+        run / "dependency-status.json",
+        run / "api-ledger.jsonl",
+        run / "principles.json",
+        node_dir / "split_integrity.json",
+        node_dir / "leakage_check.json",
+        node_dir / "runtime-mutation-check.json",
+        node_dir / "resource_usage.json",
+    ]:
+        if not path.exists():
+            raise ValidationError(f"missing required research artifact: {path.relative_to(run)}")
+
+def check_research_loop_state(root: Path, run: Path) -> None:
+    cfg = check_config(root, run)
     loop_state = load_json(run / "loop-state.json")
     if loop_state.get("phase") != "research":
         raise ValidationError("loop-state.json phase must be research")
@@ -237,6 +287,7 @@ def check_research_to_review(root: Path, run: Path) -> None:
     missing_ranked = sorted(set(accepted_nodes) - ranked_ids)
     if missing_ranked:
         raise ValidationError(f"selection.json missing accepted nodes: {', '.join(missing_ranked)}")
+    baseline_score = metric_score(load_json(run / "baseline" / "metrics.json"))
     mode = cfg["strictness_mode"]
     selected_score = None
     for node_id, node_state in nodes.items():
@@ -265,9 +316,33 @@ def check_research_to_review(root: Path, run: Path) -> None:
             raise ValidationError(f"unresolved node state blocks research_to_review: {node_id}:{status}")
     if selected_score is None:
         raise ValidationError("selected node metrics.score is required")
-    if selected_score <= baseline_score:
+    direction = load_json(run / "selection.json").get("metric_direction", "maximize")
+    if not comparison_passes(selected_score, baseline_score, direction):
         raise ValidationError("selected node must beat baseline under declared benchmark")
     check_loop_completion(root, run, "research")
+
+
+def check_research_final_verifier(run: Path) -> None:
+    path = run / "verifier-decisions" / "research_to_review.json"
+    if not path.exists():
+        raise ValidationError("missing research_to_review verifier decision")
+    decision = load_json(path)
+    if decision.get("gate") != "research_to_review" or decision.get("decision") != "approved":
+        raise ValidationError("research_to_review verifier decision must be approved")
+    expected = decision.get("artifact_snapshot")
+    current = artifact_snapshot(run)
+    if expected != current:
+        raise ValidationError("stale verifier decision: artifact snapshot changed after approval")
+
+
+def check_research_to_review(root: Path, run: Path, validation_mode: str = "evidence") -> None:
+    if (run / "loop-state.json").exists():
+        check_research_loop_state(root, run)
+    else:
+        check_research_file_artifacts(root, run)
+    if validation_mode == "final":
+        check_handoff(run, "research_to_review")
+        check_research_final_verifier(run)
 
 def check_review_to_writeup(root: Path, run: Path) -> None:
     check_config(root, run)
@@ -307,6 +382,7 @@ def main() -> int:
     parser.add_argument("target", type=Path, help="target repo, fixture root, or .ai-scientist directory")
     parser.add_argument("--gate", choices=["ideation_to_research", "research_to_review", "review_to_writeup", "launch", "principles", "all"], default="all")
     parser.add_argument("--run-id")
+    parser.add_argument("--validation-mode", choices=["evidence", "final"], default="evidence")
     args = parser.parse_args()
     try:
         root = ai_root(args.target)
@@ -314,7 +390,7 @@ def main() -> int:
         if args.gate in {"ideation_to_research", "all"}:
             check_ideation_to_research(root, run)
         if args.gate in {"research_to_review", "all"}:
-            check_research_to_review(root, run)
+            check_research_to_review(root, run, args.validation_mode)
         if args.gate in {"review_to_writeup", "all"}:
             check_review_to_writeup(root, run)
         if args.gate in {"launch", "all"}:

@@ -16,8 +16,11 @@
     "default_mode": "scientist",
     "num_ideas_required": 10,
     "min_candidates_required": 1,
-    "reflection_budget": 10,
+    "reflection_budget": 120,
     "early_stop_allowed": false,
+    "concurrency": {
+      "max_subagents": 6
+    },
     "modes": {
       "scientist": {
         "s2_required": true,

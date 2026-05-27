@@ -41,20 +41,27 @@ from ideation_state import (
     cancel_intent,
     complete_ideation,
     complete_intent,
+    codex_max_threads,
     current_config,
     cursor_for_state,
     exhaust_idea,
     exhaust_ideation,
+    finalize_ready,
     finalize_idea,
     finalize_ranking,
+    nested_value,
+    rank_candidates,
     record_critic,
     record_draft,
+    record_evidence_batch,
     record_semantic_scholar_search,
     reject_idea,
     resume_ideation,
     start_ideation,
     start_intent,
+    start_intent_batch,
     start_revision,
+    validate_max_subagents,
 )
 
 MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
@@ -69,6 +76,7 @@ SUBAGENT_STATUSES = {
     "rejected_with_reason",
     "abandoned_with_reason",
 }
+SUBAGENT_TERMINAL_STATUSES = {"integrated", "rejected_with_reason", "abandoned_with_reason"}
 
 
 class CliError(Exception):
@@ -85,6 +93,30 @@ def load_payload(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise CliError("payload must be a JSON object")
     return value
+
+
+def load_payload_or_path(args: argparse.Namespace, default_path: Path | None = None) -> dict[str, Any]:
+    if getattr(args, "json_file", None) or getattr(args, "json", None):
+        return load_payload(args)
+    if default_path is None:
+        return {}
+    if not default_path.exists() or not default_path.read_text().strip():
+        return {}
+    value = json.loads(default_path.read_text())
+    if not isinstance(value, dict):
+        raise CliError(f"payload at {default_path} must be a JSON object")
+    return value
+
+
+def research_pending_path(target: Path, run_id: str, kind: str, name: str) -> Path:
+    safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "-" for ch in name).strip("-") or "payload"
+    return run_dir(target, run_id) / "logs" / "pending" / kind / f"{safe_name}.json"
+
+
+def ensure_pending_file(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(exist_ok=True)
+    return path
 
 
 def target_repo(args: argparse.Namespace) -> Path:
@@ -123,14 +155,60 @@ def response(status: str, **fields: Any) -> int:
     return 0 if status == "ok" else 1
 
 
-def default_config(target: Path, run_id: str, strictness_mode: str, payload: dict[str, Any]) -> dict[str, Any]:
+def resolve_research_max_subagents(target: Path, payload: dict[str, Any], explicit_max: int | None) -> int:
+    project_override = load_json_if_exists(target / ".ai-scientist" / "config.json")
+    if not isinstance(project_override, dict):
+        project_override = {}
+    payload_max = nested_value(payload, ["research", "concurrency", "max_subagents"])
+    project_max = nested_value(project_override, ["research", "concurrency", "max_subagents"])
+    resolved = explicit_max
+    if resolved is None:
+        resolved = payload_max if payload_max is not None else project_max
+    if resolved is None:
+        resolved = codex_max_threads(target)
+    return validate_max_subagents(resolved if resolved is not None else 6)
+
+
+def research_concurrency_config(payload: dict[str, Any], max_subagents: int) -> dict[str, Any]:
+    research = dict(payload.get("research") if isinstance(payload.get("research"), dict) else {})
+    concurrency = dict(research.get("concurrency") if isinstance(research.get("concurrency"), dict) else {})
+    concurrency["max_subagents"] = max_subagents
+    research["concurrency"] = concurrency
+    return research
+
+
+def research_max_subagents(config: dict[str, Any]) -> int:
+    value = nested_value(config, ["research", "concurrency", "max_subagents"])
+    return validate_max_subagents(value if value is not None else 6)
+
+
+def research_concurrency_details(config: dict[str, Any], phase_state: dict[str, Any]) -> dict[str, Any]:
+    limit = research_max_subagents(config)
+    subagents = phase_state.get("subagents") if isinstance(phase_state.get("subagents"), dict) else {}
+    nonterminal = [
+        subagent_id
+        for subagent_id, subagent in subagents.items()
+        if not isinstance(subagent, dict) or str(subagent.get("status") or "") not in SUBAGENT_TERMINAL_STATUSES
+    ]
+    available = max(0, limit - len(nonterminal))
+    return {
+        "subagent_concurrency_limit": limit,
+        "nonterminal_subagent_count": len(nonterminal),
+        "available_subagent_slots": available,
+        "suggested_subagent_count": available,
+    }
+
+
+def default_config(target: Path, run_id: str, strictness_mode: str, payload: dict[str, Any], *, max_subagents: int | None = None) -> dict[str, Any]:
     if strictness_mode not in MODES:
         raise CliError(f"invalid strictness mode: {strictness_mode}")
+    resolved_max = resolve_research_max_subagents(target, payload, max_subagents)
     return {
         "schema_version": 1,
         "run_id": run_id,
         "target_repo": str(target),
         "strictness_mode": strictness_mode,
+        "research": research_concurrency_config(payload, resolved_max),
         "api_budgets": payload.get("api_budgets", {"semantic_scholar": {"max_calls": 100}}),
         "workspace": payload.get("workspace", {"mode": "copy", "baseline_workspace": f".ai-scientist/runs/{run_id}/baseline-workspace"}),
         "dependency_plan": payload.get("dependency_plan", {"mode": "frozen", "planned_dependencies": []}),
@@ -145,12 +223,14 @@ def cmd_research_start(args: argparse.Namespace) -> int:
     target = target_repo(args)
     payload = load_payload(args)
     run_id = args.run_id
+    cfg = default_config(target, run_id, args.strictness_mode, payload, max_subagents=args.max_subagents)
+    concurrency = research_concurrency_details(cfg, {})
     initial_state = {
         "orchestrator": {
             "role": "main_codex_session",
             "iteration": 0,
             "next_action": "setup",
-            "next_action_details": {"reason": "research run started"},
+            "next_action_details": {"reason": "research run started", **concurrency},
             "last_checkpoint_at": utc_now(),
         },
         "workspace_plan_status": "pending",
@@ -165,7 +245,6 @@ def cmd_research_start(args: argparse.Namespace) -> int:
     }
     initial_state.update(payload.get("state", {}))
     state = start_phase(target, run_id, "research", initial_state)
-    cfg = default_config(target, run_id, args.strictness_mode, payload)
     atomic_write_json(config_path(target, run_id), cfg)
     append_journal_event(target, run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
     return response("ok", run_id=run_id, state_path=str(run_dir(target, run_id) / "loop-state.json"), config_path=str(config_path(target, run_id)))
@@ -181,9 +260,14 @@ def cmd_research_resume(args: argparse.Namespace) -> int:
     next_action = orchestrator.get("next_action")
     if not next_action:
         raise CliError("active research is missing orchestrator.next_action")
+    cfg = load_json_if_exists(config_path(target, run_id))
+    if not isinstance(cfg, dict):
+        raise CliError(f"missing config.json for run {run_id}")
+    details = dict(orchestrator.get("next_action_details") if isinstance(orchestrator.get("next_action_details"), dict) else {})
+    details.update(research_concurrency_details(cfg, phase_state))
     append_journal_event(target, run_id, "state_transition", details={"command": "research resume", "next_action": next_action})
     set_active_run(target, run_id, str(state.get("phase") or "research"), "active")
-    return response("ok", run_id=run_id, next_action=next_action, next_action_details=orchestrator.get("next_action_details", {}))
+    return response("ok", run_id=run_id, next_action=next_action, next_action_details=details)
 
 
 def cmd_research_set_next_action(args: argparse.Namespace) -> int:
@@ -272,10 +356,14 @@ def cmd_node_transition(args: argparse.Namespace) -> int:
         raise CliError(f"invalid node status: {args.status}")
     target = target_repo(args)
     run_id, _ = active_run(target, args.run_id)
-    payload = load_payload(args)
-    node_payload = payload.get("node", payload)
     node = read_node(target, run_id, args.node_id)
+    pending_path = Path(node["result_path"]) if isinstance(node.get("result_path"), str) else research_pending_path(target, run_id, "nodes", args.node_id)
+    payload = load_payload_or_path(args, pending_path)
+    if args.status == "accepted" and not payload and not getattr(args, "json", None) and not getattr(args, "json_file", None):
+        raise CliError(f"accepted node requires evidence payload in result_path or explicit --path/--json: {pending_path}")
+    node_payload = payload.get("node", payload)
     node.update(node_payload if isinstance(node_payload, dict) else {})
+    node.setdefault("result_path", str(ensure_pending_file(pending_path)))
     node["status"] = args.status
     write_node(target, run_id, args.node_id, node)
 
@@ -283,7 +371,7 @@ def cmd_node_transition(args: argparse.Namespace) -> int:
         phase_state = state.setdefault("state", {})
         nodes = phase_state.setdefault("nodes", {})
         current = nodes.setdefault(args.node_id, {})
-        current.update({"status": args.status, "updated_at": utc_now()})
+        current.update({"status": args.status, "updated_at": utc_now(), "result_path": str(pending_path)})
         if args.reason:
             key = "rejection_reason" if args.status in {"rejected", "invalid"} else "reason"
             current[key] = args.reason
@@ -291,7 +379,7 @@ def cmd_node_transition(args: argparse.Namespace) -> int:
             phase_state.setdefault("selection", {}).setdefault("status", "pending")
 
     mutate_loop_state(target, run_id, "state_transition", {"command": "node transition", "status": args.status, "reason": args.reason}, mutator, node_id=args.node_id)
-    return response("ok", run_id=run_id, node_id=args.node_id, node_status=args.status, node_path=str(node_json_path(target, run_id, args.node_id)))
+    return response("ok", run_id=run_id, node_id=args.node_id, node_status=args.status, node_path=str(node_json_path(target, run_id, args.node_id)), result_path=str(pending_path))
 
 
 def cmd_node_create_workspace(args: argparse.Namespace) -> int:
@@ -317,7 +405,18 @@ def cmd_subagent_update(args: argparse.Namespace) -> int:
         raise CliError(f"invalid subagent status: {args.status}")
     target = target_repo(args)
     run_id, _ = active_run(target, args.run_id)
-    payload = load_payload(args)
+    cfg = load_json_if_exists(config_path(target, run_id))
+    if not isinstance(cfg, dict):
+        raise CliError(f"missing config.json for run {run_id}")
+    limit = research_max_subagents(cfg)
+    state = load_loop_state(target, run_id)
+    phase_state = state.get("state") if isinstance(state, dict) and isinstance(state.get("state"), dict) else {}
+    subagents = phase_state.get("subagents") if isinstance(phase_state.get("subagents"), dict) else {}
+    existing = subagents.get(args.subagent_id) if isinstance(subagents.get(args.subagent_id), dict) else {}
+    pending_path = Path(existing["result_path"]) if isinstance(existing.get("result_path"), str) else research_pending_path(target, run_id, "subagents", args.subagent_id)
+    payload = load_payload_or_path(args, pending_path)
+    if args.status in {"completed_unintegrated", "failed_unreviewed"} and not payload and not getattr(args, "json", None) and not getattr(args, "json_file", None):
+        raise CliError(f"{args.status} requires worker result payload in result_path or explicit --path/--json: {pending_path}")
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
@@ -326,11 +425,19 @@ def cmd_subagent_update(args: argparse.Namespace) -> int:
         current.update(payload)
         current["status"] = args.status
         current["updated_at"] = utc_now()
+        current["result_path"] = str(ensure_pending_file(pending_path))
         if args.node_id:
             current["node_id"] = args.node_id
+        nonterminal = [
+            subagent_id
+            for subagent_id, subagent in subagents.items()
+            if not isinstance(subagent, dict) or str(subagent.get("status") or "") not in SUBAGENT_TERMINAL_STATUSES
+        ]
+        if len(nonterminal) > limit:
+            raise CliError(f"research subagent concurrency limit exceeded: {len(nonterminal)} > {limit}")
 
     mutate_loop_state(target, run_id, "subagent_event", {"command": "subagent update", "status": args.status}, mutator, node_id=args.node_id, subagent_id=args.subagent_id)
-    return response("ok", run_id=run_id, subagent_id=args.subagent_id, subagent_status=args.status)
+    return response("ok", run_id=run_id, subagent_id=args.subagent_id, subagent_status=args.status, result_path=str(pending_path))
 
 
 def cmd_selection_finalize(args: argparse.Namespace) -> int:
@@ -421,6 +528,7 @@ def cmd_ideation_start(args: argparse.Namespace) -> int:
         num_ideas_required=args.num_ideas,
         min_candidates_required=args.min_candidates,
         reflection_budget=args.reflection_budget,
+        max_subagents=args.max_subagents,
     )
     cfg = current_config(target, args.run_id)
     cursor = cursor_for_state(state, cfg)
@@ -458,22 +566,47 @@ def cmd_ideation_rank_finalize(args: argparse.Namespace) -> int:
     return ideation_response(target, run_id)
 
 
+def cmd_ideation_rank_candidates(args: argparse.Namespace) -> int:
+    target, run_id = require_ideation_run(args)
+    result = rank_candidates(target, run_id, mode=args.mode)
+    return ideation_response(target, run_id, **result)
+
+
+def cmd_ideation_finalize_ready(args: argparse.Namespace) -> int:
+    target, run_id = require_ideation_run(args)
+    finalize_ready(target, run_id, idea_ids=args.idea_ids)
+    return ideation_response(target, run_id)
+
+
 def cmd_ideation_intent_start(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
-    intent = start_intent(target, run_id, args.role, idea_id=args.idea_id)
+    intent = start_intent(target, run_id, args.role, idea_id=args.idea_id, agent_thread_id=args.agent_thread_id)
     return ideation_response(target, run_id, intent=intent)
+
+
+def cmd_ideation_intent_start_batch(args: argparse.Namespace) -> int:
+    target, run_id = require_ideation_run(args)
+    batch = start_intent_batch(
+        target,
+        run_id,
+        args.role,
+        count=args.count,
+        idea_ids=args.idea_ids,
+        agent_thread_id=args.agent_thread_id,
+    )
+    return ideation_response(target, run_id, **batch)
 
 
 def cmd_ideation_intent_complete(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
     payload = load_payload(args)
-    complete_intent(target, run_id, payload)
+    complete_intent(target, run_id, payload, intent_id=args.intent_id)
     return ideation_response(target, run_id)
 
 
 def cmd_ideation_intent_cancel(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
-    cancel_intent(target, run_id, args.reason)
+    cancel_intent(target, run_id, args.reason, intent_id=args.intent_id)
     return ideation_response(target, run_id)
 
 
@@ -509,6 +642,20 @@ def cmd_idea_search_semantic_scholar(args: argparse.Namespace) -> int:
         run_id,
         idea_id=args.idea_id,
         query=args.query,
+        evidence_payload=payload or None,
+        limit=args.limit,
+    )
+    return ideation_response(target, run_id)
+
+
+def cmd_idea_record_evidence_batch(args: argparse.Namespace) -> int:
+    target, run_id = require_ideation_run(args)
+    payload = load_payload(args)
+    record_evidence_batch(
+        target,
+        run_id,
+        idea_ids=args.idea_ids,
+        queries=args.queries,
         evidence_payload=payload or None,
         limit=args.limit,
     )
@@ -667,6 +814,7 @@ def build_parser() -> argparse.ArgumentParser:
     start = research_sub.add_parser("start")
     start.add_argument("--run-id", required=True)
     start.add_argument("--strictness-mode", default="scientist")
+    start.add_argument("--max-subagents", type=int)
     add_json_args(start)
     start.set_defaults(func=cmd_research_start)
     resume = research_sub.add_parser("resume")
@@ -701,6 +849,7 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_start.add_argument("--num-ideas", type=int)
     ideation_start.add_argument("--min-candidates", type=int)
     ideation_start.add_argument("--reflection-budget", type=int)
+    ideation_start.add_argument("--max-subagents", type=int)
     ideation_start.set_defaults(func=cmd_ideation_start)
     ideation_resume = ideation_sub.add_parser("resume")
     ideation_resume.add_argument("--run-id")
@@ -721,19 +870,37 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_rank.add_argument("--run-id")
     add_json_args(ideation_rank)
     ideation_rank.set_defaults(func=cmd_ideation_rank_finalize)
+    ideation_rank_candidates = ideation_sub.add_parser("rank-candidates")
+    ideation_rank_candidates.add_argument("--run-id")
+    ideation_rank_candidates.add_argument("--mode", choices=["deterministic", "agent"], default="deterministic")
+    ideation_rank_candidates.set_defaults(func=cmd_ideation_rank_candidates)
+    ideation_finalize_ready = ideation_sub.add_parser("finalize-ready")
+    ideation_finalize_ready.add_argument("--run-id")
+    ideation_finalize_ready.add_argument("--idea-ids", nargs="+")
+    ideation_finalize_ready.set_defaults(func=cmd_ideation_finalize_ready)
     ideation_intent = ideation_sub.add_parser("intent")
     ideation_intent_sub = ideation_intent.add_subparsers(dest="intent_command", required=True)
     intent_start = ideation_intent_sub.add_parser("start")
     intent_start.add_argument("--run-id")
     intent_start.add_argument("--role", required=True, choices=sorted({"generator", "critic", "ranker"}))
     intent_start.add_argument("--idea-id")
+    intent_start.add_argument("--agent-thread-id")
     intent_start.set_defaults(func=cmd_ideation_intent_start)
+    intent_start_batch = ideation_intent_sub.add_parser("start-batch")
+    intent_start_batch.add_argument("--run-id")
+    intent_start_batch.add_argument("--role", required=True, choices=sorted({"generator", "critic"}))
+    intent_start_batch.add_argument("--count", type=int)
+    intent_start_batch.add_argument("--idea-ids", nargs="+")
+    intent_start_batch.add_argument("--agent-thread-id")
+    intent_start_batch.set_defaults(func=cmd_ideation_intent_start_batch)
     intent_complete = ideation_intent_sub.add_parser("complete")
     intent_complete.add_argument("--run-id")
+    intent_complete.add_argument("--intent-id")
     add_json_args(intent_complete)
     intent_complete.set_defaults(func=cmd_ideation_intent_complete)
     intent_cancel = ideation_intent_sub.add_parser("cancel")
     intent_cancel.add_argument("--run-id")
+    intent_cancel.add_argument("--intent-id")
     intent_cancel.add_argument("--reason", required=True)
     intent_cancel.set_defaults(func=cmd_ideation_intent_cancel)
 
@@ -761,6 +928,13 @@ def build_parser() -> argparse.ArgumentParser:
     idea_search.add_argument("--limit", type=int, default=10)
     add_json_args(idea_search)
     idea_search.set_defaults(func=cmd_idea_search_semantic_scholar)
+    idea_record_evidence_batch = idea_sub.add_parser("record-evidence-batch")
+    idea_record_evidence_batch.add_argument("--run-id")
+    idea_record_evidence_batch.add_argument("--idea-ids", nargs="+", required=True)
+    idea_record_evidence_batch.add_argument("--queries", nargs="+", required=True)
+    idea_record_evidence_batch.add_argument("--limit", type=int, default=10)
+    add_json_args(idea_record_evidence_batch)
+    idea_record_evidence_batch.set_defaults(func=cmd_idea_record_evidence_batch)
     idea_finalize = idea_sub.add_parser("finalize")
     idea_finalize.add_argument("--run-id")
     idea_finalize.add_argument("--idea-id")

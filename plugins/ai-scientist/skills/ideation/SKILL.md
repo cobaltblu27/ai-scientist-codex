@@ -15,10 +15,10 @@ You are the ideation orchestrator. The current Codex session owns the loop. Pyth
 2. Do not mutate target repository source code during ideation. The only target-repository writes are under `.ai-scientist/`.
 3. Install/check the project-local Stop hook before starting a real run.
 4. All state transitions go through `plugins/ai-scientist/scripts/ai_scientist_state_cli.py`.
-5. Record a subagent intent before spawning a generator, critic, or ranker. A pending intent intentionally blocks Stop until you record completion or cancellation.
+5. Record subagent intents before spawning generators, critics, or the ranker. Pending intents intentionally block Stop until you record completion or cancellation.
 6. Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use `gpt-5.5` with `xhigh` effort for substantive idea generation when model controls are available.
 7. Spawn a fresh critic for each draft or revised draft. Include previous critic verdict/revision notes in the new critic prompt; do not reuse long critic context.
-8. Spawn the ranker only after idea generation/reflection is done and at least one researchable candidate exists.
+8. Use deterministic ranking by default. Spawn the ranker only with an explicit `rank-candidates --mode agent` override after idea generation/reflection is done and at least one researchable candidate exists.
 9. `ideation_to_research` means "safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
 10. Do not report success while Stop hook would still block.
 
@@ -27,15 +27,18 @@ You are the ideation orchestrator. The current Codex session owns the loop. Pyth
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
 - `config.json`: frozen ideation config, mode preset, prompt templates, and scoring policy.
-- `loop-state.json`: active cursor, active idea, pending intent, terminal status, candidate/ranking state.
+- `loop-state.json`: active cursor, active idea ids, pending intents, terminal status, candidate/ranking state.
 - `ideas.json`: canonical terminal idea archive.
 - `journal.jsonl`: append-only audit stream.
 - `logs/drafts/*.json`: versioned draft payloads.
 - `logs/critics/*.json`: critic verdict payloads.
 - `logs/semantic-scholar/*.json`: Semantic Scholar response payloads when used.
+- `logs/pending/<intent-id>.json`: assigned path where each subagent writes JSON only.
+- `logs/ideation-contract.json`: shared run context, repo entrypoints, split policy, hardware limits, forbidden workflows, reusable baselines, metric names, and strictness mode.
 - `logs/ranking/ranking-final.json`: final ranking payload.
 
 Root `.ai-scientist/active-run.json` points the Stop hook to the active run.
+Shared Semantic Scholar cache lives under `.ai-scientist/evidence-cache/semantic-scholar/`.
 
 ## Python Launcher
 
@@ -99,13 +102,13 @@ Use the returned `next_action` and prompt text as the immediate loop cursor. Rep
 
 The helper computes `next_action`. Follow it exactly.
 
-- `start_next_idea`: record generator intent, spawn one generator subagent, record draft result.
-- `record_subagent_result`: a previous generator/critic/ranker intent is pending; record completion or cancellation before doing anything else.
+- `start_generator_batch`: record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, then record all draft results.
+- `collect_subagent_results`: previous generator/critic/ranker intents are pending; record completion or cancellation for each representative `intent_id` before doing anything else.
 - `search_semantic_scholar`: run/record Semantic Scholar evidence for the active idea.
-- `spawn_critic`: record critic intent, spawn a fresh critic, record verdict.
-- `revise_or_reject`: critic returned `REVISE` or `REJECT`; revise same idea thread or explicitly reject it.
-- `finalize_idea`: call `idea finalize`; if deterministic gates refuse it, follow the returned error and resume.
-- `rank_candidates`: record ranker intent, spawn ranking agent, record final ranking.
+- `start_critic_batch`: record critic intents for all ready draft `idea_ids`, spawn critics, then record all verdicts.
+- `revise_or_reject_batch`: one or more critics returned `REVISE` or `REJECT`; revise same idea thread(s) or explicitly reject them.
+- `finalize_ready_ideas`: call `ideation finalize-ready`; the transition is atomic and refuses stale critics, duplicate families without a meaningful protocol/metric delta, invalid commands, or missing evidence.
+- `rank_candidates`: call `ideation rank-candidates`; deterministic ranking is default. Use `--mode agent` only when an agent override is needed.
 - `complete_or_exhaust`: call `ideation complete` if researchable candidate and ranking exist; otherwise call `ideation exhaust`.
 
 ## Subagent Protocol
@@ -115,17 +118,17 @@ Before spawning any subagent:
 ```bash
 python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --target-repo <target-repo> \
-  ideation intent start --run-id <run-id> --role generator
+  ideation intent start-batch --run-id <run-id> --role generator --count <n>
 ```
 
-Use `--role critic --idea-id <idea-id>` for critics and `--role ranker` for ranking.
+Use `--role critic --idea-ids <idea-id> ...` for critic batches. Ranking remains single-agent only when explicitly requested: `ideation rank-candidates --mode agent`.
 
-After the subagent returns, record output. Default input is inline JSON. Use `--path` only for oversized payloads.
+Each returned intent includes `result_path`. Give that path to the subagent and require it to overwrite the file with JSON only. `intent complete --intent-id <id>` reads `result_path` by default. Use `--json` or `--path` only as explicit overrides.
 
 ```bash
 python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --target-repo <target-repo> \
-  ideation intent complete --run-id <run-id> --json '<payload>'
+  ideation intent complete --run-id <run-id> --intent-id <intent-id>
 ```
 
 If the subagent result is malformed or unusable, cancel the pending intent with a reason, then resume:
@@ -133,14 +136,14 @@ If the subagent result is malformed or unusable, cancel the pending intent with 
 ```bash
 python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --target-repo <target-repo> \
-  ideation intent cancel --run-id <run-id> --reason "malformed generator output"
+  ideation intent cancel --run-id <run-id> --intent-id <intent-id> --reason "malformed generator output"
 ```
 
-Failed/cancelled attempts consume loop budget. Do not leave a pending intent unresolved.
+Failed/cancelled attempts consume loop budget. Do not leave pending intents unresolved.
 
 ## Generator Agent
 
-Spawn exactly one generator for one idea slot or one substantive revision. The generator should not edit files. It returns one canonical idea object.
+Spawn one generator per idea slot or substantive revision in the current batch. Generators should not edit files. Each returns one canonical idea object.
 
 Generator prompt must include:
 
@@ -156,15 +159,21 @@ Canonical draft payload should include at least:
 ```json
 {
   "id": "idea-001",
+  "family_key": "leakage-aware-optimizer",
   "title": "Short title",
   "hypothesis": "Concrete hypothesis",
+  "unique_protocol": "What makes this experiment distinct from same-family ideas",
   "expected_metric": "Metric or benchmark target",
-  "method": "Proposed method or implementation direction",
-  "experiment_plan": ["Step 1", "Step 2"],
-  "risks": ["Risk 1"],
-  "novelty_rationale": "Required for scientist/researcher; optional for builder/engineer"
+  "smoke_runnable_now": true,
+  "requires_implementation": [],
+  "minimum_command": "uv run python -m pytest",
+  "evidence_refs": [],
+  "rubric_scores": {"feasibility": 80, "repo_fit": 80},
+  "risk_flags": ["Risk 1"]
 }
 ```
+
+Full prose, related work, and detailed plans belong in the referenced draft log, not in persisted state or final `ideas.json`.
 
 If using direct recording instead of `intent complete`:
 
@@ -194,7 +203,15 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   idea search-semantic-scholar --run-id <run-id> --idea-id <idea-id> --json '<evidence JSON>'
 ```
 
-All API evidence is logged to `journal.jsonl` as `api_call`.
+Batch evidence attachment:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  idea record-evidence-batch --run-id <run-id> --idea-ids idea-001 idea-002 --queries "query 1" "query 2"
+```
+
+All API evidence is logged to `journal.jsonl` as `api_call` with provenance `live`, `cache`, or `precomputed`. Batch evidence writes are atomic: one invalid idea id blocks the whole state update.
 
 ## Critic Agent
 
@@ -267,31 +284,39 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 
 Rejected/exhausted ideas stay in the audit trail and final `ideas.json` with `evaluation: "REJECTED"`.
 
-## Finalizing An Idea
+## Finalizing Ideas
 
 Only finalize the latest draft after a fresh critic verdict matching the latest draft hash.
 
 ```bash
 python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --target-repo <target-repo> \
-  idea finalize --run-id <run-id> --idea-id <idea-id>
+  ideation finalize-ready --run-id <run-id>
 ```
 
-If this fails, do not bypass it by editing JSON. Resume and follow the returned error. Common blockers are stale critic, missing S2 evidence for scientist/researcher, or mode disallowing `ACCEPTED_WITHOUT_REFERENCE`.
+Use `idea finalize --idea-id <idea-id>` only for a targeted single-idea transition. If finalization fails, do not bypass it by editing JSON. Resume and follow the returned error. Common blockers are stale critic, missing S2 evidence for scientist/researcher, duplicate family/protocol/metric overlap, invalid `minimum_command`, placeholder commands without `requires_implementation`, or mode disallowing `ACCEPTED_WITHOUT_REFERENCE`.
 
-## Ranking Agent
+## Ranking
 
 After all requested slots are attempted, or after budget forces stopping, rank candidates if at least one researchable candidate exists.
 
-Record intent:
+Default deterministic ranking:
 
 ```bash
 python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --target-repo <target-repo> \
-  ideation intent start --run-id <run-id> --role ranker
+  ideation rank-candidates --run-id <run-id>
 ```
 
-Ranker prompt must include:
+Optional agent override:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  ideation rank-candidates --run-id <run-id> --mode agent
+```
+
+If using the agent override, the ranker prompt must include:
 
 - all terminal ideas from `.ai-scientist/runs/<run-id>/ideas.json`
 - frozen mode config and ranking prompt

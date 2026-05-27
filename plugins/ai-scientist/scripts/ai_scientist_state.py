@@ -687,10 +687,14 @@ def evaluate_ideation_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, "ideation_num_ideas_required_missing", state)
     if not isinstance(idea_states, dict):
         return CompletionResult(False, "ideation_idea_states_missing", state)
+    if len(idea_states) < attempted:
+        return CompletionResult(False, "ideation_attempted_idea_missing", state)
     phase_status = str(state.get("phase_status") or "").lower()
-    if isinstance(phase_state.get("pending_intent"), dict):
+    pending_intents = phase_state.get("pending_intents") if isinstance(phase_state.get("pending_intents"), dict) else {}
+    if pending_intents or isinstance(phase_state.get("pending_intent"), dict):
         return CompletionResult(False, "ideation_pending_intent", state)
-    if phase_state.get("active_idea_id"):
+    active_idea_ids = phase_state.get("active_idea_ids") if isinstance(phase_state.get("active_idea_ids"), list) else []
+    if active_idea_ids or phase_state.get("active_idea_id"):
         return CompletionResult(False, "ideation_active_idea_unresolved", state)
     budget_terminal = phase_status == "completed_budget_exhausted"
     if phase_status not in {"exhausted_no_candidate", "completed_budget_exhausted"} and not phase_state.get("early_stop_allowed") and attempted < required:
@@ -968,11 +972,17 @@ def evaluate_stop_decision(target_repo: Path, payload: dict[str, Any] | None = N
                 cursor = f" Run: {run_id}. Next action: {next_action}."
                 idea_id = details.get("idea_id") or details.get("next_idea_id")
                 intent_id = details.get("intent_id")
+                pending_count = details.get("pending_count")
+                intent_ids = details.get("intent_ids") if isinstance(details.get("intent_ids"), list) else []
                 reason = details.get("reason")
                 if idea_id:
                     cursor += f" Idea: {idea_id}."
                 if intent_id:
                     cursor += f" Intent: {intent_id}."
+                if pending_count:
+                    cursor += f" Pending intents: {pending_count}."
+                if intent_ids:
+                    cursor += f" Representative intents: {', '.join(str(item) for item in intent_ids[:5])}."
                 if reason:
                     cursor += f" Reason: {reason}."
         else:

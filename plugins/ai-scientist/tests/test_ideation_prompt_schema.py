@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import json
 import sys
 import unittest
@@ -11,72 +10,51 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 from test_support import PLUGIN_ROOT
 
-ideation = importlib.import_module("ideation_orchestrator")
+from ideation_state import DEFAULT_IDEATION_CONFIG, IDEA_OUTPUT_SCHEMA  # noqa: E402
 
 
 class IdeationPromptSchemaTests(unittest.TestCase):
-    def test_schema_requires_proposal_grade_scientific_fields(self) -> None:
-        required = set(ideation.IDEA_OUTPUT_SCHEMA["required"])
+    def test_schema_requires_compact_vnext_fields(self) -> None:
+        required = set(IDEA_OUTPUT_SCHEMA["required"])
         for field in {
-            "scientific_insight",
-            "related_work",
-            "abstract",
-            "novelty_rationale",
-            "execution_plan",
-            "experiments",
-            "minimum_evidence",
+            "family_key",
+            "unique_protocol",
+            "expected_metric",
+            "smoke_runnable_now",
+            "requires_implementation",
+            "minimum_command",
+            "evidence_refs",
+            "rubric_scores",
+            "risk_flags",
         }:
             self.assertIn(field, required)
-        execution_plan = ideation.IDEA_OUTPUT_SCHEMA["properties"]["execution_plan"]
-        self.assertGreaterEqual(execution_plan["minItems"], 4)
-        self.assertEqual(
-            set(execution_plan["items"]["required"]),
-            {"step", "purpose", "dataset", "model", "evaluation", "method", "success_criteria"},
-        )
 
-    def test_persisted_idea_schema_matches_required_related_work_contract(self) -> None:
+    def test_persisted_idea_schema_matches_compact_contract(self) -> None:
         schema = json.loads((PLUGIN_ROOT / "schemas" / "idea.schema.json").read_text())
         item_schema = schema["properties"]["ideas"]["items"]
-        self.assertIn("related_work", item_schema["required"])
-        self.assertIn("scientific_insight", item_schema["required"])
-        self.assertIn("execution_plan", item_schema["required"])
+        for field in IDEA_OUTPUT_SCHEMA["required"]:
+            self.assertIn(field, item_schema["required"])
 
-    def test_prompts_reject_thin_metric_tickets(self) -> None:
-        proposal = ideation.build_proposal_prompt("study drug-blind IC50 prediction", "idea-001", "scientist", [])
-        reflection = ideation.build_reflection_prompt(
-            "study drug-blind IC50 prediction",
-            "idea-001",
-            "scientist",
-            {"id": "idea-001", "title": "Thin idea"},
-            [],
-            1,
-            5,
-            [],
-        )
-        finalization = ideation.build_finalization_prompt(
-            "study drug-blind IC50 prediction",
-            "idea-001",
-            "scientist",
-            {"id": "idea-001", "title": "Thin idea"},
-            [],
-            1,
-            5,
-        )
-        combined = "\n".join([proposal, reflection, finalization]).lower()
+    def test_prompts_request_json_only_compact_payloads(self) -> None:
+        modes = DEFAULT_IDEATION_CONFIG["modes"]
+        combined = "\n".join(
+            [
+                modes["scientist"]["idea_generation_prompt_template"],
+                modes["scientist"]["critic_prompt_template"],
+                modes["scientist"]["ranking_prompt_template"],
+            ]
+        ).lower()
         for phrase in [
-            "scientific insight",
-            "related work",
-            "execution plan",
-            "baseline",
-            "ablations",
-            "leakage",
-            "thin metric-improvement ticket",
+            "json",
+            "research idea",
+            "critic",
+            "rank",
+            "verdict",
         ]:
             self.assertIn(phrase, combined)
 
-    def test_ideation_defaults_to_deep_codex_agent_settings(self) -> None:
-        self.assertEqual(ideation.DEFAULT_CODEX_IDEATION_MODEL, "gpt-5.5")
-        self.assertEqual(ideation.DEFAULT_CODEX_IDEATION_REASONING_EFFORT, "xhigh")
+    def test_ideation_defaults_to_six_subagents(self) -> None:
+        self.assertEqual(DEFAULT_IDEATION_CONFIG["concurrency"]["max_subagents"], 6)
 
 
 if __name__ == "__main__":

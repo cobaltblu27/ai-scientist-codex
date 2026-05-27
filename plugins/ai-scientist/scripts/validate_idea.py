@@ -10,6 +10,21 @@ from typing import Any
 
 from ideation_state import IDEA_OUTPUT_SCHEMA
 
+PROPOSAL_GRADE_REQUIRED = [
+    "title",
+    "hypothesis",
+    "scientific_insight",
+    "related_work",
+    "abstract",
+    "novelty_rationale",
+    "required_data",
+    "expected_metric",
+    "execution_plan",
+    "experiments",
+    "risks",
+    "minimum_evidence",
+]
+
 MEASURABLE_TERMS = re.compile(
     r"\b(metric|accuracy|loss|error|rmse|mae|pearson|spearman|auc|f1|precision|recall|score|latency|throughput|perplexity|bleu|rouge|calibration|correlation)\b",
     re.IGNORECASE,
@@ -58,9 +73,23 @@ def title_is_cited(title: str, related_work: str) -> bool:
 
 def schema_minimum_errors(idea: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    for field in IDEA_OUTPUT_SCHEMA["required"]:
+    compact = all(field in idea for field in IDEA_OUTPUT_SCHEMA["required"])
+    required = IDEA_OUTPUT_SCHEMA["required"] if compact else PROPOSAL_GRADE_REQUIRED
+    for field in required:
         if field not in idea:
             errors.append(f"missing required field: {field}")
+    if compact:
+        for field in ["title", "hypothesis", "unique_protocol", "expected_metric", "family_key"]:
+            if field in idea and not str(idea[field]).strip():
+                errors.append(f"field must not be empty: {field}")
+        if not isinstance(idea.get("smoke_runnable_now"), bool):
+            errors.append("smoke_runnable_now must be boolean")
+        for field in ("requires_implementation", "evidence_refs", "risk_flags"):
+            if field in idea and not isinstance(idea[field], list):
+                errors.append(f"{field} must be a list")
+        if "rubric_scores" in idea and not isinstance(idea.get("rubric_scores"), dict):
+            errors.append("rubric_scores must be an object")
+        return errors
     for field in ["title", "hypothesis", "scientific_insight", "related_work", "abstract", "novelty_rationale", "required_data", "expected_metric"]:
         if field in idea and not str(idea[field]).strip():
             errors.append(f"field must not be empty: {field}")
@@ -87,6 +116,13 @@ def validate_idea(idea: dict[str, Any], search_files: list[Path]) -> list[str]:
     hypothesis = str(idea.get("hypothesis", ""))
     if not MEASURABLE_TERMS.search(hypothesis):
         errors.append("hypothesis must name a measurable dependent variable or metric")
+    compact = all(field in idea for field in IDEA_OUTPUT_SCHEMA["required"])
+    if compact:
+        if len(str(idea.get("unique_protocol", "")).split()) < 4:
+            errors.append("unique_protocol must describe a concrete protocol")
+        if idea.get("smoke_runnable_now") is True and not str(idea.get("minimum_command") or "").strip():
+            errors.append("smoke_runnable_now requires minimum_command")
+        return errors
 
     concrete_experiments = [str(exp) for exp in normalize_list(idea.get("experiments")) if EXPERIMENT_TERMS.search(str(exp)) and len(str(exp).split()) >= 8]
     if len(concrete_experiments) < 2:

@@ -83,19 +83,22 @@ def search_and_record(
     if not query:
         raise ValueError("query must not be empty")
     root = ai_dir(target_repo)
-    cache_dir = root / "runs" / run_id / "semantic-scholar-cache"
+    cache_dir = root / "evidence-cache" / "semantic-scholar"
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_key = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
     cache_path = cache_dir / f"search_{cache_key}.json"
     cached = cache_path.exists()
     if cached:
         payload = load_json(cache_path)
-        results = payload.get("results", [])
+        results = payload.get("results", payload.get("evidence", {}).get("results", []))
+        provenance = "cache"
     else:
         results = fixture_results(fixture_path, query, max_results) if fixture_path else live_results(query, max_results)
-        cache_payload = {"query": query, "results": results, "source": "fixture" if fixture_path else "semantic_scholar"}
+        provenance = "precomputed" if fixture_path else "live"
+        cache_payload = {"query": query, "results": results, "source": "fixture" if fixture_path else "semantic_scholar", "provenance": provenance}
         write_json(cache_path, cache_payload)
         write_json(root / "logs" / run_id / "semantic-scholar-cache" / cache_path.name, cache_payload)
+        write_json(root / "runs" / run_id / "semantic-scholar-cache" / cache_path.name, cache_payload)
     append_jsonl(
         root / "runs" / run_id / "api-ledger.jsonl",
         {
@@ -107,8 +110,9 @@ def search_and_record(
             "idea_id": idea_id,
             "reflection_round": reflection_round,
             "query": query,
+            "provenance": provenance,
             "result_count": len(results),
-            "cache_file": str(cache_path.relative_to(root / "runs" / run_id)),
+            "cache_file": str(cache_path),
             "api_key_present": bool(os.environ.get("S2_API_KEY", "").strip()),
         },
     )

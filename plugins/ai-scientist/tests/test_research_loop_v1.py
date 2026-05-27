@@ -134,6 +134,8 @@ class ResearchLoopV1Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+            config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
+            self.assertEqual(config["research"]["concurrency"]["max_subagents"], 6)
             updated = run_cli(
                 target,
                 "research",
@@ -152,6 +154,135 @@ class ResearchLoopV1Tests(unittest.TestCase):
             payload = json.loads(resumed.stdout)
             self.assertEqual(payload["next_action"], "node_work")
             self.assertEqual(payload["next_action_details"]["reason"], "continue implementation review")
+            self.assertEqual(payload["next_action_details"]["subagent_concurrency_limit"], 6)
+            self.assertEqual(payload["next_action_details"]["available_subagent_slots"], 6)
+
+    def test_research_subagent_concurrency_limit_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--max-subagents", "2")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
+            self.assertEqual(config["research"]["concurrency"]["max_subagents"], 2)
+
+            for subagent_id, node_id in (("worker-node-001", "node-001"), ("worker-node-002", "node-002")):
+                proc = run_cli(
+                    target,
+                    "subagent",
+                    "update",
+                    "--run-id",
+                    "run-001",
+                    "--subagent-id",
+                    subagent_id,
+                    "--node-id",
+                    node_id,
+                    "--status",
+                    "running",
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            resumed = run_cli(target, "research", "resume", "--run-id", "run-001")
+            self.assertEqual(resumed.returncode, 0, resumed.stderr + resumed.stdout)
+            self.assertEqual(json.loads(resumed.stdout)["next_action_details"]["available_subagent_slots"], 0)
+
+            blocked = run_cli(
+                target,
+                "subagent",
+                "update",
+                "--run-id",
+                "run-001",
+                "--subagent-id",
+                "worker-node-003",
+                "--node-id",
+                "node-003",
+                "--status",
+                "running",
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("research subagent concurrency limit exceeded: 3 > 2", blocked.stdout)
+
+            integrated = run_cli(
+                target,
+                "subagent",
+                "update",
+                "--run-id",
+                "run-001",
+                "--subagent-id",
+                "worker-node-001",
+                "--status",
+                "integrated",
+            )
+            self.assertEqual(integrated.returncode, 0, integrated.stderr + integrated.stdout)
+            allowed = run_cli(
+                target,
+                "subagent",
+                "update",
+                "--run-id",
+                "run-001",
+                "--subagent-id",
+                "worker-node-003",
+                "--node-id",
+                "node-003",
+                "--status",
+                "running",
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stderr + allowed.stdout)
+
+    def test_research_subagent_update_reads_assigned_result_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+            started = run_cli(
+                target,
+                "subagent",
+                "update",
+                "--run-id",
+                "run-001",
+                "--subagent-id",
+                "worker-node-001",
+                "--node-id",
+                "node-001",
+                "--status",
+                "running",
+            )
+            self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            result_path = Path(json.loads(started.stdout)["result_path"])
+            self.assertTrue(result_path.exists())
+            result_path.write_text(json.dumps({"summary": "implemented approach", "workspace_path": "nodes/node-001/workspace"}) + "\n")
+
+            completed = run_cli(
+                target,
+                "subagent",
+                "update",
+                "--run-id",
+                "run-001",
+                "--subagent-id",
+                "worker-node-001",
+                "--status",
+                "completed_unintegrated",
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            subagent = state["state"]["subagents"]["worker-node-001"]
+            self.assertEqual(subagent["summary"], "implemented approach")
+            self.assertEqual(subagent["result_path"], str(result_path))
+
+    def test_node_transition_reads_assigned_result_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder").returncode, 0)
+            planned = run_cli(target, "node", "transition", "--run-id", "run-001", "--node-id", "node-001", "--status", "implementing")
+            self.assertEqual(planned.returncode, 0, planned.stderr + planned.stdout)
+            result_path = Path(json.loads(planned.stdout)["result_path"])
+            self.assertTrue(result_path.exists())
+            result_path.write_text(json.dumps(accepted_node_payload()) + "\n")
+
+            accepted = run_cli(target, "node", "transition", "--run-id", "run-001", "--node-id", "node-001", "--status", "accepted")
+
+            self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
+            node = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "nodes" / "node-001" / "node.json").read_text())
+            self.assertEqual(node["metrics"]["score"], 0.8)
+            self.assertEqual(node["result_path"], str(result_path))
 
     def test_resource_run_records_flat_trial_and_journal_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

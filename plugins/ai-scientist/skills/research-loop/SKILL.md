@@ -33,6 +33,8 @@ All run state lives under `.ai-scientist/`:
 - `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/`: mutable node workspace.
 - `.ai-scientist/runs/<run-id>/nodes/<node-id>/node.json`: official node evidence.
 - `.ai-scientist/runs/<run-id>/nodes/<node-id>/trials/<trial-id>/`: command logs, stdout, stderr, and command specs from `resource run`.
+- `.ai-scientist/runs/<run-id>/logs/pending/subagents/<subagent-id>.json`: assigned worker result payload path.
+- `.ai-scientist/runs/<run-id>/logs/pending/nodes/<node-id>.json`: assigned node evidence payload path.
 
 `run-status.json` may exist only as derived user-facing output. It is not source of truth.
 
@@ -96,7 +98,9 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --json '<frozen config/state payload>'
 ```
 
-The payload should include any known selected idea snapshot, benchmark command, dependency plan, workspace plan, seed policy, and initial state overrides. If the selected idea came from ideation, copy the selected canonical idea, ranking rationale, mode config snapshot, and evidence summary into this research run. Later ideation edits must not mutate this research input.
+Prefer `--path <payload.json>` over inline `--json` for nontrivial payloads. The payload should include any known selected idea snapshot, benchmark command, dependency plan, workspace plan, seed policy, and initial state overrides. If the selected idea came from ideation, copy the selected canonical idea, ranking rationale, mode config snapshot, and evidence summary into this research run. Later ideation edits must not mutate this research input.
+
+Research subagent concurrency is frozen at run start under `research.concurrency.max_subagents`. Resolution order is `research start --max-subagents <n>`, then payload/project override, then Codex `[agents].max_threads`, then `6`. The resume cursor reports `available_subagent_slots` and `suggested_subagent_count`; use that count as the upper bound for parallel node workers.
 
 Resume:
 
@@ -190,7 +194,19 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --reason "implement selected idea"
 ```
 
-Use `--json` to update node evidence:
+For node work, first transition the node into an active status and capture the returned `result_path`. Give that path to the worker. The worker writes JSON only to that file. A later `node transition` with no `--json` reads the assigned path by default.
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node transition \
+  --run-id <run-id> \
+  --node-id node-001 \
+  --status implementing \
+  --reason "worker owns node-001 implementation"
+```
+
+After the worker writes the node evidence payload to `result_path`:
 
 ```bash
 python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
@@ -199,9 +215,10 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --run-id <run-id> \
   --node-id node-001 \
   --status accepted \
-  --reason "passes benchmark and validation" \
-  --json '{"node":{"benchmark_contract_version":"v1","metrics":{"score":0.81},"split_integrity":{"pass":true},"leakage_check":{"pass":true},"result_summary":"...","mode_deliverables":{"ablation":"..."}}}'
+  --reason "passes benchmark and validation"
 ```
+
+Use `--json` or `--path` only as explicit overrides.
 
 Accepted node evidence must include:
 
@@ -245,7 +262,7 @@ Good subagent tasks:
 - scientific critique
 - final selection review
 
-Parallelism is allowed across different nodes. Do not run multiple workers mutating the same node workspace at once. If GPU is needed, queue GPU-backed work through `resource run` and avoid oversubscribing VRAM.
+Parallelism is allowed across different nodes up to frozen `research.concurrency.max_subagents`. Do not run multiple workers mutating the same node workspace at once. If GPU is needed, queue GPU-backed work through `resource run` and avoid oversubscribing VRAM.
 
 When spawning a worker, include:
 
@@ -258,7 +275,7 @@ When spawning a worker, include:
 - instruction that the worker is not alone in the codebase, must not revert others' edits, and must adapt to existing changes
 - required final output: files changed, commands run, metrics, failure signature if failed, and recommended node status
 
-Record subagent status:
+Record subagent status. The first update returns `result_path`; give that path to the worker and require JSON-only output there:
 
 ```bash
 python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
@@ -267,9 +284,21 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --run-id <run-id> \
   --subagent-id worker-node-001 \
   --node-id node-001 \
-  --status completed_unintegrated \
-  --json '{"summary":"implemented approach","workspace_path":"..."}'
+  --status running
 ```
+
+After the worker writes its result payload to `result_path`:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  subagent update \
+  --run-id <run-id> \
+  --subagent-id worker-node-001 \
+  --status completed_unintegrated
+```
+
+Use `--json` or `--path` only as explicit overrides.
 
 Allowed subagent statuses:
 
@@ -313,6 +342,8 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   selection finalize --run-id <run-id> --json '<selection JSON>'
 ```
 
+Prefer `--path <selection.json>` over inline `--json` for selection payloads.
+
 `selection finalize` requires the selected node to be accepted in `loop-state.json` and all accepted nodes to appear in `ranked_nodes`.
 
 ## Completion And Handoff
@@ -332,7 +363,7 @@ Complete research with a passing audit:
 ```bash
 python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --target-repo <target-repo> \
-  research complete --run-id <run-id> --json '{"passed":true,"prompt_to_artifact_checklist":["baseline complete","selected node accepted","selection finalized"],"verification_evidence":["validate_run.py --gate research_to_review passed"]}'
+  research complete --run-id <run-id> --path .ai-scientist/runs/<run-id>/logs/completion-audit.json
 ```
 
 Then run validator:
