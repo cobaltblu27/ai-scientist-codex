@@ -13,6 +13,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = PLUGIN_ROOT / "scripts"
 CLI = SCRIPT_DIR / "ai_scientist_state_cli.py"
 VALIDATOR = SCRIPT_DIR / "validate_run.py"
+CRITIC_MODEL = "gpt-5.5"
+CRITIC_EFFORT = "xhigh"
 
 
 def fake_codex_bin(target: Path) -> Path:
@@ -88,6 +90,12 @@ def accepted_node_payload(score: float = 0.8, novelty: dict | None = None) -> di
         "split_integrity": {"pass": True, "summary": "same split as baseline"},
         "leakage_check": {"pass": True, "summary": "no leakage found"},
         "result_summary": "Improves the benchmark score over baseline.",
+        "outcome_type": "practical_improvement",
+        "strong_model_evidence": {
+            "confirmation_trials": ["trial-001"],
+            "tuning_plateau_or_exhausted": True,
+            "cheap_improvements_remaining": False,
+        },
         "mode_deliverables": {"builder": ["credible held-out score", "tuning disclosed"]},
         "trials": [
             {
@@ -105,28 +113,181 @@ def accepted_node_payload(score: float = 0.8, novelty: dict | None = None) -> di
     return {"node": node}
 
 
-def critic_payload(verdict: str = "ACCEPT", score: int = 85) -> dict:
+def research_contract() -> dict:
+    return {
+        "primary_hypothesis": "The intervention improves held-out score on the declared benchmark.",
+        "success_criteria": "Accepted score beats baseline with clean split/leakage evidence.",
+        "failure_criteria": "A controlled test proves the hypothesis does not hold under the declared benchmark.",
+        "allowed_rescue_scope": "Only explicitly disclosed benchmark hygiene rescue findings are allowed.",
+        "kill_criteria": "Stop when evidence cannot be produced without changing split, benchmark, or environment.",
+        "metrics_that_matter": ["score"],
+        "non_negotiable_comparisons": ["baseline", "declared split", "leakage check"],
+    }
+
+
+def paper_node_payload(score: float = 0.8, novelty: dict | None = None) -> dict:
+    payload = accepted_node_payload(score=score, novelty=novelty)
+    node = payload["node"]
+    node.update(
+        {
+            "outcome_type": "hypothesis_supported",
+            "current_claim": "The intervention improves held-out score on the declared benchmark.",
+            "claim_equivalence": {"equivalent_to_original": True},
+            "contract_evidence": {"success_criteria_met": True, "failure_criteria_met": False},
+            "paper_worthiness": {"paper_worthy": True, "limitations": ["fixture"]},
+            "mode_deliverables": {"scientist": ["reproducibility_note", "experiment_rationale", "split_leakage_evidence", "ablation_summary", "tuning_summary", "limitations"]},
+        }
+    )
+    return payload
+
+
+def failed_paper_node_payload(score: float = 0.4, novelty: dict | None = None) -> dict:
+    payload = paper_node_payload(score=score, novelty=novelty or {"pass": True, "summary": "negative result is novel enough for fixture"})
+    node = payload["node"]
+    node.update(
+        {
+            "outcome_type": "hypothesis_failed_with_evidence",
+            "current_claim": "The intervention fails under the declared controlled benchmark.",
+            "claim_equivalence": {"equivalent_to_original": False, "reason": "negative resolution of the original hypothesis"},
+            "contract_evidence": {
+                "success_criteria_met": False,
+                "failure_criteria_met": True,
+                "routine_optimization_failure": False,
+                "tested_conditions": ["declared split", "leakage check", "controlled baseline comparison"],
+            },
+            "fundamental_failure_reason": "Controlled tests under the frozen contract show the original hypothesis does not hold.",
+            "paper_worthiness": {"paper_worthy": True, "limitations": ["fixture negative-result evidence"]},
+        }
+    )
+    return payload
+
+
+def selection_payload(
+    *,
+    selected_node: str = "node-001",
+    outcome_type: str = "practical_improvement",
+    baseline_metric: float = 0.5,
+    selected_metric: float = 0.8,
+    rationale: str = "selected accepted node has strongest evidence",
+) -> dict:
+    return {
+        "outcome_type": outcome_type,
+        "metric_key": "score",
+        "metric_direction": "maximize",
+        "baseline_metric": baseline_metric,
+        "selected_metric": selected_metric,
+        "ranked_nodes": [{"node_id": selected_node, "selection_score": int(selected_metric * 100)}],
+        "rejected_or_superseded": [],
+        "rationale": rationale,
+    }
+
+
+def critic_payload(
+    verdict: str = "ACCEPT",
+    score: int = 85,
+    *,
+    role: str = "performance_auditor",
+    mode: str = "builder",
+    outcome_type: str = "practical_improvement",
+) -> dict:
     payload = {
         "verdict": verdict,
+        "mode": mode,
+        "critic_role": role,
         "score": score,
         "rationale": f"{verdict} rationale with enough detail",
+        "acceptance_checks": {
+            "metric_contract_valid": True,
+            "split_integrity_valid": True,
+            "leakage_check_valid": True,
+            "all_trials_accounted_for": True,
+            "claim_matches_evidence": True,
+            "mode_specific_bar_met": True,
+            "cheap_improvements_remaining": False,
+        },
+        "missed_opportunity_scan": {
+            "searched": ["hyperparameters", "data cleaning", "architecture"],
+            "actionable_improvements": [],
+            "why_remaining_ideas_are_not_worth_running": "fixture result has exhausted cheap improvements",
+        },
         "strengths": ["clear benchmark evidence"],
         "weaknesses": ["limited scope"],
         "required_revisions": [],
         "risk_flags": [],
     }
+    if mode in {"scientist", "researcher"} and role == "claim_critic":
+        claim_fields = {
+            "hypothesis_supported": {
+                "original_hypothesis_verdict": "supported",
+                "paper_worthy": True,
+                "contract_success_met": True,
+                "contract_failure_met": False,
+                "rescue_scope_met": False,
+                "fundamental_failure": False,
+            },
+            "hypothesis_failed_with_evidence": {
+                "original_hypothesis_verdict": "failed",
+                "paper_worthy": True,
+                "contract_success_met": False,
+                "contract_failure_met": True,
+                "rescue_scope_met": False,
+                "fundamental_failure": True,
+            },
+            "rescue_finding_with_failed_hypothesis": {
+                "original_hypothesis_verdict": "rescue",
+                "paper_worthy": True,
+                "contract_success_met": False,
+                "contract_failure_met": True,
+                "rescue_scope_met": True,
+                "fundamental_failure": True,
+            },
+        }
+        payload.update(
+            claim_fields.get(outcome_type, claim_fields["hypothesis_supported"])
+        )
     if verdict == "REVISE":
         payload["required_revisions"] = ["add validation evidence"]
     return payload
 
 
-def record_node_critic(target: Path, node_id: str = "node-001", verdict: str = "ACCEPT", run_id: str = "run-001") -> subprocess.CompletedProcess[str]:
-    started = run_cli(target, "node", "critic-start", "--run-id", run_id, "--node-id", node_id)
+def record_node_critic(
+    target: Path,
+    node_id: str = "node-001",
+    verdict: str = "ACCEPT",
+    run_id: str = "run-001",
+    *,
+    role: str | None = "performance_auditor",
+    mode: str = "builder",
+) -> subprocess.CompletedProcess[str]:
+    args = ["node", "critic-start", "--run-id", run_id, "--node-id", node_id]
+    if role:
+        args.extend(["--role", role])
+    started = run_cli(target, *args)
     if started.returncode != 0:
         return started
+    started_payload = json.loads(started.stdout)
+    spawned = run_cli(
+        target,
+        "node",
+        "critic-spawn-record",
+        "--run-id",
+        run_id,
+        "--critic-id",
+        started_payload["critic_id"],
+        "--agent-id",
+        f"agent-{started_payload['critic_id']}",
+        "--model",
+        CRITIC_MODEL,
+        "--reasoning-effort",
+        CRITIC_EFFORT,
+    )
+    if spawned.returncode != 0:
+        return spawned
     result_path = Path(json.loads(started.stdout)["result_path"])
-    result_path.write_text(json.dumps(critic_payload(verdict)) + "\n")
-    return run_cli(target, "node", "critic-complete", "--run-id", run_id, "--critic-id", json.loads(started.stdout)["critic_id"])
+    node_path = target / ".ai-scientist" / "runs" / run_id / "nodes" / node_id / "node.json"
+    node = json.loads(node_path.read_text()) if node_path.exists() else {}
+    result_path.write_text(json.dumps(critic_payload(verdict, role=started_payload["critic_role"], mode=mode, outcome_type=node.get("outcome_type", "practical_improvement"))) + "\n")
+    return run_cli(target, "node", "critic-complete", "--run-id", run_id, "--critic-id", started_payload["critic_id"])
 
 
 def accept_node_with_critic(target: Path, node_id: str = "node-001", payload: dict | None = None, run_id: str = "run-001") -> subprocess.CompletedProcess[str]:
@@ -146,6 +307,28 @@ def accept_node_with_critic(target: Path, node_id: str = "node-001", payload: di
     if candidate.returncode != 0:
         return candidate
     return record_node_critic(target, node_id=node_id, verdict="ACCEPT", run_id=run_id)
+
+
+def accept_paper_node_with_critics(target: Path, node_id: str = "node-001", payload: dict | None = None, run_id: str = "run-001", mode: str = "scientist") -> subprocess.CompletedProcess[str]:
+    candidate = run_cli(
+        target,
+        "node",
+        "transition",
+        "--run-id",
+        run_id,
+        "--node-id",
+        node_id,
+        "--status",
+        "candidate",
+        "--json",
+        json.dumps(payload or paper_node_payload(novelty={"pass": True, "summary": "novel"})),
+    )
+    if candidate.returncode != 0:
+        return candidate
+    first = record_node_critic(target, node_id=node_id, verdict="ACCEPT", run_id=run_id, role="evidence_auditor", mode=mode)
+    if first.returncode != 0:
+        return first
+    return record_node_critic(target, node_id=node_id, verdict="ACCEPT", run_id=run_id, role="claim_critic", mode=mode)
 
 
 class ResearchLoopV1Tests(unittest.TestCase):
@@ -177,7 +360,7 @@ class ResearchLoopV1Tests(unittest.TestCase):
                 "--selected-node",
                 "node-001",
                 "--json",
-                json.dumps({"ranked_nodes": [{"node_id": "node-001", "selection_score": 80}]}),
+                json.dumps(selection_payload()),
             )
             self.assertEqual(selected.returncode, 0, selected.stderr)
 
@@ -204,6 +387,19 @@ class ResearchLoopV1Tests(unittest.TestCase):
             self.assertIn("state_transition", event_types)
             self.assertIn("validation", event_types)
             self.assertIn("handoff", event_types)
+
+    def test_selection_finalize_requires_metric_contract_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            accepted = accept_node_with_critic(target)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
+            incomplete = selection_payload()
+            incomplete.pop("metric_direction")
+            selected = run_cli(target, "selection", "finalize", "--selected-node", "node-001", "--json", json.dumps(incomplete))
+            self.assertNotEqual(selected.returncode, 0)
+            self.assertIn("selection finalize requires metric_direction", selected.stdout)
 
     def test_resume_returns_recorded_next_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -562,13 +758,16 @@ class ResearchLoopV1Tests(unittest.TestCase):
     def test_scientist_mode_requires_passing_novelty_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
-            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "scientist").returncode, 0)
+            self.assertEqual(
+                run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "scientist", "--json", json.dumps({"research_contract": research_contract()})).returncode,
+                0,
+            )
             write_baseline(target)
             checkpoint = run_cli(target, "research", "checkpoint", "--json", json.dumps({"state": {"baseline_status": "complete"}}))
             self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr)
-            accepted = accept_node_with_critic(target)
+            accepted = accept_paper_node_with_critics(target, payload=paper_node_payload(novelty={"pass": False, "summary": "not novel"}))
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
-            selected = run_cli(target, "selection", "finalize", "--selected-node", "node-001", "--json", json.dumps({"ranked_nodes": [{"node_id": "node-001"}]}))
+            selected = run_cli(target, "selection", "finalize", "--selected-node", "node-001", "--json", json.dumps(selection_payload(outcome_type="hypothesis_supported")))
             self.assertEqual(selected.returncode, 0, selected.stderr)
             completed = run_cli(
                 target,
@@ -613,11 +812,11 @@ class ResearchLoopV1Tests(unittest.TestCase):
                 self.assertIn(f"terminal node status {status} requires node critic-complete", direct.stdout)
 
     def test_critic_verdicts_drive_node_statuses(self) -> None:
-        cases = [("ACCEPT", "accepted"), ("REVISE", "candidate"), ("INVALID", "invalid"), ("REJECT", "rejected")]
+        cases = [("ACCEPT", "accepted"), ("REVISE", "repairing"), ("INVALID", "invalid"), ("REJECT", "rejected")]
         for verdict, expected_status in cases:
             with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as tmp:
                 target = Path(tmp)
-                self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+                self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder").returncode, 0)
                 candidate = run_cli(
                     target,
                     "node",
@@ -634,11 +833,179 @@ class ResearchLoopV1Tests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
                 state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
                 self.assertEqual(state["state"]["nodes"]["node-001"]["status"], expected_status)
+                if verdict == "REVISE":
+                    self.assertEqual(state["state"]["orchestrator"]["next_action"], "node_repair")
+                    self.assertIn("repairs", state["state"])
+
+    def test_critic_runtime_is_required_and_spawn_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder").returncode, 0)
+            candidate = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "candidate", "--json", json.dumps(accepted_node_payload()))
+            self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
+            started = run_cli(target, "node", "critic-start", "--node-id", "node-001")
+            self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            started_payload = json.loads(started.stdout)
+            self.assertEqual(started_payload["required_model"], CRITIC_MODEL)
+            self.assertEqual(started_payload["required_reasoning_effort"], CRITIC_EFFORT)
+
+            result_path = Path(started_payload["result_path"])
+            result_path.write_text(json.dumps(critic_payload("ACCEPT")) + "\n")
+            missing_spawn = run_cli(target, "node", "critic-complete", "--critic-id", started_payload["critic_id"])
+            self.assertNotEqual(missing_spawn.returncode, 0)
+            self.assertIn("critic spawn metadata is required", missing_spawn.stdout)
+
+    def test_critic_spawn_rejects_non_xhigh_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder").returncode, 0)
+            candidate = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "candidate", "--json", json.dumps(accepted_node_payload()))
+            self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
+
+            for args, expected in (
+                (["--model", "gpt-5.4", "--reasoning-effort", CRITIC_EFFORT], "critic spawn model mismatch"),
+                (["--model", CRITIC_MODEL, "--reasoning-effort", "medium"], "critic spawn reasoning effort mismatch"),
+            ):
+                started = run_cli(target, "node", "critic-start", "--node-id", "node-001")
+                self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+                payload = json.loads(started.stdout)
+                spawned = run_cli(
+                    target,
+                    "node",
+                    "critic-spawn-record",
+                    "--critic-id",
+                    payload["critic_id"],
+                    "--agent-id",
+                    f"agent-{payload['critic_id']}",
+                    *args,
+                )
+                self.assertNotEqual(spawned.returncode, 0)
+                self.assertIn(expected, spawned.stdout)
+
+    def test_accept_with_cheap_improvement_remaining_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder").returncode, 0)
+            candidate = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "candidate", "--json", json.dumps(accepted_node_payload()))
+            self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
+            started = run_cli(target, "node", "critic-start", "--node-id", "node-001")
+            self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            started_payload = json.loads(started.stdout)
+            spawned = run_cli(
+                target,
+                "node",
+                "critic-spawn-record",
+                "--critic-id",
+                started_payload["critic_id"],
+                "--agent-id",
+                "agent-cheap",
+                "--model",
+                CRITIC_MODEL,
+                "--reasoning-effort",
+                CRITIC_EFFORT,
+            )
+            self.assertEqual(spawned.returncode, 0, spawned.stderr + spawned.stdout)
+            critic = critic_payload("ACCEPT")
+            critic["acceptance_checks"]["cheap_improvements_remaining"] = True
+            Path(started_payload["result_path"]).write_text(json.dumps(critic) + "\n")
+            completed = run_cli(target, "node", "critic-complete", "--critic-id", started_payload["critic_id"])
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("cheap_improvements_remaining", completed.stdout)
+
+    def test_revise_requires_worker_repair_before_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder").returncode, 0)
+            candidate = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "candidate", "--json", json.dumps(accepted_node_payload()))
+            self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
+            revised = record_node_critic(target, verdict="REVISE")
+            self.assertEqual(revised.returncode, 0, revised.stderr + revised.stdout)
+            repair = json.loads(revised.stdout)["repair"]
+            blocked = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "candidate", "--json", json.dumps(accepted_node_payload(score=0.81)))
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("candidate transition requires completed worker repair payload", blocked.stdout)
+
+            Path(repair["result_path"]).write_text(
+                json.dumps(
+                    {
+                        "repair_id": repair["repair_id"],
+                        "node_id": "node-001",
+                        "files_changed": ["nodes/node-001/workspace/train.py"],
+                        "commands_run": [],
+                        "fixed_revisions": [],
+                        "remaining_required_revisions": ["add validation evidence"],
+                        "recommended_status": "candidate",
+                    }
+                )
+                + "\n"
+            )
+            continued = run_cli(target, "node", "repair-complete", "--repair-id", repair["repair_id"])
+            self.assertEqual(continued.returncode, 0, continued.stderr + continued.stdout)
+            continued_payload = json.loads(continued.stdout)
+            self.assertEqual(continued_payload["repair_status"], "continued")
+            followup = continued_payload["followup_repair"]
+            self.assertIsInstance(followup, dict)
+
+            Path(followup["result_path"]).write_text(
+                json.dumps(
+                    {
+                        "repair_id": followup["repair_id"],
+                        "node_id": "node-001",
+                        "files_changed": ["nodes/node-001/workspace/train.py"],
+                        "commands_run": [],
+                        "fixed_revisions": ["add validation evidence"],
+                        "remaining_risks": [],
+                        "recommended_status": "candidate",
+                    }
+                )
+                + "\n"
+            )
+            completed = run_cli(target, "node", "repair-complete", "--repair-id", followup["repair_id"])
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            repaired_candidate = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "candidate", "--json", json.dumps(accepted_node_payload(score=0.82)))
+            self.assertEqual(repaired_candidate.returncode, 0, repaired_candidate.stderr + repaired_candidate.stdout)
+
+    def test_scientist_research_can_complete_with_failed_hypothesis_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "scientist", "--json", json.dumps({"research_contract": research_contract()}))
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            write_baseline(target, score=0.5)
+            checkpoint = run_cli(target, "research", "checkpoint", "--json", json.dumps({"state": {"baseline_status": "complete"}}))
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr + checkpoint.stdout)
+            accepted = accept_paper_node_with_critics(target, payload=failed_paper_node_payload(score=0.4))
+            self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
+            selected = run_cli(
+                target,
+                "selection",
+                "finalize",
+                "--selected-node",
+                "node-001",
+                "--json",
+                json.dumps(
+                    selection_payload(
+                        outcome_type="hypothesis_failed_with_evidence",
+                        baseline_metric=0.5,
+                        selected_metric=0.4,
+                        rationale="ending with negative research result under the frozen contract",
+                    )
+                ),
+            )
+            self.assertEqual(selected.returncode, 0, selected.stderr + selected.stdout)
+            audit = {
+                "passed": True,
+                "prompt_to_artifact_checklist": ["baseline exists", "node-001 accepted negative outcome", "node-001 selected"],
+                "verification_evidence": ["validate_run.py --gate research_to_review"],
+            }
+            completed = run_cli(target, "research", "complete", "--json", json.dumps(audit))
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            validator = run_validator(target)
+            self.assertEqual(validator.returncode, 0, validator.stderr + validator.stdout)
 
     def test_stale_node_critic_result_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
-            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder").returncode, 0)
             candidate = run_cli(
                 target,
                 "node",
@@ -653,6 +1020,21 @@ class ResearchLoopV1Tests(unittest.TestCase):
             self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
             started = run_cli(target, "node", "critic-start", "--node-id", "node-001")
             self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            started_payload = json.loads(started.stdout)
+            spawned = run_cli(
+                target,
+                "node",
+                "critic-spawn-record",
+                "--critic-id",
+                started_payload["critic_id"],
+                "--agent-id",
+                "agent-stale",
+                "--model",
+                CRITIC_MODEL,
+                "--reasoning-effort",
+                CRITIC_EFFORT,
+            )
+            self.assertEqual(spawned.returncode, 0, spawned.stderr + spawned.stdout)
             update = run_cli(
                 target,
                 "node",
@@ -665,9 +1047,9 @@ class ResearchLoopV1Tests(unittest.TestCase):
                 json.dumps(accepted_node_payload(score=0.9)),
             )
             self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
-            result_path = Path(json.loads(started.stdout)["result_path"])
+            result_path = Path(started_payload["result_path"])
             result_path.write_text(json.dumps(critic_payload("ACCEPT")) + "\n")
-            completed = run_cli(target, "node", "critic-complete", "--critic-id", json.loads(started.stdout)["critic_id"])
+            completed = run_cli(target, "node", "critic-complete", "--critic-id", started_payload["critic_id"])
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("critic result is stale", completed.stdout)
 

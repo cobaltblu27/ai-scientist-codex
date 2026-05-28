@@ -19,6 +19,8 @@ Use this skill to turn one selected idea into one or more experiment nodes, run 
 8. No mode permits leakage, split manipulation, train/test contamination, deceptive scoring, hidden cherry-picking, or unlogged benchmark changes.
 9. In non-yolo dependency mode, do not request or install mid-loop dependencies. Work with the frozen environment or reject the node.
 10. Do not complete research while any node, subagent, or blocking resource remains unresolved.
+11. Every node critic must use the frozen critic runtime from `config.json`: `gpt-5.5` with `reasoning_effort: xhigh` unless the run config explicitly changes it. Record parent-side spawn metadata before completing the critic.
+12. The orchestrator does not repair scientific node evidence itself. `REVISE`, `buggy`, and `repairing` require worker-owned continuation until the node is accepted, rejected, invalid, or blocked by a real environment/resource/reproducibility/user-decision blocker.
 
 ## Source-Of-Truth Artifacts
 
@@ -35,6 +37,10 @@ All run state lives under `.ai-scientist/`:
 - `.ai-scientist/runs/<run-id>/nodes/<node-id>/trials/<trial-id>/`: command logs, stdout, stderr, and command specs from `resource run`.
 - `.ai-scientist/runs/<run-id>/logs/pending/subagents/<subagent-id>.json`: assigned worker result payload path.
 - `.ai-scientist/runs/<run-id>/logs/pending/nodes/<node-id>.json`: assigned node evidence payload path.
+- `.ai-scientist/runs/<run-id>/logs/pending/critics/<critic-id>.json`: assigned critic result payload path.
+- `.ai-scientist/runs/<run-id>/logs/pending/repairs/<repair-id>.json`: assigned worker repair result payload path.
+- `.ai-scientist/runs/<run-id>/logs/critics/<critic-id>.json`: completed critic record, including required runtime and parent-side spawn metadata.
+- `.ai-scientist/runs/<run-id>/logs/repairs/<repair-id>.json`: completed or continued worker repair record.
 
 `run-status.json` may exist only as derived user-facing output. It is not source of truth.
 
@@ -57,11 +63,11 @@ unclear and the command is required, ask or fail fast with a clear blocker.
 
 Default mode is `scientist`. Mode is frozen once the research run starts.
 
-- `scientist`: maintain a publishable claim, strict split/leakage discipline, fixed split seeds, fair model seeds, multi-seed final confirmation, ablations, novelty evidence, and causal link between method and result.
-- `researcher`: maintain a research hypothesis with meaningful ablation and reproducibility; limited pragmatic tuning is allowed after hypothesis validation.
+- `scientist`: maintain a publishable claim, strict split/leakage discipline, fixed split seeds, fair model seeds, multi-seed final confirmation, ablations, novelty evidence, and causal link between method and result. Valid accepted outcomes are `hypothesis_supported`, `hypothesis_failed_with_evidence`, or `rescue_finding_with_failed_hypothesis`.
+- `researcher`: maintain a research hypothesis with meaningful ablation and reproducibility; limited pragmatic tuning is allowed after hypothesis validation. Valid accepted outcomes are the same research outcome types as scientist, with a lighter reproducibility bar.
 - `balanced`: beat baseline credibly, preserve split integrity, include lightweight ablation or sensitivity evidence.
 - `builder`: optimize for practical held-out performance with transparent tuning and leakage checks; novelty is optional.
-- `engineer`: optimize for strong credible score, fixed benchmark/split, leakage checks, and selection/tuning log; novelty is optional.
+- `engineer`: optimize for strong credible score, fixed benchmark/split, leakage checks, and selection/tuning log; novelty is optional. A merely positive baseline delta is not enough if cheap bounded improvements remain.
 
 Fixed split seeds apply to all modes. Scientist/researcher should also avoid abusing training seeds; builder/engineer may use pragmatic tuning if it is logged and does not manipulate the split.
 
@@ -103,6 +109,8 @@ Prefer `--path <payload.json>` over inline `--json` for nontrivial payloads. The
 Research subagent concurrency is frozen at run start under `research.concurrency.max_subagents`. Resolution order is `research start --max-subagents <n>`, then payload/project override, then Codex `~/.codex/config.toml` `[agents].max_threads`, then `6`. The frozen config records the source. The resume cursor reports `available_subagent_slots`, `suggested_subagent_count`, and `subagent_concurrency_source`; use that count as the upper bound for parallel node workers.
 
 Research usage-cap defaults are also frozen at run start under `research.usage_cap`: enabled, warn at 85%, block new LLM/subagent work at 95%, poll every 600 seconds, and read `limit_id: codex` from `codex app-server account/rateLimits/read`. `research start` performs the first usage check. `research resume` refreshes stale usage, includes `usage_cap` in `next_action_details`, and returns `next_action: blocked_on_usage_limit` when capped. Before starting strategist/node/critic subagent work, run through the helper entrypoints so the cap is enforced and logged. Use `research usage-check --run-id <run-id> --force` for an explicit refresh. `research start --no-limit-host-cap` or `research.usage_cap.no_limit_host_cap: true` logs usage warnings without blocking; default mode fails closed if usage cannot be read.
+
+Scientist/researcher runs must freeze a `research_contract` in `config.json` before work begins. It must state the primary hypothesis, success criteria, failure criteria, allowed rescue scope, kill criteria, metrics that matter, and non-negotiable comparisons. This contract is the standard critics use to distinguish supported hypotheses, solid negative results, and rescues from quiet claim narrowing.
 
 Resume:
 
@@ -233,6 +241,13 @@ Accepted node evidence must include:
 - at least one trial record
 - for scientist/researcher, novelty evidence when required by validator/config
 
+Accepted node outcome evidence must also include:
+
+- `outcome_type`: `hypothesis_supported`, `hypothesis_failed_with_evidence`, `rescue_finding_with_failed_hypothesis`, or `practical_improvement`
+- for scientist/researcher: `current_claim`, `claim_equivalence`, `contract_evidence`, and `paper_worthiness`
+- for `hypothesis_failed_with_evidence`: `fundamental_failure_reason` and `contract_evidence.failure_criteria_met: true`
+- for builder/engineer: `strong_model_evidence` with confirmation trials, tuning plateau or exhaustion, and `cheap_improvements_remaining: false`
+
 Rejected/invalid nodes need a clear rejection reason or failure signature.
 
 ## Node Critics
@@ -247,13 +262,44 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   node critic-start --run-id <run-id> --node-id node-001
 ```
 
-Give the returned `prompt` and `result_path` to a fresh critic. The critic writes JSON only to `result_path`:
+Scientist/researcher require two critic roles: `evidence_auditor` and `claim_critic`. Builder/engineer require `performance_auditor`. Use `--role <role>` when starting a specific role, otherwise the helper chooses the first missing required role.
+
+`critic-start` returns `required_model`, `required_reasoning_effort`, `critic_role`, `rubric_snapshot`, `evidence_fingerprint`, `prompt`, and `result_path`. Spawn the critic with the returned runtime, then record parent-side spawn metadata:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node critic-spawn-record \
+  --run-id <run-id> \
+  --critic-id <critic-id> \
+  --agent-id <agent-id> \
+  --model gpt-5.5 \
+  --reasoning-effort xhigh
+```
+
+Give the returned `prompt` and `result_path` to the fresh critic. The critic writes JSON only to `result_path`:
 
 ```json
 {
   "verdict": "ACCEPT",
+  "mode": "engineer",
+  "critic_role": "performance_auditor",
   "score": 84,
   "rationale": "Final evidence is complete and reproducible.",
+  "acceptance_checks": {
+    "metric_contract_valid": true,
+    "split_integrity_valid": true,
+    "leakage_check_valid": true,
+    "all_trials_accounted_for": true,
+    "claim_matches_evidence": true,
+    "mode_specific_bar_met": true,
+    "cheap_improvements_remaining": false
+  },
+  "missed_opportunity_scan": {
+    "searched": ["hyperparameters", "data cleaning", "architecture", "training schedule", "evaluation bugs"],
+    "actionable_improvements": [],
+    "why_remaining_ideas_are_not_worth_running": "No cheap bounded improvement remains under the frozen budget."
+  },
   "strengths": ["clean split evidence"],
   "weaknesses": ["limited ablations"],
   "required_revisions": [],
@@ -272,13 +318,15 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Verdict mapping:
 
 - `ACCEPT` -> `accepted`
-- `REVISE` -> `candidate`
+- `REVISE` -> `repairing` plus a worker repair assignment
 - `INVALID` -> `invalid`
 - `REJECT` -> `rejected`
 
-Small progress or partial success must be `REVISE`/`candidate`, not `ACCEPT`. Critic completion fails if node evidence changed after `critic-start`.
+Small progress or partial success must be `REVISE`/`repairing`, not `ACCEPT`. Critic completion fails if node evidence changed after `critic-start`, required runtime metadata is missing/wrong, required acceptance checks are missing, `cheap_improvements_remaining` is true, or actionable improvements are listed.
 
-## Bug Repair
+In scientist/researcher mode, `claim_critic` must explicitly answer whether the original hypothesis is supported, failed with evidence, or an approved rescue. A narrowed but useful claim is not a success unless the selected `outcome_type` says it is a rescue or failed-hypothesis result.
+
+## Bug And Revision Repair
 
 Let node workers debug themselves when practical; waiting for the orchestrator on every error burns tokens. There is no hard repair-attempt limit. The orchestrator should intervene when the same failure repeats without new information, when the worker requests a decision, or when an environment/reproducibility blocker appears.
 
@@ -292,6 +340,33 @@ Buggy node records should include:
 - next action
 
 Do not complete research with any node in `buggy`, `repairing`, `candidate`, `planned`, `implementing`, `running`, or `validating`.
+
+When a critic returns `REVISE`, the helper creates a repair assignment and sets `orchestrator.next_action = node_repair`. Spawn or continue a worker for that node and pass the repair `result_path`, required revisions, critic ref, failed command/trial logs, and node workspace path. The worker edits only the node workspace unless explicitly authorized.
+
+Repair payload:
+
+```json
+{
+  "repair_id": "repair-node-001-001",
+  "node_id": "node-001",
+  "files_changed": [],
+  "commands_run": [],
+  "fixed_revisions": [],
+  "remaining_required_revisions": [],
+  "remaining_risks": [],
+  "recommended_status": "candidate"
+}
+```
+
+Complete repair:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node repair-complete --run-id <run-id> --repair-id <repair-id>
+```
+
+If required revisions remain and no real blocker is recorded, the helper creates a follow-up repair assignment and keeps the node in `repairing`. `node transition --status candidate` is refused until the open repair has a completed worker payload. After repair, run official evidence through `resource run`, transition back to `candidate`, and start a fresh xhigh critic.
 
 ## Subagents
 
@@ -369,6 +444,11 @@ Selection payload:
 ```json
 {
   "selected_node": "node-001",
+  "outcome_type": "practical_improvement",
+  "metric_key": "score",
+  "metric_direction": "maximize",
+  "baseline_metric": 0.5,
+  "selected_metric": 0.73,
   "ranked_nodes": [
     {
       "node_id": "node-001",
@@ -392,6 +472,8 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Prefer `--path <selection.json>` over inline `--json` for selection payloads.
 
 `selection finalize` requires the selected node to be accepted in `loop-state.json` with a fresh `ACCEPT` critic verdict, and all accepted nodes to appear in `ranked_nodes`.
+
+For scientist/researcher, selecting `hypothesis_failed_with_evidence` is a valid successful research-loop ending only when the frozen contract failure criteria are satisfied, the node has a `fundamental_failure_reason`, and the `claim_critic` marks `fundamental_failure: true`. Routine failed tuning, inconclusive tests, or a weak implementation do not qualify.
 
 ## Completion And Handoff
 

@@ -77,10 +77,48 @@ from usage_cap import (
 )
 
 MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
+PAPER_MODES = {"scientist", "researcher"}
+PRACTICAL_MODES = {"balanced", "builder", "engineer"}
 NODE_STATUSES = {"planned", "implementing", "running", "buggy", "repairing", "candidate", "validating", "accepted", "invalid", "rejected"}
 NODE_TERMINAL_STATUSES = {"accepted", "invalid", "rejected"}
 CRITIC_VERDICTS = {"ACCEPT", "REVISE", "INVALID", "REJECT"}
-CRITIC_STATUS_BY_VERDICT = {"ACCEPT": "accepted", "REVISE": "candidate", "INVALID": "invalid", "REJECT": "rejected"}
+CRITIC_STATUS_BY_VERDICT = {"ACCEPT": "accepted", "REVISE": "repairing", "INVALID": "invalid", "REJECT": "rejected"}
+CRITIC_ROLES = {"evidence_auditor", "claim_critic", "performance_auditor"}
+DEFAULT_CRITIC_AGENT = {"model": "gpt-5.5", "reasoning_effort": "xhigh", "required": True}
+REQUIRED_CONTRACT_KEYS = {
+    "primary_hypothesis",
+    "success_criteria",
+    "failure_criteria",
+    "allowed_rescue_scope",
+    "kill_criteria",
+    "metrics_that_matter",
+    "non_negotiable_comparisons",
+}
+OUTCOME_TYPES = {
+    "hypothesis_supported",
+    "hypothesis_failed_with_evidence",
+    "rescue_finding_with_failed_hypothesis",
+    "practical_improvement",
+}
+PAPER_OUTCOME_TYPES = {
+    "hypothesis_supported",
+    "hypothesis_failed_with_evidence",
+    "rescue_finding_with_failed_hypothesis",
+}
+REQUIRED_ACCEPTANCE_CHECKS = {
+    "metric_contract_valid",
+    "split_integrity_valid",
+    "leakage_check_valid",
+    "all_trials_accounted_for",
+    "claim_matches_evidence",
+    "mode_specific_bar_met",
+}
+DEFAULT_PERFORMANCE_BAR = {
+    "min_improvement_margin": 0.0,
+    "min_confirmation_trials": 1,
+    "tuning_budget_policy": "plateau_or_exhausted",
+    "cheap_improvement_definition": "bounded, low-risk change within the frozen run budget and resource policy",
+}
 SUBAGENT_STATUSES = {
     "planned",
     "running",
@@ -98,23 +136,28 @@ NODE_USAGE_GATED_STATUSES = {"implementing", "running", "validating", "repairing
 RESEARCH_NODE_CRITIC_PROMPTS = {
     "scientist": (
         "You are an independent research-node critic in scientist mode. Review node {node_id} for novelty, evidence, ablations, leakage/split integrity, "
-        "reproducibility, and publishability. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+        "reproducibility, publishability, and fidelity to the frozen research contract. Partial success, promising progress, quiet claim narrowing, "
+        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
     ),
     "researcher": (
         "You are an independent research-node critic in researcher mode. Review node {node_id} for research usefulness, evidence quality, ablations, leakage/split "
-        "integrity, reproducibility, and publishability. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+        "integrity, reproducibility, publishability, and fidelity to the frozen research contract. Partial success, promising progress, quiet claim narrowing, "
+        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
     ),
     "balanced": (
         "You are an independent research-node critic in balanced mode. Review node {node_id} for benchmark integrity, evidence, implementation quality, leakage/split "
-        "integrity, reproducibility, practical value, and risk. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+        "integrity, reproducibility, practical value, risk, and whether cheap validation remains. Partial success, promising progress, or evidence needing validation "
+        "must be REVISE/repairing, not ACCEPT."
     ),
     "engineer": (
         "You are an independent research-node critic in engineer mode. Review node {node_id} for benchmark integrity, implementation quality, performance, "
-        "maintainability, reproducibility, and risk. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+        "maintainability, reproducibility, risk, budget-backed tuning plateau, and missed high-expected-value improvements. Merely beating baseline is not enough. "
+        "If a cheap bounded improvement remains, return REVISE/repairing, not ACCEPT."
     ),
     "builder": (
         "You are an independent research-node critic in builder mode. Review node {node_id} for benchmark integrity, implementation quality, performance, "
-        "maintainability, reproducibility, buildability, and risk. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+        "maintainability, reproducibility, buildability, risk, and remaining cheap reliability/integration improvements. Partial success, promising progress, "
+        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
     ),
 }
 
@@ -157,6 +200,125 @@ def ensure_pending_file(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
     return path
+
+
+def strictness_mode(config: dict[str, Any]) -> str:
+    mode = str(config.get("strictness_mode") or "scientist")
+    if mode not in MODES:
+        raise CliError(f"invalid strictness mode: {mode}")
+    return mode
+
+
+def required_critic_roles(config: dict[str, Any]) -> list[str]:
+    mode = strictness_mode(config)
+    if mode in PAPER_MODES:
+        return ["evidence_auditor", "claim_critic"]
+    return ["performance_auditor"]
+
+
+def default_critic_role(config: dict[str, Any], node: dict[str, Any]) -> str:
+    reviews = node.get("critic_reviews") if isinstance(node.get("critic_reviews"), dict) else {}
+    for role in required_critic_roles(config):
+        review = reviews.get(role)
+        if not isinstance(review, dict) or review.get("verdict") != "ACCEPT":
+            return role
+    return required_critic_roles(config)[-1]
+
+
+def critic_agent_config(config: dict[str, Any]) -> dict[str, Any]:
+    configured = nested_value(config, ["research", "critic_agent"])
+    merged = dict(DEFAULT_CRITIC_AGENT)
+    if isinstance(configured, dict):
+        merged.update({key: configured[key] for key in DEFAULT_CRITIC_AGENT if key in configured})
+    return merged
+
+
+def performance_bar_config(config: dict[str, Any]) -> dict[str, Any]:
+    configured = nested_value(config, ["selection", "performance_bar"])
+    merged = dict(DEFAULT_PERFORMANCE_BAR)
+    if isinstance(configured, dict):
+        merged.update(configured)
+    return merged
+
+
+def research_contract(config: dict[str, Any]) -> dict[str, Any]:
+    value = config.get("research_contract")
+    return value if isinstance(value, dict) else {}
+
+
+def research_contract_reason(config: dict[str, Any]) -> str | None:
+    mode = strictness_mode(config)
+    if mode not in PAPER_MODES:
+        return None
+    contract = research_contract(config)
+    if not contract:
+        return "research_contract_missing"
+    missing = sorted(key for key in REQUIRED_CONTRACT_KEYS if not contract.get(key))
+    if missing:
+        return f"research_contract_missing_fields:{','.join(missing)}"
+    return None
+
+
+def default_research_contract(payload: dict[str, Any]) -> dict[str, Any] | None:
+    for key in ("research_contract", "contract"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            return value
+    idea = payload.get("selected_idea") or payload.get("idea")
+    if isinstance(idea, dict) and idea.get("hypothesis"):
+        hypothesis = str(idea["hypothesis"])
+        metric = idea.get("expected_metric") or payload.get("metric_key") or "declared benchmark metric"
+        return {
+            "primary_hypothesis": hypothesis,
+            "success_criteria": f"Evidence supports the hypothesis under the declared benchmark and {metric}.",
+            "failure_criteria": f"Evidence shows the hypothesis is false or unsupported under the declared benchmark and {metric}.",
+            "allowed_rescue_scope": "Allowed only when the original hypothesis verdict is explicitly failed and the narrower claim is disclosed.",
+            "kill_criteria": "Stop or mark failed when required evidence cannot be produced without changing the frozen benchmark, split, or environment.",
+            "metrics_that_matter": [metric],
+            "non_negotiable_comparisons": ["baseline", "declared split", "leakage/split integrity checks"],
+        }
+    return None
+
+
+def default_selection_config(payload: dict[str, Any]) -> dict[str, Any]:
+    selection = dict(payload.get("selection") if isinstance(payload.get("selection"), dict) else {})
+    selection.setdefault("good_enough_score_threshold", 75)
+    performance_bar = dict(selection.get("performance_bar") if isinstance(selection.get("performance_bar"), dict) else {})
+    for key, value in DEFAULT_PERFORMANCE_BAR.items():
+        performance_bar.setdefault(key, value)
+    selection["performance_bar"] = performance_bar
+    return selection
+
+
+def role_guidance(role: str) -> str:
+    if role == "evidence_auditor":
+        return (
+            "Role: evidence_auditor. Independently audit artifact truth: command refs, metric provenance, all trials, split/leakage consistency, "
+            "stale or fabricated evidence, and cherry-picking. Do not judge based on prose if raw artifacts contradict it."
+        )
+    if role == "claim_critic":
+        return (
+            "Role: claim_critic. Judge whether the current claim resolves the frozen original hypothesis as supported, failed with evidence, "
+            "or an approved rescue. Quiet claim narrowing is a false positive and must not be ACCEPT."
+        )
+    return (
+        "Role: performance_auditor. Judge whether the model is genuinely strong for this mode. Search for missed high-value improvements. "
+        "If a cheap bounded improvement remains within budget/resources, return REVISE even when the metric threshold is met."
+    )
+
+
+def rubric_snapshot(config: dict[str, Any], role: str) -> dict[str, Any]:
+    mode = strictness_mode(config)
+    return {
+        "strictness_mode": mode,
+        "critic_role": role,
+        "required_roles": required_critic_roles(config),
+        "required_acceptance_checks": sorted(REQUIRED_ACCEPTANCE_CHECKS),
+        "cheap_improvements_must_be_false": True,
+        "research_contract": research_contract(config),
+        "performance_bar": performance_bar_config(config),
+        "accepted_outcome_types": sorted(PAPER_OUTCOME_TYPES if mode in PAPER_MODES else OUTCOME_TYPES),
+    }
 
 
 def target_repo(args: argparse.Namespace) -> Path:
@@ -221,6 +383,14 @@ def resolve_research_max_subagents(target: Path, payload: dict[str, Any], explic
 
 def research_config(payload: dict[str, Any], max_subagents: int, source: str, *, no_limit_host_cap: bool = False) -> dict[str, Any]:
     research = dict(payload.get("research") if isinstance(payload.get("research"), dict) else {})
+    critic_agent = dict(research.get("critic_agent") if isinstance(research.get("critic_agent"), dict) else {})
+    for key, value in DEFAULT_CRITIC_AGENT.items():
+        critic_agent.setdefault(key, value)
+    research["critic_agent"] = critic_agent
+    critic_gate = dict(research.get("critic_gate") if isinstance(research.get("critic_gate"), dict) else {})
+    critic_gate.setdefault("paper_modes", {"required_roles": ["evidence_auditor", "claim_critic"]})
+    critic_gate.setdefault("practical_modes", {"required_roles": ["performance_auditor"]})
+    research["critic_gate"] = critic_gate
     concurrency = dict(research.get("concurrency") if isinstance(research.get("concurrency"), dict) else {})
     concurrency["max_subagents"] = max_subagents
     concurrency["source"] = source
@@ -447,6 +617,7 @@ def default_config(
     if strictness_mode not in MODES:
         raise CliError(f"invalid strictness mode: {strictness_mode}")
     resolved_max, concurrency_source = resolve_research_max_subagents(target, payload, max_subagents)
+    contract = default_research_contract(payload)
     return {
         "schema_version": 1,
         "run_id": run_id,
@@ -457,8 +628,9 @@ def default_config(
         "workspace": payload.get("workspace", {"mode": "copy", "baseline_workspace": f".ai-scientist/runs/{run_id}/baseline-workspace"}),
         "dependency_plan": payload.get("dependency_plan", {"mode": "frozen", "planned_dependencies": []}),
         "benchmark_contract": payload.get("benchmark_contract", {"version": "v1", "command": payload.get("benchmark_command")}),
+        "research_contract": contract or {},
         "resources": payload.get("resources", {"gpu": {"mode": "single_full_device_when_requested"}}),
-        "selection": payload.get("selection", {"good_enough_score_threshold": 75}),
+        "selection": default_selection_config(payload),
         "created_at": utc_now(),
     }
 
@@ -640,6 +812,129 @@ def critic_log_path(target: Path, run_id: str, critic_id: str) -> Path:
     return run_dir(target, run_id) / "logs" / "critics" / f"{critic_id}.json"
 
 
+def repair_log_path(target: Path, run_id: str, repair_id: str) -> Path:
+    return run_dir(target, run_id) / "logs" / "repairs" / f"{repair_id}.json"
+
+
+def validate_critic_spawn(pending: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    required = pending.get("required_runtime") if isinstance(pending.get("required_runtime"), dict) else critic_agent_config(config)
+    if required.get("required") is not True:
+        return {}
+    spawn = pending.get("spawn") if isinstance(pending.get("spawn"), dict) else None
+    if not spawn:
+        raise CliError("critic spawn metadata is required before critic-complete")
+    if spawn.get("spawn_model") != required.get("model"):
+        raise CliError(f"critic spawn model mismatch: expected {required.get('model')}, found {spawn.get('spawn_model')}")
+    if spawn.get("spawn_reasoning_effort") != required.get("reasoning_effort"):
+        raise CliError(f"critic spawn reasoning effort mismatch: expected {required.get('reasoning_effort')}, found {spawn.get('spawn_reasoning_effort')}")
+    return spawn
+
+
+def reviews_with_current(node: dict[str, Any], role: str, critic_record: dict[str, Any]) -> dict[str, Any]:
+    reviews = dict(node.get("critic_reviews") if isinstance(node.get("critic_reviews"), dict) else {})
+    reviews[role] = {
+        "critic_ref": critic_record["critic_ref"],
+        "critic_id": critic_record["critic_id"],
+        "critic_role": role,
+        "verdict": critic_record["verdict"],
+        "completed_at": critic_record["completed_at"],
+        "evidence_fingerprint": critic_record["evidence_fingerprint"],
+        "critic_result_path": critic_record["critic_result_path"],
+        "spawn_model": critic_record.get("spawn_model"),
+        "spawn_reasoning_effort": critic_record.get("spawn_reasoning_effort"),
+    }
+    return reviews
+
+
+def all_required_roles_accepted(config: dict[str, Any], reviews: dict[str, Any], fingerprint: str) -> bool:
+    for role in required_critic_roles(config):
+        review = reviews.get(role)
+        if not isinstance(review, dict):
+            return False
+        if review.get("verdict") != "ACCEPT":
+            return False
+        if review.get("evidence_fingerprint") != fingerprint:
+            return False
+    return True
+
+
+def next_repair_id_for_state(phase_state: dict[str, Any], node_id: str) -> str:
+    repairs = phase_state.get("repairs") if isinstance(phase_state.get("repairs"), dict) else {}
+    prefix = f"repair-{node_id}-"
+    count = sum(1 for repair_id in repairs if str(repair_id).startswith(prefix))
+    return f"{prefix}{count + 1:03d}"
+
+
+def create_repair_assignment(
+    target: Path,
+    run_id: str,
+    node_id: str,
+    *,
+    critic_record: dict[str, Any] | None = None,
+    required_revisions: list[Any] | None = None,
+    reason: str,
+) -> dict[str, Any]:
+    state = load_loop_state(target, run_id)
+    phase_state = state.get("state") if isinstance(state, dict) and isinstance(state.get("state"), dict) else {}
+    repair_id = next_repair_id_for_state(phase_state, node_id)
+    result_path = research_pending_path(target, run_id, "repairs", repair_id)
+    ensure_pending_file(result_path)
+    repair = {
+        "repair_id": repair_id,
+        "node_id": node_id,
+        "status": "pending",
+        "created_at": utc_now(),
+        "critic_ref": critic_record.get("critic_ref") if critic_record else None,
+        "critic_id": critic_record.get("critic_id") if critic_record else None,
+        "required_revisions": list(required_revisions or []),
+        "result_path": str(result_path),
+        "reason": reason,
+    }
+
+    node = read_node(target, run_id, node_id)
+    node.update(
+        {
+            "status": "repairing",
+            "open_repair_id": repair_id,
+            "requires_worker_repair": True,
+            "repair_result_path": str(result_path),
+            "required_revisions": list(required_revisions or []),
+        }
+    )
+    write_node(target, run_id, node_id, node)
+
+    def mutator(new_state: dict[str, Any]) -> None:
+        new_phase = new_state.setdefault("state", {})
+        repairs = new_phase.setdefault("repairs", {})
+        repairs[repair_id] = repair
+        nodes = new_phase.setdefault("nodes", {})
+        node_state = nodes.setdefault(node_id, {})
+        node_state.update(
+            {
+                "status": "repairing",
+                "updated_at": utc_now(),
+                "open_repair_id": repair_id,
+                "requires_worker_repair": True,
+                "repair_result_path": str(result_path),
+                "required_revisions": list(required_revisions or []),
+            }
+        )
+        orchestrator = new_phase.setdefault("orchestrator", {})
+        orchestrator["next_action"] = "node_repair"
+        orchestrator["next_action_details"] = {
+            "reason": reason,
+            "node_id": node_id,
+            "repair_id": repair_id,
+            "result_path": str(result_path),
+            "required_revisions": list(required_revisions or []),
+        }
+        orchestrator["current_node"] = node_id
+        orchestrator["last_checkpoint_at"] = utc_now()
+
+    mutate_loop_state(target, run_id, "state_transition", {"command": "node repair assignment", "repair_id": repair_id, "reason": reason}, mutator, node_id=node_id)
+    return repair
+
+
 def research_mode_critic_template(config: dict[str, Any]) -> str:
     mode = str(config.get("strictness_mode") or "scientist")
     template = nested_value(config, ["research", "modes", mode, "node_critic_prompt_template"])
@@ -648,22 +943,119 @@ def research_mode_critic_template(config: dict[str, Any]) -> str:
     return RESEARCH_NODE_CRITIC_PROMPTS.get(mode, RESEARCH_NODE_CRITIC_PROMPTS["scientist"])
 
 
-def build_node_critic_prompt(config: dict[str, Any], node_id: str, critic_id: str, result_path: Path, fingerprint: str) -> str:
+def build_node_critic_prompt(config: dict[str, Any], node_id: str, critic_id: str, result_path: Path, fingerprint: str, role: str, rubric: dict[str, Any]) -> str:
     template = research_mode_critic_template(config)
     mode = str(config.get("strictness_mode") or "scientist")
     return (
         template.format(node_id=node_id, mode=mode, critic_id=critic_id, evidence_fingerprint=fingerprint, result_path=str(result_path))
+        + "\n\n"
+        + role_guidance(role)
+        + "\n\nFrozen rubric snapshot:\n"
+        + json.dumps(rubric, indent=2, sort_keys=True)
         + "\n\nReturn JSON only to the assigned result_path with this schema:\n"
-        '{ "verdict": "ACCEPT|REVISE|INVALID|REJECT", "score": 0-100, "rationale": "...", '
+        '{ "verdict": "ACCEPT|REVISE|INVALID|REJECT", "critic_role": "'
+        + role
+        + '", "mode": "'
+        + mode
+        + '", "score": 0-100, "rationale": "...", '
+        '"acceptance_checks": {"metric_contract_valid": true, "split_integrity_valid": true, "leakage_check_valid": true, '
+        '"all_trials_accounted_for": true, "claim_matches_evidence": true, "mode_specific_bar_met": true, '
+        '"cheap_improvements_remaining": false}, '
+        '"missed_opportunity_scan": {"searched": ["..."], "actionable_improvements": [], "why_remaining_ideas_are_not_worth_running": "..."}, '
         '"strengths": ["..."], "weaknesses": ["..."], "required_revisions": ["..."], "risk_flags": ["..."] }\n'
         f"Node evidence fingerprint: {fingerprint}\n"
         f"Result path: {result_path}\n"
-        "ACCEPT means final evidence is complete and eligible for selection. REVISE means meaningful progress or partial success remains candidate. "
+        "Do not assume the node is final or accepted. ACCEPT means this role's required evidence is complete under the frozen rubric. "
+        "REVISE means meaningful progress, partial success, missing validation, or cheap actionable improvement remains. "
         "INVALID means the evidence cannot be trusted. REJECT means it is not worth continuing or not selected."
     )
 
 
-def validate_critic_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _bool_check(value: Any, label: str, expected: bool = True) -> str | None:
+    if value is not expected:
+        return f"{label} must be {str(expected).lower()}"
+    return None
+
+
+def critic_acceptance_reason(critic: dict[str, Any], config: dict[str, Any], pending: dict[str, Any], node: dict[str, Any]) -> str | None:
+    mode = strictness_mode(config)
+    role = str(pending.get("critic_role") or "")
+    if critic.get("mode") != mode:
+        return f"critic mode must be {mode}"
+    if critic.get("critic_role") != role:
+        return f"critic_role must be {role}"
+    score = critic.get("score")
+    if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 100:
+        return "critic score must be an integer 0..100"
+    checks = critic.get("acceptance_checks")
+    if not isinstance(checks, dict):
+        return "ACCEPT requires acceptance_checks"
+    for key in sorted(REQUIRED_ACCEPTANCE_CHECKS):
+        reason = _bool_check(checks.get(key), f"acceptance_checks.{key}")
+        if reason:
+            return reason
+    reason = _bool_check(checks.get("cheap_improvements_remaining"), "acceptance_checks.cheap_improvements_remaining", expected=False)
+    if reason:
+        return reason
+    scan = critic.get("missed_opportunity_scan")
+    if not isinstance(scan, dict):
+        return "ACCEPT requires missed_opportunity_scan"
+    searched = scan.get("searched")
+    if not isinstance(searched, list) or not searched:
+        return "missed_opportunity_scan.searched must be non-empty"
+    actionable = scan.get("actionable_improvements")
+    if not isinstance(actionable, list):
+        return "missed_opportunity_scan.actionable_improvements must be a list"
+    if actionable:
+        return "ACCEPT cannot include actionable_improvements"
+    if not isinstance(scan.get("why_remaining_ideas_are_not_worth_running"), str) or not scan["why_remaining_ideas_are_not_worth_running"].strip():
+        return "missed_opportunity_scan must explain why remaining ideas are not worth running"
+    if mode in PAPER_MODES:
+        contract_reason = research_contract_reason(config)
+        if contract_reason:
+            return contract_reason
+        outcome = node.get("outcome_type")
+        if outcome not in PAPER_OUTCOME_TYPES:
+            return "paper-mode ACCEPT requires paper outcome_type"
+        for key in ("current_claim", "claim_equivalence", "contract_evidence", "paper_worthiness"):
+            if not node.get(key):
+                return f"paper-mode ACCEPT requires node.{key}"
+        if role == "claim_critic":
+            verdict = critic.get("original_hypothesis_verdict")
+            if verdict not in {"supported", "failed", "rescue"}:
+                return "claim_critic ACCEPT requires original_hypothesis_verdict supported|failed|rescue"
+            if critic.get("paper_worthy") is not True:
+                return "claim_critic ACCEPT requires paper_worthy=true"
+            if outcome == "hypothesis_supported" and critic.get("contract_success_met") is not True:
+                return "hypothesis_supported requires contract_success_met=true"
+            if outcome == "hypothesis_failed_with_evidence":
+                if critic.get("contract_failure_met") is not True or critic.get("fundamental_failure") is not True:
+                    return "hypothesis_failed_with_evidence requires contract_failure_met=true and fundamental_failure=true"
+            if outcome == "rescue_finding_with_failed_hypothesis":
+                if critic.get("contract_failure_met") is not True or critic.get("rescue_scope_met") is not True:
+                    return "rescue_finding_with_failed_hypothesis requires failure and rescue scope evidence"
+    elif mode in {"builder", "engineer"}:
+        if node.get("outcome_type") not in {"practical_improvement"}:
+            return "builder/engineer ACCEPT requires practical_improvement outcome_type"
+        strong = node.get("strong_model_evidence")
+        if not isinstance(strong, dict):
+            return "builder/engineer ACCEPT requires strong_model_evidence"
+        if strong.get("cheap_improvements_remaining") is not False:
+            return "strong_model_evidence.cheap_improvements_remaining must be false"
+        if strong.get("tuning_plateau_or_exhausted") is not True:
+            return "strong_model_evidence.tuning_plateau_or_exhausted must be true"
+        min_trials = int(performance_bar_config(config).get("min_confirmation_trials") or 1)
+        confirmations = strong.get("confirmation_trials")
+        if isinstance(confirmations, list):
+            confirmation_count = len(confirmations)
+        else:
+            confirmation_count = int(strong.get("confirmation_trial_count") or 0)
+        if confirmation_count < min_trials:
+            return f"strong_model_evidence requires at least {min_trials} confirmation trial(s)"
+    return None
+
+
+def validate_critic_payload(payload: dict[str, Any], config: dict[str, Any], pending: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
     critic = payload.get("critic") if isinstance(payload.get("critic"), dict) else payload
     if not isinstance(critic, dict):
         raise CliError("critic payload must be a JSON object")
@@ -675,6 +1067,10 @@ def validate_critic_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise CliError("critic payload requires non-empty rationale")
     if verdict == "REVISE" and not critic.get("required_revisions"):
         raise CliError("REVISE critic payload requires required_revisions")
+    if verdict == "ACCEPT":
+        reason = critic_acceptance_reason(critic, config, pending, node)
+        if reason:
+            raise CliError(f"ACCEPT critic payload invalid: {reason}")
     return critic
 
 
@@ -694,16 +1090,25 @@ def apply_node_status(
     node.update(node_payload if isinstance(node_payload, dict) else {})
     node.setdefault("result_path", str(ensure_pending_file(pending_path)))
     if critic_record is not None:
+        role = str(critic_record.get("critic_role") or "performance_auditor")
+        reviews = reviews_with_current(node, role, critic_record)
         node.update(
             {
                 "critic_ref": critic_record["critic_ref"],
                 "critic_id": critic_record["critic_id"],
+                "critic_role": role,
                 "critic_verdict": critic_record["verdict"],
                 "critic_completed_at": critic_record["completed_at"],
                 "critic_evidence_fingerprint": critic_record["evidence_fingerprint"],
                 "critic_result_path": critic_record["critic_result_path"],
+                "critic_reviews": reviews,
             }
         )
+        if status == "accepted" and node.get("requires_fresh_critic"):
+            node["requires_fresh_critic"] = False
+    if status == "candidate" and node.get("requires_worker_repair"):
+        node["requires_worker_repair"] = False
+        node.pop("open_repair_id", None)
     node["status"] = status
     if reason:
         if status in {"rejected", "invalid"}:
@@ -718,17 +1123,26 @@ def apply_node_status(
         current = nodes.setdefault(node_id, {})
         current.update({"status": status, "updated_at": utc_now(), "result_path": str(pending_path)})
         if critic_record is not None:
+            role = str(critic_record.get("critic_role") or "performance_auditor")
+            reviews = reviews_with_current({**current, **node}, role, critic_record)
             current.update(
                 {
                     "critic_ref": critic_record["critic_ref"],
                     "critic_id": critic_record["critic_id"],
+                    "critic_role": role,
                     "critic_verdict": critic_record["verdict"],
                     "critic_completed_at": critic_record["completed_at"],
                     "critic_evidence_fingerprint": critic_record["evidence_fingerprint"],
                     "critic_result_path": critic_record["critic_result_path"],
                     "node_evidence_fingerprint": critic_record["evidence_fingerprint"],
+                    "critic_reviews": reviews,
                 }
             )
+            if status == "accepted" and current.get("requires_fresh_critic"):
+                current["requires_fresh_critic"] = False
+        if status == "candidate" and current.get("requires_worker_repair"):
+            current["requires_worker_repair"] = False
+            current.pop("open_repair_id", None)
         if reason:
             key = "rejection_reason" if status in {"rejected", "invalid"} else "reason"
             current[key] = reason
@@ -751,6 +1165,14 @@ def cmd_node_transition(args: argparse.Namespace) -> int:
     payload = load_payload_or_path(args, pending_path)
     if args.status in NODE_TERMINAL_STATUSES:
         raise CliError(f"terminal node status {args.status} requires node critic-complete")
+    if args.status == "candidate" and node.get("requires_worker_repair"):
+        repair_id = node.get("open_repair_id")
+        state = load_loop_state(target, run_id)
+        phase_state = state.get("state") if isinstance(state, dict) and isinstance(state.get("state"), dict) else {}
+        repairs = phase_state.get("repairs") if isinstance(phase_state.get("repairs"), dict) else {}
+        repair = repairs.get(repair_id) if isinstance(repairs.get(repair_id), dict) else None
+        if not repair or repair.get("status") != "completed":
+            raise CliError(f"candidate transition requires completed worker repair payload: {repair_id}")
     apply_node_status(target, run_id, args.node_id, args.status, payload, reason=args.reason)
     return response("ok", run_id=run_id, node_id=args.node_id, node_status=args.status, node_path=str(node_json_path(target, run_id, args.node_id)), result_path=str(pending_path))
 
@@ -765,19 +1187,29 @@ def cmd_node_critic_start(args: argparse.Namespace) -> int:
     if not isinstance(cfg, dict):
         raise CliError(f"missing config.json for run {run_id}")
     node = read_node(target, run_id, args.node_id)
+    role = args.role or default_critic_role(cfg, node)
+    if role not in CRITIC_ROLES:
+        raise CliError(f"invalid critic role: {role}")
+    if role not in required_critic_roles(cfg):
+        raise CliError(f"critic role {role} is not required for {strictness_mode(cfg)} mode")
     fingerprint = node_evidence_fingerprint(node)
     critic_id = args.critic_id or f"critic-{args.node_id}-{uuid.uuid4().hex[:12]}"
     result_path = research_pending_path(target, run_id, "critics", critic_id)
     ensure_pending_file(result_path)
-    prompt = build_node_critic_prompt(cfg, args.node_id, critic_id, result_path, fingerprint)
+    runtime = critic_agent_config(cfg)
+    rubric = rubric_snapshot(cfg, role)
+    prompt = build_node_critic_prompt(cfg, args.node_id, critic_id, result_path, fingerprint, role, rubric)
     pending = {
         "critic_id": critic_id,
         "node_id": args.node_id,
+        "critic_role": role,
         "status": "pending",
         "started_at": utc_now(),
         "result_path": str(result_path),
         "evidence_fingerprint": fingerprint,
         "prompt": prompt,
+        "required_runtime": runtime,
+        "rubric_snapshot": rubric,
     }
 
     def mutator(new_state: dict[str, Any]) -> None:
@@ -787,8 +1219,52 @@ def cmd_node_critic_start(args: argparse.Namespace) -> int:
             raise CliError(f"critic already exists: {critic_id}")
         pending_critics[critic_id] = pending
 
-    mutate_loop_state(target, run_id, "critic_event", {"command": "node critic-start", "critic_id": critic_id}, mutator, node_id=args.node_id)
-    return response("ok", run_id=run_id, node_id=args.node_id, critic_id=critic_id, result_path=str(result_path), evidence_fingerprint=fingerprint, prompt=prompt)
+    mutate_loop_state(target, run_id, "critic_event", {"command": "node critic-start", "critic_id": critic_id, "critic_role": role}, mutator, node_id=args.node_id)
+    return response(
+        "ok",
+        run_id=run_id,
+        node_id=args.node_id,
+        critic_id=critic_id,
+        critic_role=role,
+        required_model=runtime["model"],
+        required_reasoning_effort=runtime["reasoning_effort"],
+        result_path=str(result_path),
+        evidence_fingerprint=fingerprint,
+        rubric_snapshot=rubric,
+        prompt=prompt,
+    )
+
+
+def cmd_node_critic_spawn_record(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, state = active_run(target, args.run_id)
+    if not state:
+        raise CliError(f"missing loop-state.json for run {run_id}")
+    phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
+    pending_critics = phase_state.get("pending_critics") if isinstance(phase_state.get("pending_critics"), dict) else {}
+    pending = pending_critics.get(args.critic_id)
+    if not isinstance(pending, dict):
+        raise CliError(f"unknown pending critic: {args.critic_id}")
+    required = pending.get("required_runtime") if isinstance(pending.get("required_runtime"), dict) else DEFAULT_CRITIC_AGENT
+    if args.model != required.get("model"):
+        raise CliError(f"critic spawn model mismatch: expected {required.get('model')}, found {args.model}")
+    if args.reasoning_effort != required.get("reasoning_effort"):
+        raise CliError(f"critic spawn reasoning effort mismatch: expected {required.get('reasoning_effort')}, found {args.reasoning_effort}")
+    spawn = {
+        "agent_id": args.agent_id,
+        "spawn_model": args.model,
+        "spawn_reasoning_effort": args.reasoning_effort,
+        "spawned_at": utc_now(),
+    }
+
+    def mutator(new_state: dict[str, Any]) -> None:
+        critics = new_state.setdefault("state", {}).setdefault("pending_critics", {})
+        if args.critic_id not in critics:
+            raise CliError(f"unknown pending critic: {args.critic_id}")
+        critics[args.critic_id]["spawn"] = spawn
+
+    mutate_loop_state(target, run_id, "critic_event", {"command": "node critic-spawn-record", "critic_id": args.critic_id, "agent_id": args.agent_id}, mutator)
+    return response("ok", run_id=run_id, critic_id=args.critic_id, agent_id=args.agent_id, spawn=spawn)
 
 
 def cmd_node_critic_complete(args: argparse.Namespace) -> int:
@@ -805,17 +1281,21 @@ def cmd_node_critic_complete(args: argparse.Namespace) -> int:
     if not node_id:
         raise CliError(f"pending critic missing node_id: {args.critic_id}")
     result_path = Path(pending["result_path"]) if isinstance(pending.get("result_path"), str) else research_pending_path(target, run_id, "critics", args.critic_id)
+    cfg = load_json_if_exists(config_path(target, run_id))
+    if not isinstance(cfg, dict):
+        raise CliError(f"missing config.json for run {run_id}")
+    spawn = validate_critic_spawn(pending, cfg)
     payload = load_payload_or_path(args, result_path)
     if not payload:
         raise CliError(f"critic result payload is required at {result_path}")
-    critic = validate_critic_payload(payload)
     node = read_node(target, run_id, node_id)
     fingerprint = node_evidence_fingerprint(node)
     expected = pending.get("evidence_fingerprint")
     if fingerprint != expected:
         raise CliError(f"critic result is stale for node evidence: expected {expected}, found {fingerprint}")
+    critic = validate_critic_payload(payload, cfg, pending, node)
     verdict = str(critic["verdict"])
-    status = CRITIC_STATUS_BY_VERDICT[verdict]
+    role = str(pending.get("critic_role") or default_critic_role(cfg, node))
     completed_at = utc_now()
     log_path = critic_log_path(target, run_id, args.critic_id)
     record = {
@@ -823,15 +1303,17 @@ def cmd_node_critic_complete(args: argparse.Namespace) -> int:
         "run_id": run_id,
         "critic_id": args.critic_id,
         "node_id": node_id,
+        "critic_role": role,
         "verdict": verdict,
-        "status": status,
         "critic": critic,
         "evidence_fingerprint": fingerprint,
         "critic_result_path": str(result_path),
+        "required_runtime": pending.get("required_runtime"),
+        "spawn": spawn,
+        "rubric_snapshot": pending.get("rubric_snapshot"),
         "started_at": pending.get("started_at"),
         "completed_at": completed_at,
     }
-    atomic_write_json(log_path, record)
     rationale = str(critic.get("rationale") or critic.get("reason") or "")
     if verdict == "REVISE":
         reason = "; ".join(map(str, critic.get("required_revisions") or [])) or rationale
@@ -840,20 +1322,41 @@ def cmd_node_critic_complete(args: argparse.Namespace) -> int:
     critic_record = {
         "critic_ref": str(log_path),
         "critic_id": args.critic_id,
+        "critic_role": role,
         "verdict": verdict,
         "completed_at": completed_at,
         "evidence_fingerprint": fingerprint,
         "critic_result_path": str(result_path),
+        "spawn_model": spawn.get("spawn_model"),
+        "spawn_reasoning_effort": spawn.get("spawn_reasoning_effort"),
     }
+    if verdict == "ACCEPT":
+        reviews = reviews_with_current(node, role, critic_record)
+        status = "accepted" if all_required_roles_accepted(cfg, reviews, fingerprint) else "candidate"
+        reason = rationale if status == "accepted" else f"{role} accepted; waiting for remaining critic roles"
+    else:
+        status = CRITIC_STATUS_BY_VERDICT[verdict]
+    record["status"] = status
+    atomic_write_json(log_path, record)
     apply_node_status(target, run_id, node_id, status, {}, reason=reason, critic_record=critic_record)
+    repair = None
+    if verdict == "REVISE":
+        repair = create_repair_assignment(
+            target,
+            run_id,
+            node_id,
+            critic_record=critic_record,
+            required_revisions=list(critic.get("required_revisions") or []),
+            reason=reason,
+        )
 
     def mutator(new_state: dict[str, Any]) -> None:
         new_pending = new_state.setdefault("state", {}).setdefault("pending_critics", {})
         new_pending.pop(args.critic_id, None)
 
-    mutate_loop_state(target, run_id, "critic_event", {"command": "node critic-complete", "critic_id": args.critic_id, "verdict": verdict, "status": status}, mutator, node_id=node_id)
-    append_journal_event(target, run_id, "critic_event", node_id=node_id, details={"command": "node critic-log", "critic_id": args.critic_id, "verdict": verdict, "critic_ref": str(log_path)})
-    return response("ok", run_id=run_id, node_id=node_id, critic_id=args.critic_id, verdict=verdict, node_status=status, critic_ref=str(log_path))
+    mutate_loop_state(target, run_id, "critic_event", {"command": "node critic-complete", "critic_id": args.critic_id, "critic_role": role, "verdict": verdict, "status": status}, mutator, node_id=node_id)
+    append_journal_event(target, run_id, "critic_event", node_id=node_id, details={"command": "node critic-log", "critic_id": args.critic_id, "critic_role": role, "verdict": verdict, "critic_ref": str(log_path)})
+    return response("ok", run_id=run_id, node_id=node_id, critic_id=args.critic_id, critic_role=role, verdict=verdict, node_status=status, critic_ref=str(log_path), repair=repair)
 
 
 def cmd_node_create_workspace(args: argparse.Namespace) -> int:
@@ -872,6 +1375,120 @@ def cmd_node_create_workspace(args: argparse.Namespace) -> int:
     args.json_file = None
     args.reason = args.reason or "node workspace created"
     return cmd_node_transition(args)
+
+
+def cmd_node_repair_start(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _ = active_run(target, args.run_id)
+    ensure_usage_cap_allows_new_work(target, run_id, command="node repair-start")
+    node = read_node(target, run_id, args.node_id)
+    if node.get("status") not in {"buggy", "repairing", "candidate"}:
+        raise CliError(f"repair-start requires buggy/repairing/candidate node, found {node.get('status')}")
+    revisions = []
+    if args.required_revision:
+        revisions = args.required_revision
+    elif isinstance(node.get("required_revisions"), list):
+        revisions = node["required_revisions"]
+    repair = create_repair_assignment(target, run_id, args.node_id, required_revisions=revisions, reason=args.reason or "worker-owned node repair")
+    return response("ok", run_id=run_id, node_id=args.node_id, repair_id=repair["repair_id"], result_path=repair["result_path"])
+
+
+def cmd_node_repair_complete(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, state = active_run(target, args.run_id)
+    if not state:
+        raise CliError(f"missing loop-state.json for run {run_id}")
+    phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
+    repairs = phase_state.get("repairs") if isinstance(phase_state.get("repairs"), dict) else {}
+    repair = repairs.get(args.repair_id)
+    if not isinstance(repair, dict):
+        raise CliError(f"unknown repair assignment: {args.repair_id}")
+    result_path = Path(repair["result_path"]) if isinstance(repair.get("result_path"), str) else research_pending_path(target, run_id, "repairs", args.repair_id)
+    payload = load_payload_or_path(args, result_path)
+    if not payload:
+        raise CliError(f"repair payload is required at {result_path}")
+    if payload.get("repair_id") not in {None, args.repair_id}:
+        raise CliError("repair payload repair_id mismatch")
+    node_id = str(repair.get("node_id") or payload.get("node_id") or "")
+    if not node_id:
+        raise CliError("repair assignment missing node_id")
+    if payload.get("node_id") not in {None, node_id}:
+        raise CliError("repair payload node_id mismatch")
+    if not isinstance(payload.get("fixed_revisions"), list):
+        raise CliError("repair payload requires fixed_revisions list")
+    fixed_revisions = {str(item) for item in payload.get("fixed_revisions", [])}
+    required_revisions = [str(item) for item in repair.get("required_revisions", []) if str(item)]
+    explicit_remaining = payload.get("remaining_required_revisions")
+    if explicit_remaining is not None and not isinstance(explicit_remaining, list):
+        raise CliError("repair payload remaining_required_revisions must be a list when provided")
+    remaining = [item for item in required_revisions if item not in fixed_revisions]
+    if isinstance(explicit_remaining, list):
+        for item in explicit_remaining:
+            text = str(item)
+            if text and text not in remaining:
+                remaining.append(text)
+    real_blocker = payload.get("real_blocker")
+    has_real_blocker = isinstance(real_blocker, dict) and bool(real_blocker.get("reason") or real_blocker.get("type"))
+    completed_at = utc_now()
+    record_status = "completed"
+    if remaining:
+        record_status = "blocked" if has_real_blocker else "continued"
+    record = {
+        **repair,
+        "status": record_status,
+        "completed_at": completed_at,
+        "payload": payload,
+        "payload_ref": str(result_path),
+        "remaining_required_revisions": remaining,
+    }
+    log_path = repair_log_path(target, run_id, args.repair_id)
+    atomic_write_json(log_path, record)
+    node = read_node(target, run_id, node_id)
+    node.update(
+        {
+            "last_repair_id": args.repair_id,
+            "last_repair_completed_at": completed_at,
+            "repair_payload_ref": str(result_path),
+            "repair_log_ref": str(log_path),
+            "requires_worker_repair": True,
+        }
+    )
+    write_node(target, run_id, node_id, node)
+
+    def mutator(new_state: dict[str, Any]) -> None:
+        new_phase = new_state.setdefault("state", {})
+        state_repairs = new_phase.setdefault("repairs", {})
+        state_repairs[args.repair_id] = record
+        nodes = new_phase.setdefault("nodes", {})
+        node_state = nodes.setdefault(node_id, {})
+        node_state.update(
+            {
+                "last_repair_id": args.repair_id,
+                "last_repair_completed_at": completed_at,
+                "repair_payload_ref": str(result_path),
+                "repair_log_ref": str(log_path),
+                "requires_worker_repair": True,
+            }
+        )
+        if has_real_blocker:
+            orchestrator = new_phase.setdefault("orchestrator", {})
+            orchestrator["next_action"] = "blocked_repair"
+            orchestrator["next_action_details"] = {"reason": "worker repair blocked", "node_id": node_id, "repair_id": args.repair_id, "real_blocker": real_blocker}
+            orchestrator["current_node"] = node_id
+            new_state["phase_status"] = "blocked_repair"
+            new_state["blocked_reason"] = real_blocker
+
+    mutate_loop_state(target, run_id, "state_transition", {"command": "node repair-complete", "repair_id": args.repair_id}, mutator, node_id=node_id)
+    followup = None
+    if remaining and not has_real_blocker:
+        followup = create_repair_assignment(
+            target,
+            run_id,
+            node_id,
+            required_revisions=remaining,
+            reason="worker repair left required revisions unresolved; continue node repair",
+        )
+    return response("ok", run_id=run_id, node_id=node_id, repair_id=args.repair_id, repair_status=record_status, repair_ref=str(log_path), followup_repair=followup)
 
 
 def cmd_subagent_update(args: argparse.Namespace) -> int:
@@ -916,11 +1533,33 @@ def cmd_subagent_update(args: argparse.Namespace) -> int:
     return response("ok", run_id=run_id, subagent_id=args.subagent_id, subagent_status=args.status, result_path=str(pending_path))
 
 
+def node_required_critic_reason(config: dict[str, Any], node: dict[str, Any], node_id: str) -> str | None:
+    fingerprint = node_evidence_fingerprint(node)
+    reviews = node.get("critic_reviews") if isinstance(node.get("critic_reviews"), dict) else {}
+    missing = [role for role in required_critic_roles(config) if not isinstance(reviews.get(role), dict)]
+    if missing:
+        return f"accepted node missing required critic roles: {node_id}:{','.join(missing)}"
+    for role in required_critic_roles(config):
+        review = reviews[role]
+        if review.get("verdict") != "ACCEPT":
+            return f"accepted node critic role not accepted: {node_id}:{role}:{review.get('verdict')}"
+        if review.get("evidence_fingerprint") != fingerprint:
+            return f"accepted node critic role stale: {node_id}:{role}"
+        if review.get("spawn_model") != critic_agent_config(config)["model"]:
+            return f"accepted node critic role wrong model: {node_id}:{role}"
+        if review.get("spawn_reasoning_effort") != critic_agent_config(config)["reasoning_effort"]:
+            return f"accepted node critic role wrong reasoning effort: {node_id}:{role}"
+    return None
+
+
 def cmd_selection_finalize(args: argparse.Namespace) -> int:
     target = target_repo(args)
     run_id, state = active_run(target, args.run_id)
     if not state:
         raise CliError(f"missing loop-state.json for run {run_id}")
+    cfg = load_json_if_exists(config_path(target, run_id))
+    if not isinstance(cfg, dict):
+        raise CliError(f"missing config.json for run {run_id}")
     payload = load_payload(args)
     phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
     nodes = phase_state.get("nodes") if isinstance(phase_state.get("nodes"), dict) else {}
@@ -929,11 +1568,19 @@ def cmd_selection_finalize(args: argparse.Namespace) -> int:
         raise CliError("selected_node is required")
     if not isinstance(nodes.get(selected), dict) or nodes[selected].get("status") != "accepted":
         raise CliError("selected node must be accepted in loop-state.json")
+    selected_doc = read_node(target, run_id, selected)
+    role_reason = node_required_critic_reason(cfg, selected_doc, selected)
+    if role_reason:
+        raise CliError(role_reason)
     critic_reason = node_fresh_critic_reason(selected, nodes[selected], required_verdict="ACCEPT")
     if critic_reason:
         raise CliError(f"selected node must have fresh ACCEPT critic verdict: {critic_reason}")
     accepted_nodes = [node_id for node_id, node in nodes.items() if isinstance(node, dict) and node.get("status") == "accepted"]
     for node_id in accepted_nodes:
+        node_doc = read_node(target, run_id, node_id)
+        role_reason = node_required_critic_reason(cfg, node_doc, node_id)
+        if role_reason:
+            raise CliError(role_reason)
         critic_reason = node_fresh_critic_reason(node_id, nodes[node_id], required_verdict="ACCEPT")
         if critic_reason:
             raise CliError(f"accepted node must have fresh ACCEPT critic verdict: {critic_reason}")
@@ -942,13 +1589,37 @@ def cmd_selection_finalize(args: argparse.Namespace) -> int:
     missing = sorted(set(accepted_nodes) - set(ranked_ids))
     if missing:
         raise CliError(f"selection is missing accepted nodes: {', '.join(missing)}")
+    outcome_type = payload.get("outcome_type") or selected_doc.get("outcome_type")
+    if outcome_type not in OUTCOME_TYPES:
+        raise CliError("selection finalize requires valid outcome_type")
+    metric_key = payload.get("metric_key")
+    if not isinstance(metric_key, str) or not metric_key.strip():
+        raise CliError("selection finalize requires metric_key")
+    metric_direction = payload.get("metric_direction") or payload.get("direction")
+    if metric_direction not in {"maximize", "minimize"}:
+        raise CliError("selection finalize requires metric_direction maximize|minimize")
+    for metric_field in ("baseline_metric", "selected_metric"):
+        if metric_field not in payload:
+            raise CliError(f"selection finalize requires {metric_field}")
+        try:
+            float(payload[metric_field])
+        except (TypeError, ValueError) as exc:
+            raise CliError(f"selection finalize requires numeric {metric_field}") from exc
+    if not isinstance(payload.get("rationale"), str) or not payload["rationale"].strip():
+        raise CliError("selection finalize requires rationale")
     selection = {
         "schema_version": 1,
         "run_id": run_id,
         "selection_status": "final",
         "provisional": False,
         "selected_node": selected,
+        "outcome_type": outcome_type,
+        "metric_key": metric_key,
+        "metric_direction": metric_direction,
+        "baseline_metric": payload.get("baseline_metric"),
+        "selected_metric": payload.get("selected_metric"),
         "ranked_nodes": ranked,
+        "rejected_or_superseded": payload.get("rejected_or_superseded", []),
         "manual_override": payload.get("manual_override"),
         "rationale": payload.get("rationale"),
         "updated_at": utc_now(),
@@ -1451,7 +2122,15 @@ def build_parser() -> argparse.ArgumentParser:
     critic_start.add_argument("--run-id")
     critic_start.add_argument("--node-id", required=True)
     critic_start.add_argument("--critic-id")
+    critic_start.add_argument("--role", choices=sorted(CRITIC_ROLES))
     critic_start.set_defaults(func=cmd_node_critic_start)
+    critic_spawn = node_sub.add_parser("critic-spawn-record")
+    critic_spawn.add_argument("--run-id")
+    critic_spawn.add_argument("--critic-id", required=True)
+    critic_spawn.add_argument("--agent-id", required=True)
+    critic_spawn.add_argument("--model", required=True)
+    critic_spawn.add_argument("--reasoning-effort", required=True)
+    critic_spawn.set_defaults(func=cmd_node_critic_spawn_record)
     critic_complete = node_sub.add_parser("critic-complete")
     critic_complete.add_argument("--run-id")
     critic_complete.add_argument("--critic-id", required=True)
@@ -1462,6 +2141,17 @@ def build_parser() -> argparse.ArgumentParser:
     create_workspace.add_argument("--node-id", required=True)
     create_workspace.add_argument("--reason")
     create_workspace.set_defaults(func=cmd_node_create_workspace)
+    repair_start = node_sub.add_parser("repair-start")
+    repair_start.add_argument("--run-id")
+    repair_start.add_argument("--node-id", required=True)
+    repair_start.add_argument("--reason")
+    repair_start.add_argument("--required-revision", action="append")
+    repair_start.set_defaults(func=cmd_node_repair_start)
+    repair_complete = node_sub.add_parser("repair-complete")
+    repair_complete.add_argument("--run-id")
+    repair_complete.add_argument("--repair-id", required=True)
+    add_json_args(repair_complete)
+    repair_complete.set_defaults(func=cmd_node_repair_complete)
 
     subagent = sub.add_parser("subagent")
     subagent_sub = subagent.add_subparsers(dest="command", required=True)

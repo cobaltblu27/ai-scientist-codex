@@ -112,6 +112,39 @@
       },
       "additionalProperties": true
     },
+    "research_contract": {
+      "description": "Frozen hypothesis/outcome contract for paper-oriented research modes.",
+      "type": "object",
+      "properties": {
+        "primary_hypothesis": {"type": "string"},
+        "success_criteria": {},
+        "failure_criteria": {},
+        "allowed_rescue_scope": {},
+        "kill_criteria": {},
+        "metrics_that_matter": {},
+        "non_negotiable_comparisons": {}
+      },
+      "additionalProperties": true
+    },
+    "research": {
+      "type": "object",
+      "properties": {
+        "critic_agent": {
+          "type": "object",
+          "properties": {
+            "model": {"type": "string"},
+            "reasoning_effort": {"type": "string"},
+            "required": {"type": "boolean"}
+          },
+          "additionalProperties": true
+        },
+        "critic_gate": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
     "resources": {
       "type": "object",
       "additionalProperties": true

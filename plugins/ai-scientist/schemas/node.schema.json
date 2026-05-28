@@ -93,6 +93,51 @@
     "mode_deliverables": {
       "type": "object"
     },
+    "outcome_type": {
+      "enum": [
+        "hypothesis_supported",
+        "hypothesis_failed_with_evidence",
+        "rescue_finding_with_failed_hypothesis",
+        "practical_improvement"
+      ]
+    },
+    "current_claim": {
+      "type": "string"
+    },
+    "claim_equivalence": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "contract_evidence": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "fundamental_failure_reason": {
+      "type": "string"
+    },
+    "paper_worthiness": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "strong_model_evidence": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "critic_reviews": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "requires_worker_repair": {
+      "type": "boolean"
+    },
+    "open_repair_id": {
+      "type": "string"
+    },
+    "last_repair_id": {
+      "type": "string"
+    },
     "worker_recommendation": {
       "type": "string"
     },

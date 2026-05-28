@@ -9,10 +9,32 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ai_scientist_state import evaluate_completion, journal_has_event, node_fresh_critic_reason, validate_node_contract
+from ai_scientist_state import evaluate_completion, journal_has_event, node_evidence_fingerprint, node_fresh_critic_reason, validate_node_contract
 
 ALLOWED_DEP_STATUSES = {"approved", "rejected", "not_needed"}
 MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
+PAPER_MODES = {"scientist", "researcher"}
+PRACTICAL_MODES = {"balanced", "builder", "engineer"}
+PAPER_OUTCOME_TYPES = {"hypothesis_supported", "hypothesis_failed_with_evidence", "rescue_finding_with_failed_hypothesis"}
+OUTCOME_TYPES = PAPER_OUTCOME_TYPES | {"practical_improvement"}
+REQUIRED_CONTRACT_KEYS = {
+    "primary_hypothesis",
+    "success_criteria",
+    "failure_criteria",
+    "allowed_rescue_scope",
+    "kill_criteria",
+    "metrics_that_matter",
+    "non_negotiable_comparisons",
+}
+DEFAULT_CRITIC_AGENT = {"model": "gpt-5.5", "reasoning_effort": "xhigh", "required": True}
+REQUIRED_ACCEPTANCE_CHECKS = {
+    "metric_contract_valid",
+    "split_integrity_valid",
+    "leakage_check_valid",
+    "all_trials_accounted_for",
+    "claim_matches_evidence",
+    "mode_specific_bar_met",
+}
 GATE_DEST = {
     "ideation_to_research": ("ideation", "research"),
     "research_to_review": ("research", "review"),
@@ -227,6 +249,170 @@ def comparison_passes(selected_score: float, baseline_score: float, direction: s
     return selected_score > baseline_score
 
 
+def improvement_margin(selected_score: float, baseline_score: float, direction: str) -> float:
+    if direction == "minimize":
+        return baseline_score - selected_score
+    return selected_score - baseline_score
+
+
+def critic_agent_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    configured = cfg.get("research") if isinstance(cfg.get("research"), dict) else {}
+    configured = configured.get("critic_agent") if isinstance(configured.get("critic_agent"), dict) else {}
+    merged = dict(DEFAULT_CRITIC_AGENT)
+    merged.update({key: configured[key] for key in DEFAULT_CRITIC_AGENT if key in configured})
+    return merged
+
+
+def performance_bar_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    selection = cfg.get("selection") if isinstance(cfg.get("selection"), dict) else {}
+    bar = selection.get("performance_bar") if isinstance(selection.get("performance_bar"), dict) else {}
+    return {
+        "min_improvement_margin": float(bar.get("min_improvement_margin", 0.0)),
+        "min_confirmation_trials": int(bar.get("min_confirmation_trials", 1)),
+    }
+
+
+def required_critic_roles(mode: str) -> list[str]:
+    if mode in PAPER_MODES:
+        return ["evidence_auditor", "claim_critic"]
+    return ["performance_auditor"]
+
+
+def check_research_contract(cfg: dict[str, Any]) -> None:
+    mode = cfg.get("strictness_mode")
+    if mode not in PAPER_MODES:
+        return
+    contract = cfg.get("research_contract")
+    if not isinstance(contract, dict) or not contract:
+        raise ValidationError("research_contract is required for scientist/researcher")
+    missing = sorted(key for key in REQUIRED_CONTRACT_KEYS if not contract.get(key))
+    if missing:
+        raise ValidationError(f"research_contract missing fields: {', '.join(missing)}")
+
+
+def check_critic_accept_payload(critic: dict[str, Any], *, mode: str, role: str, node: dict[str, Any]) -> None:
+    if critic.get("verdict") != "ACCEPT":
+        raise ValidationError(f"required critic role did not ACCEPT: {role}")
+    if critic.get("mode") != mode:
+        raise ValidationError(f"critic mode mismatch for {role}")
+    if critic.get("critic_role") != role:
+        raise ValidationError(f"critic role mismatch for {role}")
+    checks = critic.get("acceptance_checks")
+    if not isinstance(checks, dict):
+        raise ValidationError(f"critic acceptance_checks missing for {role}")
+    for key in sorted(REQUIRED_ACCEPTANCE_CHECKS):
+        if checks.get(key) is not True:
+            raise ValidationError(f"critic {role} acceptance check failed: {key}")
+    if checks.get("cheap_improvements_remaining") is not False:
+        raise ValidationError(f"critic {role} reports cheap improvements remaining")
+    scan = critic.get("missed_opportunity_scan")
+    if not isinstance(scan, dict) or not isinstance(scan.get("searched"), list) or not scan["searched"]:
+        raise ValidationError(f"critic {role} missed_opportunity_scan is incomplete")
+    actionable = scan.get("actionable_improvements")
+    if not isinstance(actionable, list):
+        raise ValidationError(f"critic {role} actionable_improvements must be a list")
+    if actionable:
+        raise ValidationError(f"critic {role} accepted despite actionable improvements")
+    if not isinstance(scan.get("why_remaining_ideas_are_not_worth_running"), str) or not scan["why_remaining_ideas_are_not_worth_running"].strip():
+        raise ValidationError(f"critic {role} must justify why remaining ideas are not worth running")
+    if mode in PAPER_MODES and role == "claim_critic":
+        outcome = node.get("outcome_type")
+        if outcome == "hypothesis_supported" and critic.get("contract_success_met") is not True:
+            raise ValidationError("claim_critic must confirm contract success")
+        if outcome == "hypothesis_failed_with_evidence" and (critic.get("contract_failure_met") is not True or critic.get("fundamental_failure") is not True):
+            raise ValidationError("claim_critic must confirm fundamental contract failure")
+        if outcome == "rescue_finding_with_failed_hypothesis" and (critic.get("contract_failure_met") is not True or critic.get("rescue_scope_met") is not True):
+            raise ValidationError("claim_critic must confirm failed hypothesis and rescue scope")
+
+
+def check_required_critic_roles(run: Path, cfg: dict[str, Any], node_id: str, node: dict[str, Any]) -> None:
+    reviews = node.get("critic_reviews")
+    if not isinstance(reviews, dict):
+        raise ValidationError(f"accepted node missing critic_reviews: {node_id}")
+    expected_fingerprint = node_evidence_fingerprint(node)
+    runtime = critic_agent_config(cfg)
+    mode = cfg["strictness_mode"]
+    for role in required_critic_roles(mode):
+        review = reviews.get(role)
+        if not isinstance(review, dict):
+            raise ValidationError(f"accepted node missing required critic role: {node_id}:{role}")
+        if review.get("verdict") != "ACCEPT":
+            raise ValidationError(f"accepted node critic role not accepted: {node_id}:{role}")
+        if review.get("evidence_fingerprint") != expected_fingerprint:
+            raise ValidationError(f"accepted node critic role stale: {node_id}:{role}")
+        if review.get("spawn_model") != runtime["model"]:
+            raise ValidationError(f"accepted node critic role wrong model: {node_id}:{role}")
+        if review.get("spawn_reasoning_effort") != runtime["reasoning_effort"]:
+            raise ValidationError(f"accepted node critic role wrong reasoning effort: {node_id}:{role}")
+        critic_ref = review.get("critic_ref")
+        if not isinstance(critic_ref, str) or not critic_ref:
+            raise ValidationError(f"accepted node critic role missing ref: {node_id}:{role}")
+        critic_path = Path(critic_ref)
+        if not critic_path.exists():
+            critic_path = run / critic_ref
+        record = load_json(critic_path)
+        spawn = record.get("spawn") if isinstance(record.get("spawn"), dict) else {}
+        if spawn.get("spawn_model") != runtime["model"] or spawn.get("spawn_reasoning_effort") != runtime["reasoning_effort"]:
+            raise ValidationError(f"critic log runtime mismatch: {node_id}:{role}")
+        critic = record.get("critic") if isinstance(record.get("critic"), dict) else {}
+        check_critic_accept_payload(critic, mode=mode, role=role, node=node)
+
+
+def check_outcome_and_metric(
+    cfg: dict[str, Any],
+    node: dict[str, Any],
+    *,
+    selected_score: float,
+    baseline_score: float,
+    direction: str,
+    selected_node: str,
+) -> None:
+    mode = cfg["strictness_mode"]
+    outcome = node.get("outcome_type")
+    if outcome not in OUTCOME_TYPES:
+        raise ValidationError(f"accepted node missing valid outcome_type: {selected_node}")
+    beats = comparison_passes(selected_score, baseline_score, direction)
+    if mode in PAPER_MODES:
+        check_research_contract(cfg)
+        if outcome not in PAPER_OUTCOME_TYPES:
+            raise ValidationError(f"paper mode cannot select outcome_type {outcome}")
+        for key in ["current_claim", "claim_equivalence", "contract_evidence", "paper_worthiness"]:
+            if not node.get(key):
+                raise ValidationError(f"paper-mode accepted node missing {key}: {selected_node}")
+        evidence = node.get("contract_evidence") if isinstance(node.get("contract_evidence"), dict) else {}
+        if outcome == "hypothesis_supported":
+            if not beats:
+                raise ValidationError("hypothesis_supported selected node must beat baseline")
+            if evidence.get("success_criteria_met") is not True:
+                raise ValidationError("hypothesis_supported requires success_criteria_met")
+        elif outcome == "hypothesis_failed_with_evidence":
+            if evidence.get("failure_criteria_met") is not True or evidence.get("routine_optimization_failure") is True:
+                raise ValidationError("hypothesis_failed_with_evidence requires fundamental failure evidence")
+            if not node.get("fundamental_failure_reason"):
+                raise ValidationError("hypothesis_failed_with_evidence requires fundamental_failure_reason")
+        elif outcome == "rescue_finding_with_failed_hypothesis":
+            if evidence.get("failure_criteria_met") is not True or evidence.get("rescue_scope_met") is not True:
+                raise ValidationError("rescue finding requires failed hypothesis and rescue scope evidence")
+    else:
+        if not beats:
+            raise ValidationError("selected node must beat baseline under declared benchmark")
+        if mode in {"builder", "engineer"}:
+            if outcome != "practical_improvement":
+                raise ValidationError(f"{mode} selected node requires practical_improvement outcome")
+            strong = node.get("strong_model_evidence") if isinstance(node.get("strong_model_evidence"), dict) else {}
+            if strong.get("cheap_improvements_remaining") is not False:
+                raise ValidationError(f"{mode} selected node has cheap improvements remaining")
+            if strong.get("tuning_plateau_or_exhausted") is not True:
+                raise ValidationError(f"{mode} selected node lacks tuning plateau/exhaustion evidence")
+            bar = performance_bar_config(cfg)
+            if improvement_margin(selected_score, baseline_score, direction) < bar["min_improvement_margin"]:
+                raise ValidationError(f"{mode} selected node does not meet configured improvement margin")
+            confirmations = strong.get("confirmation_trials")
+            confirmation_count = len(confirmations) if isinstance(confirmations, list) else int(strong.get("confirmation_trial_count") or 0)
+            if confirmation_count < bar["min_confirmation_trials"]:
+                raise ValidationError(f"{mode} selected node lacks confirmation trials")
+
+
 def check_research_file_artifacts(root: Path, run: Path) -> None:
     cfg = check_config(root, run)
     baseline = load_json(run / "baseline" / "metrics.json")
@@ -279,6 +465,8 @@ def check_research_loop_state(root: Path, run: Path) -> None:
     selection = load_json(run / "selection.json")
     if selection.get("selection_status") != "final" or selection.get("selected_node") != selected_node:
         raise ValidationError("selection.json must finalize the selected node")
+    if selection.get("metric_direction") not in {"maximize", "minimize"}:
+        raise ValidationError("selection.json metric_direction must be maximize or minimize")
     accepted_nodes = [node_id for node_id, node_state in nodes.items() if isinstance(node_state, dict) and node_state.get("status") == "accepted"]
     ranked_nodes = selection.get("ranked_nodes")
     if not isinstance(ranked_nodes, list):
@@ -306,11 +494,15 @@ def check_research_loop_state(root: Path, run: Path) -> None:
             reason = validate_node_contract(node_id, node_doc, official_status="accepted")
             if reason:
                 raise ValidationError(f"node.json invalid for {node_id}: {reason}")
+            if node_doc.get("requires_worker_repair") is True:
+                raise ValidationError(f"accepted node has unresolved repair: {node_id}")
+            check_required_critic_roles(run, cfg, node_id, node_doc)
             metrics = node_doc.get("metrics")
             if isinstance(metrics, dict):
                 score = metric_score(metrics)
                 if node_id == selected_node:
                     selected_score = score
+                    selected_node_doc = node_doc
             if mode in {"scientist", "researcher"}:
                 novelty = node_doc.get("novelty")
                 if not isinstance(novelty, dict) or novelty.get("pass") is not True:
@@ -330,9 +522,11 @@ def check_research_loop_state(root: Path, run: Path) -> None:
             raise ValidationError(f"unresolved node state blocks research_to_review: {node_id}:{status}")
     if selected_score is None:
         raise ValidationError("selected node metrics.score is required")
-    direction = load_json(run / "selection.json").get("metric_direction", "maximize")
-    if not comparison_passes(selected_score, baseline_score, direction):
-        raise ValidationError("selected node must beat baseline under declared benchmark")
+    direction = selection["metric_direction"]
+    selected_node_doc = locals().get("selected_node_doc")
+    if not isinstance(selected_node_doc, dict):
+        raise ValidationError("selected node document is required")
+    check_outcome_and_metric(cfg, selected_node_doc, selected_score=selected_score, baseline_score=baseline_score, direction=direction, selected_node=selected_node)
     check_loop_completion(root, run, "research")
 
 

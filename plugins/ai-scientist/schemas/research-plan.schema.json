@@ -11,6 +11,18 @@
     "success_threshold": {"type": "number"},
     "split_policy": {"type": "string"},
     "baseline_command": {"type": "string"},
-    "required_deliverables": {"type": "array", "items": {"type": "string"}}
+    "required_deliverables": {"type": "array", "items": {"type": "string"}},
+    "research_contract": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "outcome_type": {
+      "enum": [
+        "hypothesis_supported",
+        "hypothesis_failed_with_evidence",
+        "rescue_finding_with_failed_hypothesis",
+        "practical_improvement"
+      ]
+    }
   }
 }
