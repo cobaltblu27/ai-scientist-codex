@@ -63,6 +63,49 @@ def accepted_node_payload(score: float = 0.8, novelty: dict | None = None) -> di
     return {"node": node}
 
 
+def critic_payload(verdict: str = "ACCEPT", score: int = 85) -> dict:
+    payload = {
+        "verdict": verdict,
+        "score": score,
+        "rationale": f"{verdict} rationale with enough detail",
+        "strengths": ["clear benchmark evidence"],
+        "weaknesses": ["limited scope"],
+        "required_revisions": [],
+        "risk_flags": [],
+    }
+    if verdict == "REVISE":
+        payload["required_revisions"] = ["add validation evidence"]
+    return payload
+
+
+def record_node_critic(target: Path, node_id: str = "node-001", verdict: str = "ACCEPT", run_id: str = "run-001") -> subprocess.CompletedProcess[str]:
+    started = run_cli(target, "node", "critic-start", "--run-id", run_id, "--node-id", node_id)
+    if started.returncode != 0:
+        return started
+    result_path = Path(json.loads(started.stdout)["result_path"])
+    result_path.write_text(json.dumps(critic_payload(verdict)) + "\n")
+    return run_cli(target, "node", "critic-complete", "--run-id", run_id, "--critic-id", json.loads(started.stdout)["critic_id"])
+
+
+def accept_node_with_critic(target: Path, node_id: str = "node-001", payload: dict | None = None, run_id: str = "run-001") -> subprocess.CompletedProcess[str]:
+    candidate = run_cli(
+        target,
+        "node",
+        "transition",
+        "--run-id",
+        run_id,
+        "--node-id",
+        node_id,
+        "--status",
+        "candidate",
+        "--json",
+        json.dumps(payload or accepted_node_payload()),
+    )
+    if candidate.returncode != 0:
+        return candidate
+    return record_node_critic(target, node_id=node_id, verdict="ACCEPT", run_id=run_id)
+
+
 class ResearchLoopV1Tests(unittest.TestCase):
     def test_compact_research_loop_validates_and_releases_stop_hook(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,17 +125,7 @@ class ResearchLoopV1Tests(unittest.TestCase):
             )
             self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr)
 
-            accepted = run_cli(
-                target,
-                "node",
-                "transition",
-                "--node-id",
-                "node-001",
-                "--status",
-                "accepted",
-                "--json",
-                json.dumps(accepted_node_payload()),
-            )
+            accepted = accept_node_with_critic(target)
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
 
             selected = run_cli(
@@ -155,6 +188,7 @@ class ResearchLoopV1Tests(unittest.TestCase):
             self.assertEqual(payload["next_action"], "node_work")
             self.assertEqual(payload["next_action_details"]["reason"], "continue implementation review")
             self.assertEqual(payload["next_action_details"]["subagent_concurrency_limit"], 6)
+            self.assertIn("subagent_concurrency_source", payload["next_action_details"])
             self.assertEqual(payload["next_action_details"]["available_subagent_slots"], 6)
 
     def test_research_subagent_concurrency_limit_is_enforced(self) -> None:
@@ -164,6 +198,7 @@ class ResearchLoopV1Tests(unittest.TestCase):
             self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
             config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
             self.assertEqual(config["research"]["concurrency"]["max_subagents"], 2)
+            self.assertEqual(config["research"]["concurrency"]["source"], "research start --max-subagents")
 
             for subagent_id, node_id in (("worker-node-001", "node-001"), ("worker-node-002", "node-002")):
                 proc = run_cli(
@@ -227,6 +262,25 @@ class ResearchLoopV1Tests(unittest.TestCase):
             )
             self.assertEqual(allowed.returncode, 0, allowed.stderr + allowed.stdout)
 
+    def test_research_concurrency_defaults_to_codex_max_threads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            (target / ".codex").mkdir()
+            (target / ".codex" / "config.toml").write_text("[agents]\nmax_threads = 3\n")
+
+            start = run_cli(target, "research", "start", "--run-id", "run-001")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
+            self.assertEqual(config["research"]["concurrency"]["max_subagents"], 3)
+            self.assertEqual(config["research"]["concurrency"]["source"], "codex [agents].max_threads")
+
+            resumed = run_cli(target, "research", "resume", "--run-id", "run-001")
+            self.assertEqual(resumed.returncode, 0, resumed.stderr + resumed.stdout)
+            details = json.loads(resumed.stdout)["next_action_details"]
+            self.assertEqual(details["available_subagent_slots"], 3)
+            self.assertEqual(details["suggested_subagent_count"], 3)
+            self.assertEqual(details["subagent_concurrency_source"], "codex [agents].max_threads")
+
     def test_research_subagent_update_reads_assigned_result_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
@@ -277,12 +331,15 @@ class ResearchLoopV1Tests(unittest.TestCase):
             self.assertTrue(result_path.exists())
             result_path.write_text(json.dumps(accepted_node_payload()) + "\n")
 
-            accepted = run_cli(target, "node", "transition", "--run-id", "run-001", "--node-id", "node-001", "--status", "accepted")
+            candidate = run_cli(target, "node", "transition", "--run-id", "run-001", "--node-id", "node-001", "--status", "candidate")
+            self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
+            accepted = record_node_critic(target)
 
             self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
             node = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "nodes" / "node-001" / "node.json").read_text())
             self.assertEqual(node["metrics"]["score"], 0.8)
             self.assertEqual(node["result_path"], str(result_path))
+            self.assertEqual(node["critic_verdict"], "ACCEPT")
 
     def test_resource_run_records_flat_trial_and_journal_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -352,17 +409,7 @@ class ResearchLoopV1Tests(unittest.TestCase):
             write_baseline(target)
             checkpoint = run_cli(target, "research", "checkpoint", "--json", json.dumps({"state": {"baseline_status": "complete"}}))
             self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr)
-            accepted = run_cli(
-                target,
-                "node",
-                "transition",
-                "--node-id",
-                "node-001",
-                "--status",
-                "accepted",
-                "--json",
-                json.dumps(accepted_node_payload()),
-            )
+            accepted = accept_node_with_critic(target)
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
             selected = run_cli(target, "selection", "finalize", "--selected-node", "node-001", "--json", json.dumps({"ranked_nodes": [{"node_id": "node-001"}]}))
             self.assertEqual(selected.returncode, 0, selected.stderr)
@@ -388,6 +435,139 @@ class ResearchLoopV1Tests(unittest.TestCase):
             selected = run_cli(target, "selection", "finalize", "--selected-node", "node-001", "--json", json.dumps({"ranked_nodes": [{"node_id": "node-001"}]}))
             self.assertNotEqual(selected.returncode, 0)
             self.assertIn("selected node must be accepted", selected.stdout)
+
+    def test_direct_terminal_node_transition_requires_critic(self) -> None:
+        for status in ("accepted", "invalid", "rejected"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp)
+                self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+                direct = run_cli(
+                    target,
+                    "node",
+                    "transition",
+                    "--node-id",
+                    "node-001",
+                    "--status",
+                    status,
+                    "--json",
+                    json.dumps(accepted_node_payload()),
+                )
+                self.assertNotEqual(direct.returncode, 0)
+                self.assertIn(f"terminal node status {status} requires node critic-complete", direct.stdout)
+
+    def test_critic_verdicts_drive_node_statuses(self) -> None:
+        cases = [("ACCEPT", "accepted"), ("REVISE", "candidate"), ("INVALID", "invalid"), ("REJECT", "rejected")]
+        for verdict, expected_status in cases:
+            with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp)
+                self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+                candidate = run_cli(
+                    target,
+                    "node",
+                    "transition",
+                    "--node-id",
+                    "node-001",
+                    "--status",
+                    "candidate",
+                    "--json",
+                    json.dumps(accepted_node_payload()),
+                )
+                self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
+                completed = record_node_critic(target, verdict=verdict)
+                self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+                state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+                self.assertEqual(state["state"]["nodes"]["node-001"]["status"], expected_status)
+
+    def test_stale_node_critic_result_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+            candidate = run_cli(
+                target,
+                "node",
+                "transition",
+                "--node-id",
+                "node-001",
+                "--status",
+                "candidate",
+                "--json",
+                json.dumps(accepted_node_payload(score=0.8)),
+            )
+            self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
+            started = run_cli(target, "node", "critic-start", "--node-id", "node-001")
+            self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            update = run_cli(
+                target,
+                "node",
+                "transition",
+                "--node-id",
+                "node-001",
+                "--status",
+                "candidate",
+                "--json",
+                json.dumps(accepted_node_payload(score=0.9)),
+            )
+            self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
+            result_path = Path(json.loads(started.stdout)["result_path"])
+            result_path.write_text(json.dumps(critic_payload("ACCEPT")) + "\n")
+            completed = run_cli(target, "node", "critic-complete", "--critic-id", json.loads(started.stdout)["critic_id"])
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("critic result is stale", completed.stdout)
+
+    def test_research_completion_blocks_candidate_and_pending_critic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+            write_baseline(target)
+            checkpoint = run_cli(target, "research", "checkpoint", "--json", json.dumps({"state": {"baseline_status": "complete"}}))
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr + checkpoint.stdout)
+            candidate = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "candidate", "--json", json.dumps(accepted_node_payload()))
+            self.assertEqual(candidate.returncode, 0, candidate.stderr + candidate.stdout)
+            checkpoint = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--json",
+                json.dumps({"state": {"selected_node": "node-001", "selection": {"status": "final", "selected_node": "node-001"}}}),
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr + checkpoint.stdout)
+            audit = {"passed": True, "prompt_to_artifact_checklist": ["x"], "verification_evidence": ["x"]}
+            completed = run_cli(target, "research", "complete", "--json", json.dumps(audit))
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("research_node_unresolved:node-001", completed.stdout)
+
+            started = run_cli(target, "node", "critic-start", "--node-id", "node-001")
+            self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            completed = run_cli(target, "research", "complete", "--json", json.dumps(audit))
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("research_critics_pending", completed.stdout)
+
+    def test_research_completion_blocks_terminal_node_without_critic_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
+            write_baseline(target)
+            checkpoint = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--json",
+                json.dumps(
+                    {
+                        "state": {
+                            "baseline_status": "complete",
+                            "nodes": {"node-001": {"status": "accepted"}},
+                            "selected_node": "node-001",
+                            "selection": {"status": "final", "selected_node": "node-001"},
+                        }
+                    }
+                ),
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr + checkpoint.stdout)
+            audit = {"passed": True, "prompt_to_artifact_checklist": ["x"], "verification_evidence": ["x"]}
+            completed = run_cli(target, "research", "complete", "--json", json.dumps(audit))
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("research_node_missing_critic_ref:node-001", completed.stdout)
 
     def test_state_journal_mismatch_blocks_helper_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

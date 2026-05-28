@@ -100,7 +100,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 
 Prefer `--path <payload.json>` over inline `--json` for nontrivial payloads. The payload should include any known selected idea snapshot, benchmark command, dependency plan, workspace plan, seed policy, and initial state overrides. If the selected idea came from ideation, copy the selected canonical idea, ranking rationale, mode config snapshot, and evidence summary into this research run. Later ideation edits must not mutate this research input.
 
-Research subagent concurrency is frozen at run start under `research.concurrency.max_subagents`. Resolution order is `research start --max-subagents <n>`, then payload/project override, then Codex `[agents].max_threads`, then `6`. The resume cursor reports `available_subagent_slots` and `suggested_subagent_count`; use that count as the upper bound for parallel node workers.
+Research subagent concurrency is frozen at run start under `research.concurrency.max_subagents`. Resolution order is `research start --max-subagents <n>`, then payload/project override, then Codex `~/.codex/config.toml` `[agents].max_threads`, then `6`. The frozen config records the source. The resume cursor reports `available_subagent_slots`, `suggested_subagent_count`, and `subagent_concurrency_source`; use that count as the upper bound for parallel node workers.
 
 Resume:
 
@@ -176,11 +176,11 @@ Official node statuses:
 - `running`: benchmark or substantial experiment is running.
 - `buggy`: command failed or behavior is broken; failure signature required.
 - `repairing`: active repair/debugging.
-- `candidate`: result looks potentially acceptable and needs validation.
+- `candidate`: meaningful progress, partial success, or promising evidence that still needs independent validation.
 - `validating`: split/leakage/final checks are running.
-- `accepted`: node is valid and eligible for selection.
-- `invalid`: node cannot be trusted or fails required gates.
-- `rejected`: node is not selected or not worth continuing; reason required.
+- `accepted`: critic-approved final evidence that is eligible for selection.
+- `invalid`: critic-confirmed evidence/trust failure.
+- `rejected`: critic-confirmed not-worth-continuing or not-selected node; reason required.
 
 Record transitions:
 
@@ -214,11 +214,11 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   node transition \
   --run-id <run-id> \
   --node-id node-001 \
-  --status accepted \
-  --reason "passes benchmark and validation"
+  --status candidate \
+  --reason "meaningful progress ready for independent critic"
 ```
 
-Use `--json` or `--path` only as explicit overrides.
+Use `--json` or `--path` only as explicit overrides. `candidate`, `buggy`, and `repairing` may branch into more work. Terminal states do not trigger further branching.
 
 Accepted node evidence must include:
 
@@ -232,6 +232,49 @@ Accepted node evidence must include:
 - for scientist/researcher, novelty evidence when required by validator/config
 
 Rejected/invalid nodes need a clear rejection reason or failure signature.
+
+## Node Critics
+
+Terminal node states are critic-gated. Direct `node transition --status accepted|invalid|rejected` is refused. The helper commands only prepare paths, validate JSON, persist state, and apply the critic verdict; the orchestrator still spawns the actual Codex critic subagent.
+
+Start a critic after node evidence is in `candidate` or `validating`:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node critic-start --run-id <run-id> --node-id node-001
+```
+
+Give the returned `prompt` and `result_path` to a fresh critic. The critic writes JSON only to `result_path`:
+
+```json
+{
+  "verdict": "ACCEPT",
+  "score": 84,
+  "rationale": "Final evidence is complete and reproducible.",
+  "strengths": ["clean split evidence"],
+  "weaknesses": ["limited ablations"],
+  "required_revisions": [],
+  "risk_flags": []
+}
+```
+
+Complete the critic:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node critic-complete --run-id <run-id> --critic-id <critic-id>
+```
+
+Verdict mapping:
+
+- `ACCEPT` -> `accepted`
+- `REVISE` -> `candidate`
+- `INVALID` -> `invalid`
+- `REJECT` -> `rejected`
+
+Small progress or partial success must be `REVISE`/`candidate`, not `ACCEPT`. Critic completion fails if node evidence changed after `critic-start`.
 
 ## Bug Repair
 
@@ -344,7 +387,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 
 Prefer `--path <selection.json>` over inline `--json` for selection payloads.
 
-`selection finalize` requires the selected node to be accepted in `loop-state.json` and all accepted nodes to appear in `ranked_nodes`.
+`selection finalize` requires the selected node to be accepted in `loop-state.json` with a fresh `ACCEPT` critic verdict, and all accepted nodes to appear in `ranked_nodes`.
 
 ## Completion And Handoff
 
@@ -354,9 +397,11 @@ Before completion:
 2. All subagents are terminal.
 3. Blocking resources are resolved.
 4. Every node is terminal: `accepted`, `invalid`, or `rejected`.
-5. Selected node exists and is `accepted`.
-6. `selection.json` is final and matches `loop-state.json`.
-7. Node evidence satisfies `validate_run.py --gate research_to_review`.
+5. Every terminal node has a fresh critic ref matching its terminal verdict.
+6. No critic is pending.
+7. Selected node exists and is `accepted` with a fresh `ACCEPT` critic verdict.
+8. `selection.json` is final and matches `loop-state.json`.
+9. Node evidence satisfies `validate_run.py --gate research_to_review`.
 
 Complete research with a passing audit:
 

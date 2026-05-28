@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ai_scientist_state import evaluate_completion, journal_has_event, validate_node_contract
+from ai_scientist_state import evaluate_completion, journal_has_event, node_fresh_critic_reason, validate_node_contract
 
 ALLOWED_DEP_STATUSES = {"approved", "rejected", "not_needed"}
 MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
@@ -296,7 +296,13 @@ def check_research_loop_state(root: Path, run: Path) -> None:
         status = node_state.get("status")
         node_json_path = run / "nodes" / node_id / "node.json"
         if status == "accepted":
+            critic_reason = node_fresh_critic_reason(node_id, node_state, required_verdict="ACCEPT")
+            if critic_reason:
+                raise ValidationError(critic_reason)
             node_doc = load_json(node_json_path)
+            critic_reason = node_fresh_critic_reason(node_id, node_doc, required_verdict="ACCEPT")
+            if critic_reason:
+                raise ValidationError(critic_reason)
             reason = validate_node_contract(node_id, node_doc, official_status="accepted")
             if reason:
                 raise ValidationError(f"node.json invalid for {node_id}: {reason}")
@@ -310,6 +316,14 @@ def check_research_loop_state(root: Path, run: Path) -> None:
                 if not isinstance(novelty, dict) or novelty.get("pass") is not True:
                     raise ValidationError(f"novelty evidence must pass for {mode}: {node_id}")
         elif status in {"invalid", "rejected"}:
+            expected_verdict = "INVALID" if status == "invalid" else "REJECT"
+            critic_reason = node_fresh_critic_reason(node_id, node_state, required_verdict=expected_verdict)
+            if critic_reason:
+                raise ValidationError(critic_reason)
+            node_doc = load_json(node_json_path)
+            critic_reason = node_fresh_critic_reason(node_id, node_doc, required_verdict=expected_verdict)
+            if critic_reason:
+                raise ValidationError(critic_reason)
             if not (node_state.get("rejection_reason") or node_state.get("failure_signature")):
                 raise ValidationError(f"rejected/invalid node missing reason: {node_id}")
         else:

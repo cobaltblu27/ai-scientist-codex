@@ -138,7 +138,15 @@ class ContinuationStateTests(unittest.TestCase):
                 "research",
                 {
                     "baseline_status": "complete",
-                    "nodes": {"node-001": {"status": "accepted"}},
+                    "nodes": {
+                        "node-001": {
+                            "status": "accepted",
+                            "critic_ref": "logs/critics/critic-node-001.json",
+                            "critic_verdict": "ACCEPT",
+                            "critic_evidence_fingerprint": "fp1",
+                            "node_evidence_fingerprint": "fp1",
+                        }
+                    },
                     "selected_node": "node-001",
                     "selection": {"status": "final", "selected_node": "node-001"},
                 },

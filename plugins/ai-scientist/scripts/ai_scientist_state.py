@@ -52,6 +52,21 @@ IDEA_TERMINAL_STATUSES = {
 }
 NODE_RESOLVED_STATUSES = {"accepted", "invalid", "rejected"}
 NODE_UNRESOLVED_STATUSES = {"planned", "implementing", "running", "validating", "buggy", "repairing", "candidate"}
+NODE_TERMINAL_CRITIC_VERDICTS = {"accepted": "ACCEPT", "invalid": "INVALID", "rejected": "REJECT"}
+NODE_EVIDENCE_ADMIN_KEYS = {
+    "status",
+    "updated_at",
+    "critic_ref",
+    "critic_id",
+    "critic_verdict",
+    "critic_completed_at",
+    "critic_evidence_fingerprint",
+    "critic_result_path",
+    "node_evidence_fingerprint",
+    "rejection_reason",
+    "revision_reason",
+    "reason",
+}
 SUBAGENT_TERMINAL_STATUSES = {"integrated", "rejected_with_reason", "abandoned_with_reason"}
 RESOURCE_TERMINAL_STATUSES = {"completed", "cancelled", "superseded", "abandoned", "expired"}
 
@@ -168,6 +183,30 @@ def data_hash(data: Any) -> str:
     import hashlib
 
     return hashlib.sha256(canonical_json(data).encode("utf-8")).hexdigest()
+
+
+def node_evidence_payload(node: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in node.items() if key not in NODE_EVIDENCE_ADMIN_KEYS}
+
+
+def node_evidence_fingerprint(node: dict[str, Any]) -> str:
+    return data_hash(node_evidence_payload(node))
+
+
+def node_fresh_critic_reason(node_id: str, node: dict[str, Any], *, required_verdict: str | None = None) -> str | None:
+    critic_ref = node.get("critic_ref")
+    if not isinstance(critic_ref, str) or not critic_ref.strip():
+        return f"research_node_missing_critic_ref:{node_id}"
+    verdict = node.get("critic_verdict")
+    if required_verdict is not None and verdict != required_verdict:
+        return f"research_node_critic_verdict_invalid:{node_id}:{verdict}"
+    fingerprint = node.get("critic_evidence_fingerprint")
+    current_fingerprint = node.get("node_evidence_fingerprint")
+    if not isinstance(current_fingerprint, str):
+        current_fingerprint = node_evidence_fingerprint(node)
+    if not isinstance(fingerprint, str) or fingerprint != current_fingerprint:
+        return f"research_node_critic_stale:{node_id}"
+    return None
 
 
 def load_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
@@ -745,6 +784,9 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, "research_state_missing", state)
     if phase_state.get("baseline_status") != "complete":
         return CompletionResult(False, "research_baseline_incomplete", state)
+    pending_critics = phase_state.get("pending_critics")
+    if isinstance(pending_critics, dict) and pending_critics:
+        return CompletionResult(False, f"research_critics_pending:{','.join(sorted(map(str, pending_critics.keys())))}", state)
     blocked_subagents = nonterminal_subagents(phase_state)
     if blocked_subagents:
         return CompletionResult(False, f"research_subagents_unresolved:{','.join(blocked_subagents)}", state)
@@ -767,10 +809,16 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
             return CompletionResult(False, f"research_node_unresolved:{node_id}", state)
         if status not in NODE_RESOLVED_STATUSES:
             return CompletionResult(False, f"research_node_status_invalid:{node_id}", state)
+        critic_reason = node_fresh_critic_reason(node_id, node, required_verdict=NODE_TERMINAL_CRITIC_VERDICTS[status])
+        if critic_reason:
+            return CompletionResult(False, critic_reason, state)
         if status in {"invalid", "rejected"} and not has_substantive_value(node.get("rejection_reason") or node.get("failure_signature")):
             return CompletionResult(False, f"research_rejected_node_missing_reason:{node_id}", state)
     if nodes[selected_node].get("status") != "accepted":
         return CompletionResult(False, "research_selected_node_not_accepted", state)
+    selected_critic_reason = node_fresh_critic_reason(str(selected_node), nodes[selected_node], required_verdict="ACCEPT")
+    if selected_critic_reason:
+        return CompletionResult(False, selected_critic_reason, state)
     selection = phase_state.get("selection")
     if not isinstance(selection, dict) or selection.get("selected_node") != selected_node:
         return CompletionResult(False, "research_selection_missing_or_stale", state)

@@ -112,6 +112,28 @@
       }
     }
   },
+  "research": {
+    "concurrency": {
+      "max_subagents": 6
+    },
+    "modes": {
+      "scientist": {
+        "node_critic_prompt_template": "You are an independent research-node critic in scientist mode. Review node {node_id} for novelty, evidence, ablations, leakage/split integrity, reproducibility, and publishability. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+      },
+      "researcher": {
+        "node_critic_prompt_template": "You are an independent research-node critic in researcher mode. Review node {node_id} for research usefulness, evidence quality, ablations, leakage/split integrity, reproducibility, and publishability. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+      },
+      "balanced": {
+        "node_critic_prompt_template": "You are an independent research-node critic in balanced mode. Review node {node_id} for benchmark integrity, evidence, implementation quality, leakage/split integrity, reproducibility, practical value, and risk. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+      },
+      "engineer": {
+        "node_critic_prompt_template": "You are an independent research-node critic in engineer mode. Review node {node_id} for benchmark integrity, implementation quality, performance, maintainability, reproducibility, and risk. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+      },
+      "builder": {
+        "node_critic_prompt_template": "You are an independent research-node critic in builder mode. Review node {node_id} for benchmark integrity, implementation quality, performance, maintainability, reproducibility, buildability, and risk. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."
+      }
+    }
+  },
   "venue_impact": {
     "aliases": {
       "aaai": "aaai",
