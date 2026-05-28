@@ -102,6 +102,8 @@ Prefer `--path <payload.json>` over inline `--json` for nontrivial payloads. The
 
 Research subagent concurrency is frozen at run start under `research.concurrency.max_subagents`. Resolution order is `research start --max-subagents <n>`, then payload/project override, then Codex `~/.codex/config.toml` `[agents].max_threads`, then `6`. The frozen config records the source. The resume cursor reports `available_subagent_slots`, `suggested_subagent_count`, and `subagent_concurrency_source`; use that count as the upper bound for parallel node workers.
 
+Research usage-cap defaults are also frozen at run start under `research.usage_cap`: enabled, warn at 85%, block new LLM/subagent work at 95%, poll every 600 seconds, and read `limit_id: codex` from `codex app-server account/rateLimits/read`. `research start` performs the first usage check. `research resume` refreshes stale usage, includes `usage_cap` in `next_action_details`, and returns `next_action: blocked_on_usage_limit` when capped. Before starting strategist/node/critic subagent work, run through the helper entrypoints so the cap is enforced and logged. Use `research usage-check --run-id <run-id> --force` for an explicit refresh. `research start --no-limit-host-cap` or `research.usage_cap.no_limit_host_cap: true` logs usage warnings without blocking; default mode fails closed if usage cannot be read.
+
 Resume:
 
 ```bash
@@ -306,6 +308,8 @@ Good subagent tasks:
 - final selection review
 
 Parallelism is allowed across different nodes up to frozen `research.concurrency.max_subagents`. Do not run multiple workers mutating the same node workspace at once. If GPU is needed, queue GPU-backed work through `resource run` and avoid oversubscribing VRAM.
+
+Usage-cap enforcement blocks `subagent update --status planned|running`, `node critic-start`, and active node transitions (`implementing`, `running`, `validating`, `repairing`) at or above 95% Codex usage. Benchmark/resource commands are not blocked, so already-started evidence collection can finish and be recorded. If a final selected accepted node already satisfies the configured good-enough threshold, completion and handoff work may continue; the cap is never a substitute for accepted critic-approved evidence.
 
 When spawning a worker, include:
 

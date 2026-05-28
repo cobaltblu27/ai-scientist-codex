@@ -116,6 +116,15 @@
     "concurrency": {
       "max_subagents": 6
     },
+    "usage_cap": {
+      "enabled": true,
+      "warning_threshold_percent": 85,
+      "cap_threshold_percent": 95,
+      "poll_interval_seconds": 600,
+      "limit_id": "codex",
+      "source": "codex app-server account/rateLimits/read",
+      "no_limit_host_cap": false
+    },
     "modes": {
       "scientist": {
         "node_critic_prompt_template": "You are an independent research-node critic in scientist mode. Review node {node_id} for novelty, evidence, ablations, leakage/split integrity, reproducibility, and publishability. Partial success, promising progress, or evidence needing validation must be REVISE/candidate, not ACCEPT."

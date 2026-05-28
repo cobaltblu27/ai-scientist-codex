@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,9 +15,50 @@ CLI = SCRIPT_DIR / "ai_scientist_state_cli.py"
 VALIDATOR = SCRIPT_DIR / "validate_run.py"
 
 
-def run_cli(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def fake_codex_bin(target: Path) -> Path:
+    fake_bin = target / "fake-bin"
+    fake_bin.mkdir(exist_ok=True)
+    codex = fake_bin / "codex"
+    if not codex.exists():
+        codex.write_text(
+            """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+primary = float(os.environ.get("AI_SCIENTIST_FAKE_USAGE_PRIMARY", "10"))
+secondary = os.environ.get("AI_SCIENTIST_FAKE_USAGE_SECONDARY")
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("id") == 1:
+        print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}), flush=True)
+    if msg.get("id") == 2:
+        limit = {
+            "primary": {"usedPercent": primary, "windowDurationMins": 300, "resetsAt": "2026-05-28T12:00:00Z"},
+            "planType": "test",
+        }
+        if secondary is not None:
+            limit["secondary"] = {"usedPercent": float(secondary), "windowDurationMins": 10080, "resetsAt": "2026-05-29T12:00:00Z"}
+        print(json.dumps({"jsonrpc": "2.0", "method": "notice", "params": {}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"rateLimitsByLimitId": {"codex": limit}}}), flush=True)
+        break
+"""
+        )
+        codex.chmod(0o755)
+    return fake_bin
+
+
+def run_cli(target: Path, *args: str, usage_primary: float = 10, usage_secondary: float | None = None) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_codex_bin(target)}{os.pathsep}{env.get('PATH', '')}"
+    env["AI_SCIENTIST_FAKE_USAGE_PRIMARY"] = str(usage_primary)
+    if usage_secondary is not None:
+        env["AI_SCIENTIST_FAKE_USAGE_SECONDARY"] = str(usage_secondary)
+    else:
+        env.pop("AI_SCIENTIST_FAKE_USAGE_SECONDARY", None)
     return subprocess.run(
         [sys.executable, str(CLI), "--target-repo", str(target), *args],
+        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -169,6 +211,10 @@ class ResearchLoopV1Tests(unittest.TestCase):
             self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
             config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
             self.assertEqual(config["research"]["concurrency"]["max_subagents"], 6)
+            self.assertEqual(config["research"]["usage_cap"]["warning_threshold_percent"], 85)
+            self.assertEqual(config["research"]["usage_cap"]["cap_threshold_percent"], 95)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["usage_cap"]["effective_used_percent"], 10.0)
             updated = run_cli(
                 target,
                 "research",
@@ -190,6 +236,117 @@ class ResearchLoopV1Tests(unittest.TestCase):
             self.assertEqual(payload["next_action_details"]["subagent_concurrency_limit"], 6)
             self.assertIn("subagent_concurrency_source", payload["next_action_details"])
             self.assertEqual(payload["next_action_details"]["available_subagent_slots"], 6)
+
+    def test_usage_check_fresh_and_force_polling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", usage_primary=10).returncode, 0)
+
+            fresh = run_cli(target, "research", "usage-check", "--run-id", "run-001", usage_primary=96)
+            self.assertEqual(fresh.returncode, 0, fresh.stderr + fresh.stdout)
+            fresh_payload = json.loads(fresh.stdout)
+            self.assertEqual(fresh_payload["usage_cap"]["effective_used_percent"], 10.0)
+            self.assertFalse(fresh_payload["usage_cap"]["polled"])
+
+            forced = run_cli(target, "research", "usage-check", "--run-id", "run-001", "--force", usage_primary=96)
+            self.assertEqual(forced.returncode, 0, forced.stderr + forced.stdout)
+            forced_payload = json.loads(forced.stdout)
+            self.assertEqual(forced_payload["usage_cap"]["effective_used_percent"], 96.0)
+            self.assertTrue(forced_payload["usage_cap"]["capped"])
+
+    def test_usage_warning_does_not_block_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", usage_primary=86)
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            resumed = run_cli(target, "research", "resume", "--run-id", "run-001", usage_primary=86)
+            self.assertEqual(resumed.returncode, 0, resumed.stderr + resumed.stdout)
+            payload = json.loads(resumed.stdout)
+            self.assertEqual(payload["next_action"], "setup")
+            self.assertEqual(payload["next_action_details"]["usage_cap"]["status"], "warning")
+
+    def test_usage_cap_blocks_new_llm_work_and_not_resource_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", usage_primary=10).returncode, 0)
+            forced = run_cli(target, "research", "usage-check", "--run-id", "run-001", "--force", usage_primary=96)
+            self.assertEqual(forced.returncode, 0, forced.stderr + forced.stdout)
+
+            blocked = run_cli(
+                target,
+                "subagent",
+                "update",
+                "--run-id",
+                "run-001",
+                "--subagent-id",
+                "worker-node-001",
+                "--status",
+                "running",
+                usage_primary=96,
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("blocked_on_usage_limit", blocked.stdout)
+
+            node_blocked = run_cli(target, "node", "transition", "--run-id", "run-001", "--node-id", "node-001", "--status", "implementing")
+            self.assertNotEqual(node_blocked.returncode, 0)
+            self.assertIn("blocked_on_usage_limit", node_blocked.stdout)
+
+            critic_blocked = run_cli(target, "node", "critic-start", "--run-id", "run-001", "--node-id", "node-001")
+            self.assertNotEqual(critic_blocked.returncode, 0)
+            self.assertIn("blocked_on_usage_limit", critic_blocked.stdout)
+
+            resource = run_cli(
+                target,
+                "resource",
+                "run",
+                "--run-id",
+                "run-001",
+                "--node-id",
+                "node-001",
+                "--trial-id",
+                "trial-001",
+                "--",
+                sys.executable,
+                "-c",
+                "print('resource ok')",
+            )
+            self.assertEqual(resource.returncode, 0, resource.stderr + resource.stdout)
+
+    def test_no_limit_host_cap_logs_warning_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--no-limit-host-cap", usage_primary=96)
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            payload = json.loads(start.stdout)
+            self.assertTrue(payload["usage_cap"]["capped"])
+            self.assertTrue(payload["usage_cap"]["no_limit_host_cap"])
+            allowed = run_cli(
+                target,
+                "subagent",
+                "update",
+                "--run-id",
+                "run-001",
+                "--subagent-id",
+                "worker-node-001",
+                "--status",
+                "running",
+                usage_primary=96,
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stderr + allowed.stdout)
+
+    def test_capped_resume_records_blocked_on_usage_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001", usage_primary=10).returncode, 0)
+            forced = run_cli(target, "research", "usage-check", "--run-id", "run-001", "--force", usage_primary=96)
+            self.assertEqual(forced.returncode, 0, forced.stderr + forced.stdout)
+            resumed = run_cli(target, "research", "resume", "--run-id", "run-001", usage_primary=96)
+            self.assertEqual(resumed.returncode, 0, resumed.stderr + resumed.stdout)
+            payload = json.loads(resumed.stdout)
+            self.assertEqual(payload["next_action"], "blocked_on_usage_limit")
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["phase_status"], "blocked_on_usage_limit")
+            self.assertIn("blocked_reason", state)
 
     def test_research_subagent_concurrency_limit_is_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -595,7 +752,7 @@ class ResearchLoopV1Tests(unittest.TestCase):
             target = Path(tmp)
             self.assertEqual(run_cli(target, "research", "start", "--run-id", "run-001").returncode, 0)
             lock = target / ".ai-scientist" / "runs" / "run-001" / "locks" / "run.lock"
-            lock.parent.mkdir(parents=True)
+            lock.parent.mkdir(parents=True, exist_ok=True)
             lock.write_text(json.dumps({"pid": 999999999, "created_at": "2026-01-01T00:00:00Z"}) + "\n")
 
             checkpoint = run_cli(target, "research", "checkpoint", "--json", json.dumps({"state": {"baseline_status": "complete"}}))

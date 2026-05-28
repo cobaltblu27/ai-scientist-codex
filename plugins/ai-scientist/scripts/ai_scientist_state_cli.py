@@ -68,6 +68,13 @@ from ideation_state import (
     start_revision,
     validate_max_subagents,
 )
+from usage_cap import (
+    UsageCapError,
+    is_snapshot_fresh,
+    merge_usage_cap_config,
+    read_codex_rate_limits,
+    utc_now as usage_utc_now,
+)
 
 MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
 NODE_STATUSES = {"planned", "implementing", "running", "buggy", "repairing", "candidate", "validating", "accepted", "invalid", "rejected"}
@@ -85,6 +92,8 @@ SUBAGENT_STATUSES = {
     "abandoned_with_reason",
 }
 SUBAGENT_TERMINAL_STATUSES = {"integrated", "rejected_with_reason", "abandoned_with_reason"}
+SUBAGENT_USAGE_GATED_STATUSES = {"planned", "running"}
+NODE_USAGE_GATED_STATUSES = {"implementing", "running", "validating", "repairing"}
 
 RESEARCH_NODE_CRITIC_PROMPTS = {
     "scientist": (
@@ -210,12 +219,13 @@ def resolve_research_max_subagents(target: Path, payload: dict[str, Any], explic
     return validate_max_subagents(resolved), source
 
 
-def research_concurrency_config(payload: dict[str, Any], max_subagents: int, source: str) -> dict[str, Any]:
+def research_config(payload: dict[str, Any], max_subagents: int, source: str, *, no_limit_host_cap: bool = False) -> dict[str, Any]:
     research = dict(payload.get("research") if isinstance(payload.get("research"), dict) else {})
     concurrency = dict(research.get("concurrency") if isinstance(research.get("concurrency"), dict) else {})
     concurrency["max_subagents"] = max_subagents
     concurrency["source"] = source
     research["concurrency"] = concurrency
+    research["usage_cap"] = merge_usage_cap_config(research, no_limit_host_cap=no_limit_host_cap or None)
     modes = dict(research.get("modes") if isinstance(research.get("modes"), dict) else {})
     for mode, template in RESEARCH_NODE_CRITIC_PROMPTS.items():
         preset = dict(modes.get(mode) if isinstance(modes.get(mode), dict) else {})
@@ -249,7 +259,191 @@ def research_concurrency_details(config: dict[str, Any], phase_state: dict[str, 
     }
 
 
-def default_config(target: Path, run_id: str, strictness_mode: str, payload: dict[str, Any], *, max_subagents: int | None = None) -> dict[str, Any]:
+def usage_cap_config(config: dict[str, Any]) -> dict[str, Any]:
+    research = config.get("research") if isinstance(config.get("research"), dict) else {}
+    return merge_usage_cap_config(research)
+
+
+def usage_cap_resets_at(snapshot: dict[str, Any]) -> str | None:
+    values = []
+    for key in ("primary", "secondary"):
+        window = snapshot.get(key)
+        if isinstance(window, dict) and isinstance(window.get("resetsAt"), str):
+            values.append(window["resetsAt"])
+    return sorted(values)[0] if values else None
+
+
+def usage_cap_record(snapshot: dict[str, Any] | None, cfg: dict[str, Any], *, error: str | None = None, polled: bool = True) -> dict[str, Any]:
+    effective = snapshot.get("effective_used_percent") if isinstance(snapshot, dict) else None
+    warning = isinstance(effective, (int, float)) and effective >= cfg["warning_threshold_percent"]
+    capped = isinstance(effective, (int, float)) and effective >= cfg["cap_threshold_percent"]
+    if error:
+        status = "error"
+    elif not cfg["enabled"]:
+        status = "disabled"
+    elif capped:
+        status = "capped"
+    elif warning:
+        status = "warning"
+    else:
+        status = "ok"
+    record = {
+        "enabled": cfg["enabled"],
+        "source": cfg["source"],
+        "limit_id": cfg["limit_id"],
+        "warning_threshold_percent": cfg["warning_threshold_percent"],
+        "cap_threshold_percent": cfg["cap_threshold_percent"],
+        "poll_interval_seconds": cfg["poll_interval_seconds"],
+        "no_limit_host_cap": cfg["no_limit_host_cap"],
+        "status": status,
+        "warning": warning,
+        "capped": capped,
+        "polled": polled,
+        "updated_at": usage_utc_now(),
+    }
+    if snapshot is not None:
+        record["snapshot"] = snapshot
+        record["effective_used_percent"] = effective
+        record["resetsAt"] = usage_cap_resets_at(snapshot)
+    if error:
+        record["error"] = error
+        record["warning"] = bool(cfg["no_limit_host_cap"])
+    return record
+
+
+def persist_usage_cap_state(target: Path, run_id: str, record: dict[str, Any], *, command: str) -> dict[str, Any]:
+    def mutator(state: dict[str, Any]) -> None:
+        state.setdefault("state", {})["usage_cap"] = record
+
+    return mutate_loop_state(target, run_id, "state_transition", {"command": command, "usage_cap_status": record.get("status")}, mutator)
+
+
+def refresh_usage_cap(target: Path, run_id: str, config: dict[str, Any], *, force: bool = False, command: str = "research usage-check") -> dict[str, Any]:
+    cfg = usage_cap_config(config)
+    state = load_loop_state(target, run_id)
+    phase_state = state.get("state") if isinstance(state, dict) and isinstance(state.get("state"), dict) else {}
+    existing = phase_state.get("usage_cap") if isinstance(phase_state.get("usage_cap"), dict) else None
+    if not cfg["enabled"]:
+        record = usage_cap_record(None, cfg, polled=False)
+        persist_usage_cap_state(target, run_id, record, command=command)
+        return record
+    if not force and is_snapshot_fresh(existing, cfg["poll_interval_seconds"]):
+        fresh = dict(existing)
+        fresh["polled"] = False
+        return fresh
+    try:
+        snapshot = read_codex_rate_limits(limit_id=cfg["limit_id"])
+    except (UsageCapError, OSError) as exc:
+        error_record = usage_cap_record(None, cfg, error=str(exc), polled=True)
+        append_journal_event(target, run_id, "api_call", details={"command": command, "budget_key": "codex-rate-limit", "status": "error", "error": str(exc), "usage_cap": error_record})
+        persist_usage_cap_state(target, run_id, error_record, command=command)
+        if cfg["no_limit_host_cap"]:
+            return error_record
+        raise
+    append_journal_event(target, run_id, "api_call", details={"command": command, "budget_key": "codex-rate-limit", "status": "ok", "usage_cap": snapshot})
+    record = usage_cap_record(snapshot, cfg, polled=True)
+    persist_usage_cap_state(target, run_id, record, command=command)
+    return record
+
+
+def selected_node_good_enough(target: Path, run_id: str, state: dict[str, Any], config: dict[str, Any]) -> bool:
+    phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
+    selection = phase_state.get("selection") if isinstance(phase_state.get("selection"), dict) else {}
+    selected = selection.get("selected_node") or phase_state.get("selected_node")
+    if not isinstance(selected, str) or not selected:
+        return False
+    if selection.get("status") != "final":
+        return False
+    nodes = phase_state.get("nodes") if isinstance(phase_state.get("nodes"), dict) else {}
+    if not isinstance(nodes.get(selected), dict) or nodes[selected].get("status") != "accepted":
+        return False
+    threshold = nested_value(config, ["selection", "good_enough_score_threshold"])
+    threshold = float(threshold if threshold is not None else 75)
+    persisted = load_json_if_exists(selection_path(target, run_id))
+    ranked = persisted.get("ranked_nodes") if isinstance(persisted, dict) else None
+    if not isinstance(ranked, list):
+        ranked = []
+    for item in ranked:
+        if not isinstance(item, dict) or item.get("node_id") != selected:
+            continue
+        score = item.get("selection_score", item.get("score"))
+        if isinstance(score, (int, float)) and float(score) >= threshold:
+            return True
+    return False
+
+
+def block_on_usage_cap(target: Path, run_id: str, config: dict[str, Any], record: dict[str, Any], *, command: str) -> dict[str, Any]:
+    state = load_loop_state(target, run_id)
+    if not isinstance(state, dict):
+        raise CliError(f"missing loop-state.json for run {run_id}")
+    if selected_node_good_enough(target, run_id, state, config):
+        return state
+    reason = f"codex usage cap reached: {record.get('effective_used_percent')} >= {record.get('cap_threshold_percent')}"
+
+    def mutator(new_state: dict[str, Any]) -> None:
+        new_state["phase_status"] = "blocked_on_usage_limit"
+        new_state["blocked_reason"] = reason
+        phase_state = new_state.setdefault("state", {})
+        phase_state["usage_cap"] = record
+        phase_state["blocked_reason"] = reason
+        orchestrator = phase_state.setdefault("orchestrator", {})
+        if orchestrator.get("next_action") != "blocked_on_usage_limit":
+            phase_state["usage_cap_blocked_next_action"] = {
+                "next_action": orchestrator.get("next_action"),
+                "next_action_details": orchestrator.get("next_action_details"),
+            }
+        orchestrator["next_action"] = "blocked_on_usage_limit"
+        orchestrator["next_action_details"] = {"reason": reason, "usage_cap": record, "resetsAt": record.get("resetsAt")}
+        orchestrator["last_checkpoint_at"] = utc_now()
+
+    updated = mutate_loop_state(target, run_id, "state_transition", {"command": command, "blocked_reason": reason}, mutator)
+    set_active_run(target, run_id, "research", "blocked_on_usage_limit")
+    return updated
+
+
+def unblock_usage_cap_if_recovered(target: Path, run_id: str, record: dict[str, Any]) -> None:
+    state = load_loop_state(target, run_id)
+    if not isinstance(state, dict) or state.get("phase_status") != "blocked_on_usage_limit" or record.get("capped"):
+        return
+
+    def mutator(new_state: dict[str, Any]) -> None:
+        new_state["phase_status"] = "running"
+        new_state["blocked_reason"] = None
+        phase_state = new_state.setdefault("state", {})
+        phase_state["usage_cap"] = record
+        phase_state.pop("blocked_reason", None)
+        previous = phase_state.pop("usage_cap_blocked_next_action", None)
+        if isinstance(previous, dict):
+            orchestrator = phase_state.setdefault("orchestrator", {})
+            if isinstance(previous.get("next_action"), str) and previous["next_action"]:
+                orchestrator["next_action"] = previous["next_action"]
+            if isinstance(previous.get("next_action_details"), dict):
+                orchestrator["next_action_details"] = previous["next_action_details"]
+
+    mutate_loop_state(target, run_id, "state_transition", {"command": "research usage-cap recovered"}, mutator)
+    set_active_run(target, run_id, "research", "active")
+
+
+def ensure_usage_cap_allows_new_work(target: Path, run_id: str, *, command: str) -> dict[str, Any]:
+    config = load_json_if_exists(config_path(target, run_id))
+    if not isinstance(config, dict):
+        raise CliError(f"missing config.json for run {run_id}")
+    record = refresh_usage_cap(target, run_id, config, command=command)
+    if record.get("capped") and not record.get("no_limit_host_cap"):
+        block_on_usage_cap(target, run_id, config, record, command=command)
+        raise CliError(f"blocked_on_usage_limit: resetsAt={record.get('resetsAt')}")
+    return record
+
+
+def default_config(
+    target: Path,
+    run_id: str,
+    strictness_mode: str,
+    payload: dict[str, Any],
+    *,
+    max_subagents: int | None = None,
+    no_limit_host_cap: bool = False,
+) -> dict[str, Any]:
     if strictness_mode not in MODES:
         raise CliError(f"invalid strictness mode: {strictness_mode}")
     resolved_max, concurrency_source = resolve_research_max_subagents(target, payload, max_subagents)
@@ -258,7 +452,7 @@ def default_config(target: Path, run_id: str, strictness_mode: str, payload: dic
         "run_id": run_id,
         "target_repo": str(target),
         "strictness_mode": strictness_mode,
-        "research": research_concurrency_config(payload, resolved_max, concurrency_source),
+        "research": research_config(payload, resolved_max, concurrency_source, no_limit_host_cap=no_limit_host_cap),
         "api_budgets": payload.get("api_budgets", {"semantic_scholar": {"max_calls": 100}}),
         "workspace": payload.get("workspace", {"mode": "copy", "baseline_workspace": f".ai-scientist/runs/{run_id}/baseline-workspace"}),
         "dependency_plan": payload.get("dependency_plan", {"mode": "frozen", "planned_dependencies": []}),
@@ -273,7 +467,7 @@ def cmd_research_start(args: argparse.Namespace) -> int:
     target = target_repo(args)
     payload = load_payload(args)
     run_id = args.run_id
-    cfg = default_config(target, run_id, args.strictness_mode, payload, max_subagents=args.max_subagents)
+    cfg = default_config(target, run_id, args.strictness_mode, payload, max_subagents=args.max_subagents, no_limit_host_cap=args.no_limit_host_cap)
     concurrency = research_concurrency_details(cfg, {})
     initial_state = {
         "orchestrator": {
@@ -297,7 +491,11 @@ def cmd_research_start(args: argparse.Namespace) -> int:
     state = start_phase(target, run_id, "research", initial_state)
     atomic_write_json(config_path(target, run_id), cfg)
     append_journal_event(target, run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
-    return response("ok", run_id=run_id, state_path=str(run_dir(target, run_id) / "loop-state.json"), config_path=str(config_path(target, run_id)))
+    usage = refresh_usage_cap(target, run_id, cfg, force=True, command="research start usage-check")
+    if usage.get("capped") and not usage.get("no_limit_host_cap"):
+        block_on_usage_cap(target, run_id, cfg, usage, command="research start usage-cap block")
+        raise CliError(f"blocked_on_usage_limit: resetsAt={usage.get('resetsAt')}")
+    return response("ok", run_id=run_id, state_path=str(run_dir(target, run_id) / "loop-state.json"), config_path=str(config_path(target, run_id)), usage_cap=usage)
 
 
 def cmd_research_resume(args: argparse.Namespace) -> int:
@@ -315,9 +513,37 @@ def cmd_research_resume(args: argparse.Namespace) -> int:
         raise CliError(f"missing config.json for run {run_id}")
     details = dict(orchestrator.get("next_action_details") if isinstance(orchestrator.get("next_action_details"), dict) else {})
     details.update(research_concurrency_details(cfg, phase_state))
+    usage = refresh_usage_cap(target, run_id, cfg, command="research resume usage-check")
+    unblock_usage_cap_if_recovered(target, run_id, usage)
+    state = load_loop_state(target, run_id) or state
+    phase_state = state.setdefault("state", {})
+    orchestrator = phase_state.setdefault("orchestrator", {})
+    next_action = orchestrator.get("next_action")
+    details = dict(orchestrator.get("next_action_details") if isinstance(orchestrator.get("next_action_details"), dict) else {})
+    details.update(research_concurrency_details(cfg, phase_state))
+    details["usage_cap"] = usage
+    if usage.get("capped") and not usage.get("no_limit_host_cap") and not selected_node_good_enough(target, run_id, load_loop_state(target, run_id) or state, cfg):
+        block_on_usage_cap(target, run_id, cfg, usage, command="research resume usage-cap block")
+        details["reason"] = "blocked on Codex usage cap"
+        append_journal_event(target, run_id, "state_transition", details={"command": "research resume", "next_action": "blocked_on_usage_limit"})
+        set_active_run(target, run_id, str(state.get("phase") or "research"), "blocked_on_usage_limit")
+        return response("ok", run_id=run_id, next_action="blocked_on_usage_limit", next_action_details=details)
     append_journal_event(target, run_id, "state_transition", details={"command": "research resume", "next_action": next_action})
     set_active_run(target, run_id, str(state.get("phase") or "research"), "active")
     return response("ok", run_id=run_id, next_action=next_action, next_action_details=details)
+
+
+def cmd_research_usage_check(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, state = active_run(target, args.run_id)
+    if not state:
+        raise CliError(f"missing loop-state.json for run {run_id}")
+    cfg = load_json_if_exists(config_path(target, run_id))
+    if not isinstance(cfg, dict):
+        raise CliError(f"missing config.json for run {run_id}")
+    usage = refresh_usage_cap(target, run_id, cfg, force=args.force, command="research usage-check")
+    unblock_usage_cap_if_recovered(target, run_id, usage)
+    return response("ok", run_id=run_id, usage_cap=usage)
 
 
 def cmd_research_set_next_action(args: argparse.Namespace) -> int:
@@ -518,6 +744,8 @@ def cmd_node_transition(args: argparse.Namespace) -> int:
         raise CliError(f"invalid node status: {args.status}")
     target = target_repo(args)
     run_id, _ = active_run(target, args.run_id)
+    if args.status in NODE_USAGE_GATED_STATUSES:
+        ensure_usage_cap_allows_new_work(target, run_id, command=f"node transition {args.status}")
     node = read_node(target, run_id, args.node_id)
     pending_path = Path(node["result_path"]) if isinstance(node.get("result_path"), str) else research_pending_path(target, run_id, "nodes", args.node_id)
     payload = load_payload_or_path(args, pending_path)
@@ -532,6 +760,7 @@ def cmd_node_critic_start(args: argparse.Namespace) -> int:
     run_id, state = active_run(target, args.run_id)
     if not state:
         raise CliError(f"missing loop-state.json for run {run_id}")
+    ensure_usage_cap_allows_new_work(target, run_id, command="node critic-start")
     cfg = load_json_if_exists(config_path(target, run_id))
     if not isinstance(cfg, dict):
         raise CliError(f"missing config.json for run {run_id}")
@@ -650,6 +879,8 @@ def cmd_subagent_update(args: argparse.Namespace) -> int:
         raise CliError(f"invalid subagent status: {args.status}")
     target = target_repo(args)
     run_id, _ = active_run(target, args.run_id)
+    if args.status in SUBAGENT_USAGE_GATED_STATUSES:
+        ensure_usage_cap_allows_new_work(target, run_id, command=f"subagent update {args.status}")
     cfg = load_json_if_exists(config_path(target, run_id))
     if not isinstance(cfg, dict):
         raise CliError(f"missing config.json for run {run_id}")
@@ -1067,11 +1298,16 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--run-id", required=True)
     start.add_argument("--strictness-mode", default="scientist")
     start.add_argument("--max-subagents", type=int)
+    start.add_argument("--no-limit-host-cap", action="store_true")
     add_json_args(start)
     start.set_defaults(func=cmd_research_start)
     resume = research_sub.add_parser("resume")
     resume.add_argument("--run-id")
     resume.set_defaults(func=cmd_research_resume)
+    usage_check = research_sub.add_parser("usage-check")
+    usage_check.add_argument("--run-id", required=True)
+    usage_check.add_argument("--force", action="store_true")
+    usage_check.set_defaults(func=cmd_research_usage_check)
     checkpoint = research_sub.add_parser("checkpoint")
     checkpoint.add_argument("--run-id")
     add_json_args(checkpoint)
