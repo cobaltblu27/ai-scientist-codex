@@ -165,13 +165,34 @@ def pending_result_path(target_repo: Path, run_id: str, intent_id: str) -> Path:
     return run_logs_dir(target_repo, run_id) / "pending" / f"{intent_id}.json"
 
 
-def evidence_cache_dir(target_repo: Path) -> Path:
-    return ai_root(target_repo) / "evidence-cache" / "semantic-scholar"
+LITERATURE_PROVIDER_CACHE_DIRS = {
+    "semantic_scholar": "semantic-scholar",
+    "openalex": "openalex",
+}
+LITERATURE_PROVIDER_LOG_DIRS = {
+    "semantic_scholar": "semantic-scholar",
+    "openalex": "openalex",
+}
+LITERATURE_PROVIDERS = frozenset({"auto", "semantic_scholar", "openalex"})
 
 
-def evidence_cache_path(target_repo: Path, query: str, limit: int) -> Path:
+def normalize_literature_provider(provider: str | None) -> str:
+    normalized = (provider or "auto").strip().lower().replace("-", "_")
+    if normalized not in LITERATURE_PROVIDERS:
+        raise IdeationStateError(f"invalid literature provider: {provider}")
+    return normalized
+
+
+def evidence_cache_dir(target_repo: Path, provider: str = "semantic_scholar") -> Path:
+    normalized = normalize_literature_provider(provider)
+    if normalized == "auto":
+        normalized = "semantic_scholar"
+    return ai_root(target_repo) / "evidence-cache" / LITERATURE_PROVIDER_CACHE_DIRS[normalized]
+
+
+def evidence_cache_path(target_repo: Path, query: str, limit: int, provider: str = "semantic_scholar") -> Path:
     key = hashlib.sha256(json.dumps({"query": query.strip(), "limit": limit}, sort_keys=True).encode("utf-8")).hexdigest()[:24]
-    return evidence_cache_dir(target_repo) / f"{key}.json"
+    return evidence_cache_dir(target_repo, provider) / f"{key}.json"
 
 
 def load_payload_from_args(json_value: str | None = None, path: Path | None = None) -> dict[str, Any]:
@@ -1251,6 +1272,17 @@ def record_critic(target_repo: Path, run_id: str, payload: dict[str, Any], *, id
     return updated
 
 
+def normalize_semantic_scholar_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data")
+    if data is None:
+        data = []
+    if not isinstance(data, list):
+        raise ValueError("Semantic Scholar response field data must be a list")
+    normalized = dict(payload)
+    normalized["data"] = data
+    return normalized
+
+
 def semantic_scholar_request(query: str, limit: int) -> dict[str, Any]:
     params = urllib.parse.urlencode({"query": query, "limit": str(limit), "fields": "title,year,citationCount,venue,url,authors"})
     request = urllib.request.Request(f"https://api.semanticscholar.org/graph/v1/paper/search?{params}")
@@ -1258,33 +1290,161 @@ def semantic_scholar_request(query: str, limit: int) -> dict[str, Any]:
     if api_key:
         request.add_header("x-api-key", api_key)
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed public API URL.
-        return json.loads(response.read().decode("utf-8"))
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Semantic Scholar response must be a JSON object")
+    return normalize_semantic_scholar_evidence(payload)
+
+
+def openalex_abstract(inverted_index: Any) -> str:
+    if not isinstance(inverted_index, dict):
+        return ""
+    positions: list[tuple[int, str]] = []
+    for word, indexes in inverted_index.items():
+        if not isinstance(indexes, list):
+            continue
+        for index in indexes:
+            if isinstance(index, int):
+                positions.append((index, str(word)))
+    return " ".join(word for _, word in sorted(positions))
+
+
+def normalize_openalex_work(work: dict[str, Any]) -> dict[str, Any]:
+    authorships = work.get("authorships") if isinstance(work.get("authorships"), list) else []
+    authors: list[str] = []
+    for authorship in authorships:
+        if not isinstance(authorship, dict):
+            continue
+        author = authorship.get("author") if isinstance(authorship.get("author"), dict) else {}
+        name = author.get("display_name")
+        if name:
+            authors.append(str(name))
+    primary_location = work.get("primary_location") if isinstance(work.get("primary_location"), dict) else {}
+    source = primary_location.get("source") if isinstance(primary_location.get("source"), dict) else {}
+    best_oa_location = work.get("best_oa_location") if isinstance(work.get("best_oa_location"), dict) else {}
+    paper = {
+        "title": work.get("title") or work.get("display_name") or "Unknown title",
+        "year": work.get("publication_year"),
+        "citationCount": work.get("cited_by_count") or 0,
+        "venue": source.get("display_name") or "Unknown venue",
+        "url": primary_location.get("landing_page_url") or best_oa_location.get("landing_page_url") or work.get("doi") or work.get("id") or "",
+        "authors": authors,
+        "openalex_id": work.get("id"),
+    }
+    doi = work.get("doi")
+    if doi:
+        paper["doi"] = doi
+    abstract = openalex_abstract(work.get("abstract_inverted_index"))
+    if abstract:
+        paper["abstract"] = abstract
+    return {key: value for key, value in paper.items() if value is not None}
+
+
+def normalize_openalex_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    results = payload.get("results")
+    if results is None:
+        results = []
+    if not isinstance(results, list):
+        raise ValueError("OpenAlex response field results must be a list")
+    return {"data": [normalize_openalex_work(work) for work in results if isinstance(work, dict)]}
+
+
+def openalex_request(query: str, limit: int) -> dict[str, Any]:
+    params = urllib.parse.urlencode({"search": query, "per-page": str(limit)})
+    request = urllib.request.Request(f"https://api.openalex.org/works?{params}")
+    request.add_header("User-Agent", "ai-scientist-codex/0.1 (mailto:openalex@example.com)")
+    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed public API URL.
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("OpenAlex response must be a JSON object")
+    return normalize_openalex_evidence(payload)
+
+
+def literature_failure_reason(exc: BaseException) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}: {exc.reason}"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def provider_live_request(provider: str, query: str, limit: int) -> dict[str, Any]:
+    if provider == "semantic_scholar":
+        return semantic_scholar_request(query, limit)
+    if provider == "openalex":
+        return openalex_request(query, limit)
+    raise IdeationStateError(f"invalid live literature provider: {provider}")
+
+
+def provider_evidence(target_repo: Path, query: str, limit: int, provider: str, evidence_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    normalized_provider = normalize_literature_provider(provider)
+    if normalized_provider == "auto":
+        raise IdeationStateError("provider_evidence requires a concrete provider")
+    cache_path = evidence_cache_path(target_repo, query, limit, normalized_provider)
+    if cache_path.exists():
+        cached = load_json_if_exists(cache_path)
+        if isinstance(cached, dict):
+            evidence = cached.get("evidence") if isinstance(cached.get("evidence"), dict) else cached
+            if isinstance(evidence, dict):
+                return {"evidence": evidence, "provenance": "cache", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
+    if evidence_payload is not None:
+        atomic_write_json(cache_path, {"query": query, "limit": limit, "provider": normalized_provider, "provenance": "precomputed", "evidence": evidence_payload, "cached_at": utc_now()})
+        return {"evidence": evidence_payload, "provenance": "precomputed", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
+    evidence = provider_live_request(normalized_provider, query, limit)
+    atomic_write_json(cache_path, {"query": query, "limit": limit, "provider": normalized_provider, "provenance": "live", "evidence": evidence, "cached_at": utc_now()})
+    return {"evidence": evidence, "provenance": "live", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
+
+
+def literature_evidence(target_repo: Path, query: str | None, limit: int, evidence_payload: dict[str, Any] | None = None, provider: str = "auto") -> dict[str, Any]:
+    selected_provider = normalize_literature_provider(provider)
+    clean_query = (query or "").strip()
+    if not clean_query and evidence_payload is None:
+        raise IdeationStateError("literature query is required without evidence payload")
+    if evidence_payload is not None:
+        concrete_provider = "semantic_scholar" if selected_provider == "auto" else selected_provider
+        return provider_evidence(target_repo, clean_query, limit, concrete_provider, evidence_payload)
+    if selected_provider != "auto":
+        return provider_evidence(target_repo, clean_query, limit, selected_provider)
+    try:
+        return provider_evidence(target_repo, clean_query, limit, "semantic_scholar")
+    except Exception as s2_exc:
+        fallback_reason = literature_failure_reason(s2_exc)
+        try:
+            result = provider_evidence(target_repo, clean_query, limit, "openalex")
+        except Exception as openalex_exc:
+            raise IdeationStateError(f"literature search failed for semantic_scholar ({fallback_reason}) and openalex ({literature_failure_reason(openalex_exc)})") from openalex_exc
+        result["fallback_from"] = "semantic_scholar"
+        result["fallback_reason"] = fallback_reason
+        return result
 
 
 def semantic_scholar_evidence(target_repo: Path, query: str | None, limit: int, evidence_payload: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, Path | None]:
-    clean_query = (query or "").strip()
-    if not clean_query and evidence_payload is None:
-        raise IdeationStateError("semantic scholar query is required without evidence payload")
-    cache_path = evidence_cache_path(target_repo, clean_query, limit) if clean_query else None
-    if cache_path is not None and cache_path.exists():
-        cached = load_json_if_exists(cache_path)
-        if isinstance(cached, dict):
-            return cached.get("evidence") if isinstance(cached.get("evidence"), dict) else cached, "cache", cache_path
-    if evidence_payload is not None:
-        if cache_path is not None:
-            atomic_write_json(cache_path, {"query": clean_query, "limit": limit, "provenance": "precomputed", "evidence": evidence_payload, "cached_at": utc_now()})
-        return evidence_payload, "precomputed", cache_path
-    try:
-        evidence = semantic_scholar_request(clean_query, limit)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 429 and cache_path is not None and cache_path.exists():
-            cached = load_json_if_exists(cache_path)
-            if isinstance(cached, dict):
-                return cached.get("evidence") if isinstance(cached.get("evidence"), dict) else cached, "cache", cache_path
-        raise
-    if cache_path is not None:
-        atomic_write_json(cache_path, {"query": clean_query, "limit": limit, "provenance": "live", "evidence": evidence, "cached_at": utc_now()})
-    return evidence, "live", cache_path
+    result = literature_evidence(target_repo, query, limit, evidence_payload, provider="semantic_scholar")
+    return result["evidence"], result["provenance"], result["cache_path"]
+
+
+def literature_result_count(evidence: dict[str, Any]) -> int | None:
+    if isinstance(evidence.get("data"), list):
+        return len(evidence["data"])
+    if isinstance(evidence.get("results"), list):
+        return len(evidence["results"])
+    return None
+
+
+def literature_log_dir(provider: str) -> str:
+    return LITERATURE_PROVIDER_LOG_DIRS[normalize_literature_provider(provider)]
+
+
+def literature_evidence_record(query: str | None, evidence_ref: Path, result: dict[str, Any]) -> dict[str, Any]:
+    evidence = result["evidence"]
+    return {
+        "provider": result["provider"],
+        "query": query,
+        "evidence_ref": str(evidence_ref),
+        "cache_ref": str(result["cache_path"]) if result.get("cache_path") is not None else None,
+        "provenance": result["provenance"],
+        "fallback_from": result.get("fallback_from"),
+        "fallback_reason": result.get("fallback_reason"),
+        "result_count": literature_result_count(evidence),
+    }
 
 
 def record_semantic_scholar_search(
@@ -1295,25 +1455,21 @@ def record_semantic_scholar_search(
     query: str | None = None,
     evidence_payload: dict[str, Any] | None = None,
     limit: int = 10,
+    provider: str = "auto",
 ) -> dict[str, Any]:
+    selected_provider = normalize_literature_provider(provider)
     cfg = current_config(target_repo, run_id)
-    evidence, provenance, cache_path = semantic_scholar_evidence(target_repo, query, limit, evidence_payload)
+    result = literature_evidence(target_repo, query, limit, evidence_payload, selected_provider)
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
-        resolved_id = resolve_idea_id(phase_state, idea_id, "semantic scholar search")
+        resolved_id = resolve_idea_id(phase_state, idea_id, "literature search")
         ideas = phase_state.setdefault("idea_states", {})
         idea = ideas.get(resolved_id)
         if not isinstance(idea, dict):
             raise IdeationStateError(f"unknown idea_id: {resolved_id}")
-        evidence_ref = write_payload_log(target_repo, run_id, "semantic-scholar", f"{resolved_id}-{int(idea.get('literature_search_count') or 0) + 1:02d}.json", evidence)
-        evidence_record = {
-            "query": query,
-            "evidence_ref": str(evidence_ref),
-            "cache_ref": str(cache_path) if cache_path is not None else None,
-            "provenance": provenance,
-            "result_count": len(evidence.get("data", [])) if isinstance(evidence.get("data"), list) else len(evidence.get("results", [])) if isinstance(evidence.get("results"), list) else None,
-        }
+        evidence_ref = write_payload_log(target_repo, run_id, literature_log_dir(result["provider"]), f"{resolved_id}-{int(idea.get('literature_search_count') or 0) + 1:02d}.json", result["evidence"])
+        evidence_record = literature_evidence_record(query, evidence_ref, result)
         idea.setdefault("literature_evidence", []).append(evidence_record)
         latest_draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
         latest_draft.setdefault("evidence_refs", [])
@@ -1325,7 +1481,23 @@ def record_semantic_scholar_search(
         increment_iteration(phase_state)
         update_cursor(state, cfg)
 
-    updated = mutate_loop_state(target_repo, run_id, "api_call", {"command": "idea search-semantic-scholar", "idea_id": idea_id, "query": query, "service": "semantic_scholar", "provenance": provenance}, mutator)
+    updated = mutate_loop_state(
+        target_repo,
+        run_id,
+        "api_call",
+        {
+            "command": "idea search-semantic-scholar",
+            "idea_id": idea_id,
+            "query": query,
+            "service": result["provider"],
+            "provider": result["provider"],
+            "requested_provider": selected_provider,
+            "provenance": result["provenance"],
+            "fallback_from": result.get("fallback_from"),
+            "fallback_reason": result.get("fallback_reason"),
+        },
+        mutator,
+    )
     sync_ideas_archive(target_repo, run_id, updated)
     return updated
 
@@ -1338,33 +1510,31 @@ def record_evidence_batch(
     queries: list[str],
     evidence_payload: dict[str, Any] | None = None,
     limit: int = 10,
+    provider: str = "auto",
 ) -> dict[str, Any]:
     if not idea_ids or not queries or len(idea_ids) != len(queries):
         raise IdeationStateError("record-evidence-batch requires equal non-empty --idea-ids and --queries")
+    selected_provider = normalize_literature_provider(provider)
     cfg = current_config(target_repo, run_id)
+    state = ensure_active_ideation_state(target_repo, run_id)
+    phase_state = state.setdefault("state", {})
+    ideas = phase_state.setdefault("idea_states", {})
+    missing = [idea_id for idea_id in idea_ids if not isinstance(ideas.get(idea_id), dict)]
+    if missing:
+        raise IdeationStateError(f"unknown idea_ids: {', '.join(missing)}")
     gathered: list[dict[str, Any]] = []
     for idea_id, query in zip(idea_ids, queries, strict=True):
-        evidence, provenance, cache_path = semantic_scholar_evidence(target_repo, query, limit, evidence_payload)
-        gathered.append({"idea_id": idea_id, "query": query, "evidence": evidence, "provenance": provenance, "cache_path": cache_path})
+        result = literature_evidence(target_repo, query, limit, evidence_payload, selected_provider)
+        gathered.append({"idea_id": idea_id, "query": query, "result": result})
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
         ideas = phase_state.setdefault("idea_states", {})
-        missing = [item["idea_id"] for item in gathered if not isinstance(ideas.get(item["idea_id"]), dict)]
-        if missing:
-            raise IdeationStateError(f"unknown idea_ids: {', '.join(missing)}")
         for item in gathered:
             idea = ideas[item["idea_id"]]
-            evidence_ref = write_payload_log(target_repo, run_id, "semantic-scholar", f"{item['idea_id']}-{int(idea.get('literature_search_count') or 0) + 1:02d}.json", item["evidence"])
-            idea.setdefault("literature_evidence", []).append(
-                {
-                    "query": item["query"],
-                    "evidence_ref": str(evidence_ref),
-                    "cache_ref": str(item["cache_path"]) if item["cache_path"] is not None else None,
-                    "provenance": item["provenance"],
-                    "result_count": len(item["evidence"].get("data", [])) if isinstance(item["evidence"].get("data"), list) else len(item["evidence"].get("results", [])) if isinstance(item["evidence"].get("results"), list) else None,
-                }
-            )
+            result = item["result"]
+            evidence_ref = write_payload_log(target_repo, run_id, literature_log_dir(result["provider"]), f"{item['idea_id']}-{int(idea.get('literature_search_count') or 0) + 1:02d}.json", result["evidence"])
+            idea.setdefault("literature_evidence", []).append(literature_evidence_record(item["query"], evidence_ref, result))
             latest_draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
             latest_draft.setdefault("evidence_refs", [])
             if isinstance(latest_draft["evidence_refs"], list):
@@ -1375,10 +1545,22 @@ def record_evidence_batch(
         increment_iteration(phase_state)
         update_cursor(state, cfg)
 
-    updated = mutate_loop_state(target_repo, run_id, "api_call", {"command": "idea record-evidence-batch", "idea_ids": idea_ids, "queries": queries, "service": "semantic_scholar"}, mutator)
+    updated = mutate_loop_state(
+        target_repo,
+        run_id,
+        "api_call",
+        {
+            "command": "idea record-evidence-batch",
+            "idea_ids": idea_ids,
+            "queries": queries,
+            "service": "literature",
+            "requested_provider": selected_provider,
+            "providers": [item["result"]["provider"] for item in gathered],
+        },
+        mutator,
+    )
     sync_ideas_archive(target_repo, run_id, updated)
     return updated
-
 
 def finalization_decision(idea: dict[str, Any], preset: dict[str, Any]) -> tuple[str, str]:
     if not latest_critic_matches(idea):

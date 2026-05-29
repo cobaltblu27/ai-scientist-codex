@@ -1798,6 +1798,7 @@ def cmd_idea_search_semantic_scholar(args: argparse.Namespace) -> int:
         query=args.query,
         evidence_payload=payload or None,
         limit=args.limit,
+        provider=args.provider,
     )
     return ideation_response(target, run_id)
 
@@ -1812,6 +1813,7 @@ def cmd_idea_record_evidence_batch(args: argparse.Namespace) -> int:
         queries=args.queries,
         evidence_payload=payload or None,
         limit=args.limit,
+        provider=args.provider,
     )
     return ideation_response(target, run_id)
 
@@ -2085,6 +2087,7 @@ def build_parser() -> argparse.ArgumentParser:
     idea_search.add_argument("--idea-id")
     idea_search.add_argument("--query")
     idea_search.add_argument("--limit", type=int, default=10)
+    idea_search.add_argument("--provider", choices=["auto", "semantic_scholar", "openalex"], default="auto")
     add_json_args(idea_search)
     idea_search.set_defaults(func=cmd_idea_search_semantic_scholar)
     idea_record_evidence_batch = idea_sub.add_parser("record-evidence-batch")
@@ -2092,6 +2095,7 @@ def build_parser() -> argparse.ArgumentParser:
     idea_record_evidence_batch.add_argument("--idea-ids", nargs="+", required=True)
     idea_record_evidence_batch.add_argument("--queries", nargs="+", required=True)
     idea_record_evidence_batch.add_argument("--limit", type=int, default=10)
+    idea_record_evidence_batch.add_argument("--provider", choices=["auto", "semantic_scholar", "openalex"], default="auto")
     add_json_args(idea_record_evidence_batch)
     idea_record_evidence_batch.set_defaults(func=cmd_idea_record_evidence_batch)
     idea_finalize = idea_sub.add_parser("finalize")
