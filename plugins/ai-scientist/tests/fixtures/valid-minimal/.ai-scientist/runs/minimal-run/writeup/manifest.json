@@ -1,0 +1,20 @@
+{
+  "created_at": "2026-05-30T00:00:00Z",
+  "disclosure_present": true,
+  "figures": [
+    {
+      "caption": "Fixture baseline versus selected result.",
+      "id": "fig-baseline-vs-selected",
+      "path": "writeup/figures/generated/baseline-vs-selected.png",
+      "source_artifacts": [
+        "baseline/metrics.json"
+      ]
+    }
+  ],
+  "limitations_present": true,
+  "report_md": "writeup/report.md",
+  "report_pdf": "writeup/report.pdf",
+  "report_tex": "writeup/latex/template.tex",
+  "require_pdf": true,
+  "schema_version": 1
+}

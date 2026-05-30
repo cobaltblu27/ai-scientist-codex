@@ -7,7 +7,7 @@ from test_support import PLUGIN_ROOT
 
 class RuntimeDependencyTests(unittest.TestCase):
     def test_research_runtime_has_no_ai_scientist_v2_dependency_reference(self) -> None:
-        runtime_paths = [PLUGIN_ROOT / "scripts" / "research_orchestrator.py", PLUGIN_ROOT / "scripts" / "research_loop"]
+        runtime_paths = [PLUGIN_ROOT / "scripts" / "research_orchestrator.py", PLUGIN_ROOT / "scripts" / "research_loop", PLUGIN_ROOT / "scripts" / "writeup_state.py"]
         matches: list[str] = []
         for path in runtime_paths:
             if not path.exists():

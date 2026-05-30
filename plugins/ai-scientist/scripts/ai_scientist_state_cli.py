@@ -68,6 +68,18 @@ from ideation_state import (
     start_revision,
     validate_max_subagents,
 )
+from writeup_state import (
+    collect_figures as writeup_collect_figures,
+    compile_pdf as writeup_compile_pdf,
+    complete_audit as writeup_complete_audit,
+    complete_writeup as writeup_complete_writeup,
+    dependency_status as writeup_dependency_status,
+    negative_complete as writeup_negative_complete,
+    record_reports as writeup_record_reports,
+    resume_writeup,
+    start_audit as writeup_start_audit,
+    start_writeup,
+)
 from usage_cap import (
     UsageCapError,
     is_snapshot_fresh,
@@ -1635,6 +1647,90 @@ def cmd_selection_finalize(args: argparse.Namespace) -> int:
     return response("ok", run_id=run_id, selected_node=selected, selection_path=str(selection_path(target, run_id)))
 
 
+
+def _dependency_error_message(status: dict[str, Any]) -> str:
+    missing = []
+    if status.get("missing_python"):
+        missing.append("Python packages: " + ", ".join(str(item) for item in status["missing_python"]))
+    if status.get("missing_executables"):
+        missing.append("executables: " + ", ".join(str(item) for item in status["missing_executables"]))
+    return "missing writeup dependency (" + "; ".join(missing) + "). Install the missing dependency and rerun this command."
+
+
+def cmd_writeup_doctor(args: argparse.Namespace) -> int:
+    status = writeup_dependency_status(include_tex=not args.skip_tex)
+    if not status.get("ok"):
+        return response("error", error=_dependency_error_message(status), dependencies=status)
+    return response("ok", dependencies=status)
+
+
+def cmd_writeup_start(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    state = start_writeup(target, args.run_id, require_pdf=True)
+    return response("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), next_action=state.get("state", {}).get("orchestrator", {}).get("next_action"))
+
+
+def cmd_writeup_resume(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _active = active_run(target, args.run_id)
+    cursor = resume_writeup(target, run_id)
+    if args.prompt:
+        cursor["prompt"] = (
+            "Continue the AI Scientist writeup phase from the listed next_action. "
+            "Use the writeup CLI to record figures, reports, audit results, and completion."
+        )
+    return response("ok", **cursor)
+
+
+def cmd_writeup_collect_figures(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _active = active_run(target, args.run_id)
+    manifest = writeup_collect_figures(target, run_id)
+    return response("ok", run_id=run_id, figure_manifest="writeup/figures/figure-manifest.json", figure_count=len(manifest.get("figures", [])))
+
+
+def cmd_writeup_record_reports(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _active = active_run(target, args.run_id)
+    manifest = writeup_record_reports(target, run_id, args.markdown, args.latex)
+    return response("ok", run_id=run_id, manifest="writeup/manifest.json", require_pdf=manifest.get("require_pdf"))
+
+
+def cmd_writeup_compile(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _active = active_run(target, args.run_id)
+    log = writeup_compile_pdf(target, run_id, tex_path=args.tex)
+    return response("ok", run_id=run_id, compile_log="writeup/compile-log.json", report_pdf=log.get("report_pdf"))
+
+
+def cmd_writeup_audit_start(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _active = active_run(target, args.run_id)
+    prompt = writeup_start_audit(target, run_id)
+    return response("ok", run_id=run_id, pending_audit="writeup/audit/pending-final-audit.json", prompt=prompt)
+
+
+def cmd_writeup_audit_complete(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _active = active_run(target, args.run_id)
+    payload = load_payload(args)
+    audit = writeup_complete_audit(target, run_id, payload)
+    return response("ok", run_id=run_id, audit="writeup/audit/final-audit.json", verdict=audit.get("verdict"))
+
+
+def cmd_writeup_complete(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _active = active_run(target, args.run_id)
+    state = writeup_complete_writeup(target, run_id)
+    return response("ok", run_id=run_id, state_path=str(run_dir(target, run_id) / "loop-state.json"), active=state.get("active"), phase_status=state.get("phase_status"), active_run_status="validating")
+
+
+def cmd_writeup_negative_complete(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, _active = active_run(target, args.run_id)
+    state = writeup_negative_complete(target, run_id, args.reason)
+    return response("ok", run_id=run_id, active=state.get("active"), phase_status=state.get("phase_status"), reason=args.reason)
+
 def cmd_validation_record(args: argparse.Namespace) -> int:
     target = target_repo(args)
     run_id, _ = active_run(target, args.run_id)
@@ -2064,6 +2160,46 @@ def build_parser() -> argparse.ArgumentParser:
     intent_cancel.add_argument("--intent-id")
     intent_cancel.add_argument("--reason", required=True)
     intent_cancel.set_defaults(func=cmd_ideation_intent_cancel)
+
+
+    writeup = sub.add_parser("writeup")
+    writeup_sub = writeup.add_subparsers(dest="command", required=True)
+    writeup_doctor = writeup_sub.add_parser("doctor")
+    writeup_doctor.add_argument("--skip-tex", action="store_true")
+    writeup_doctor.set_defaults(func=cmd_writeup_doctor)
+    writeup_start = writeup_sub.add_parser("start")
+    writeup_start.add_argument("--run-id", required=True)
+    writeup_start.set_defaults(func=cmd_writeup_start)
+    writeup_resume = writeup_sub.add_parser("resume")
+    writeup_resume.add_argument("--run-id")
+    writeup_resume.add_argument("--prompt", action="store_true")
+    writeup_resume.set_defaults(func=cmd_writeup_resume)
+    writeup_figures = writeup_sub.add_parser("collect-figures")
+    writeup_figures.add_argument("--run-id")
+    writeup_figures.set_defaults(func=cmd_writeup_collect_figures)
+    writeup_record = writeup_sub.add_parser("record-reports")
+    writeup_record.add_argument("--run-id")
+    writeup_record.add_argument("--markdown", type=Path, default=Path("writeup/report.md"))
+    writeup_record.add_argument("--latex", type=Path, default=Path("writeup/latex/template.tex"))
+    writeup_record.set_defaults(func=cmd_writeup_record_reports)
+    writeup_compile = writeup_sub.add_parser("compile")
+    writeup_compile.add_argument("--run-id")
+    writeup_compile.add_argument("--tex", type=Path)
+    writeup_compile.set_defaults(func=cmd_writeup_compile)
+    writeup_audit_start = writeup_sub.add_parser("audit-start")
+    writeup_audit_start.add_argument("--run-id")
+    writeup_audit_start.set_defaults(func=cmd_writeup_audit_start)
+    writeup_audit_complete = writeup_sub.add_parser("audit-complete")
+    writeup_audit_complete.add_argument("--run-id")
+    add_json_args(writeup_audit_complete)
+    writeup_audit_complete.set_defaults(func=cmd_writeup_audit_complete)
+    writeup_complete = writeup_sub.add_parser("complete")
+    writeup_complete.add_argument("--run-id")
+    writeup_complete.set_defaults(func=cmd_writeup_complete)
+    writeup_negative = writeup_sub.add_parser("negative-complete")
+    writeup_negative.add_argument("--run-id")
+    writeup_negative.add_argument("--reason", required=True)
+    writeup_negative.set_defaults(func=cmd_writeup_negative_complete)
 
     idea = sub.add_parser("idea")
     idea_sub = idea.add_subparsers(dest="command", required=True)

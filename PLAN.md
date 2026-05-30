@@ -1921,3 +1921,152 @@ testable state.
    - Keep advanced resource packing, full dependency install automation,
      advanced adapter workflows, export polish, and rate-limit integration as
      v1.1/future items until the core loop works.
+
+## Writeup Stage Implementation Plan
+
+### Dependency Check
+
+The current repository dependency surface is not sufficient for the requested final-paper writeup:
+
+- `pyproject.toml` and `uv.lock` currently declare only `pytest`.
+- The local conda `base` environment has `matplotlib`, `numpy`, `seaborn`, and `Pillow`, but the plugin cannot rely on conda `base` for target runs.
+- No TeX/PDF tool is currently available on PATH: `pdflatex`, `bibtex`, `latexmk`, `tectonic`, `pandoc`, `xelatex`, and `lualatex` are missing.
+
+Therefore v1 writeup should declare plotting dependencies and fail fast on missing Python or TeX dependencies. If any required dependency is missing, the helper must stop immediately, report the exact missing package or executable, and ask the user to install it. It must not auto-install dependencies, switch Python environments, use fallback libraries, or silently downgrade a positive launch writeup to Markdown-only.
+
+### Goal
+
+Implement writeup as a Codex-native, Stop-hook-enforced phase after review. The current Codex session owns the writing loop. Python helpers only gather evidence, manage state, generate deterministic fallback figures, validate report manifests, compile LaTeX, and record audit/handoff events.
+
+The positive writeup output must include:
+
+- `.ai-scientist/runs/<run-id>/writeup/report.md`
+- `.ai-scientist/runs/<run-id>/writeup/latex/template.tex`
+- `.ai-scientist/runs/<run-id>/writeup/report.pdf`
+- At least one final-paper figure backed by validated run artifacts.
+- A manifest linking all claims, figures, metrics, limitations, and disclosure text to evidence artifacts.
+
+Negative, rejected, or verifier-blocked runs may produce a summary, but they must not claim launch readiness.
+
+### Implementation Changes
+
+Add plugin-owned writeup helpers:
+
+- `plugins/ai-scientist/scripts/writeup_state.py`
+- `writeup` subcommands in `plugins/ai-scientist/scripts/ai_scientist_state_cli.py`
+
+Initial CLI surface:
+
+```text
+writeup doctor --run-id <run-id>
+writeup start --run-id <run-id> [--page-limit N] [--require-pdf]
+writeup resume --run-id <run-id> --prompt
+writeup collect-figures --run-id <run-id>
+writeup plot-start --run-id <run-id>
+writeup plot-complete --run-id <run-id> [--path <payload.json>]
+writeup record --run-id <run-id> --markdown <path> --latex <path>
+writeup compile --run-id <run-id>
+writeup audit-start --run-id <run-id>
+writeup audit-complete --run-id <run-id>
+writeup complete --run-id <run-id> --path <completion-audit.json>
+writeup negative-complete --run-id <run-id> --reason <reason>
+```
+
+`writeup start` must require the existing `review_to_writeup` gate evidence:
+
+- Passing `validate_run.py --gate review_to_writeup`.
+- Approved `review_to_writeup` handoff.
+- `review/structured-review.json`.
+- Config, selection, selected-node evidence, baseline metrics, command logs, split integrity evidence, leakage evidence, review verdict, and verifier decision.
+
+Writeup state lives in the existing `loop-state.json` model with `phase: "writeup"`, `active: true`, `stop_policy: "block_until_completion_audit"`, and `state.orchestrator.next_action`.
+
+### Figure Contract
+
+Writeup must include figures in the final paper. Prefer existing validated figures if node evidence records them; otherwise generate deterministic summary figures from compact validated artifacts.
+
+Required figure artifacts:
+
+```text
+.ai-scientist/runs/<run-id>/writeup/figures/figure-manifest.json
+.ai-scientist/runs/<run-id>/writeup/figures/generated/*.png
+```
+
+Each figure manifest entry must include:
+
+- `figure_id`
+- `path`
+- `caption`
+- `source_artifacts`
+- `source_metrics`
+- `appears_in_markdown`
+- `appears_in_latex`
+- `generated_by`
+
+Default deterministic figures:
+
+- Baseline metric vs selected-node metric.
+- Ranked accepted-node metrics when multiple accepted nodes exist.
+- Confirmation or ablation trial series when available.
+
+Plot generation should use declared project dependencies:
+
+- Add `matplotlib`, `numpy`, and `Pillow` to `pyproject.toml`.
+- Refresh `uv.lock`.
+- Do not require `seaborn` for v1 unless a later implementation truly needs it.
+
+Generated plotting code must not hallucinate data. It may only plot values present in `selection.json`, selected `node.json`, trial records, baseline metrics, or explicitly referenced metric artifacts.
+
+### LaTeX And PDF Contract
+
+Add a plugin-owned minimal LaTeX template rather than importing or copying AI-Scientist-v2 assets at runtime. The template should support figures with:
+
+```text
+\graphicspath{{../figures/generated/}{../figures/source/}}
+```
+
+`writeup compile` should:
+
+- Require `pdflatex` and `bibtex`.
+- Run the normal sequence: `pdflatex`, `bibtex`, `pdflatex`, `pdflatex`.
+- Record stdout, stderr, exit codes, and generated PDF path in `writeup/logs/compile-*.json`.
+- Fail fast if the TeX toolchain is unavailable, with a user-facing blocker that names the missing executable and asks the user to install it before continuing.
+
+Because this machine currently lacks TeX tools, tests should use fake `pdflatex` and `bibtex` binaries for deterministic coverage.
+
+### Validation And Stop Hook
+
+Extend Stop-hook messaging for active writeup runs to report `state.orchestrator.next_action` just like research.
+
+Extend `validate_run.py --gate launch` so positive launch requires:
+
+- `verifier-decision.json` with `decision: "go"` and `blockers: []`.
+- `writeup/manifest.json`.
+- Existing Markdown, LaTeX, and PDF artifacts.
+- At least one final figure referenced by both the report manifest and LaTeX.
+- Explicit AI Scientist disclosure.
+- Strictness mode, selected node, benchmark/split, baseline comparison, limitations, failed attempts, and known validity threats.
+- Structured review and verifier evidence refs.
+
+If the verifier is missing, `no_go`, or has blockers, writeup can complete only through `negative-complete`, and launch validation must fail.
+
+### Test Plan
+
+Add focused tests for:
+
+- `writeup doctor` reports missing TeX and declared plotting dependency status.
+- `writeup start` refuses missing `review_to_writeup` validation or handoff.
+- `writeup resume` returns a prompt with evidence context and next action.
+- `collect-figures` creates a figure manifest and deterministic metric plot.
+- Launch validator rejects missing figures, stale figure refs, missing disclosure, missing PDF, and `no_go` verifier decisions.
+- Stop hook blocks active writeup and allows terminal writeup only after completion audit plus launch validation/handoff evidence.
+- Runtime dependency test confirms writeup code does not import, shell out to, wrap, or require AI-Scientist-v2.
+
+Minimum verification commands:
+
+```bash
+python3 -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
+python3 -m json.tool plugins/ai-scientist/hooks.json >/dev/null
+python3 -m unittest discover -s plugins/ai-scientist/tests -p 'test_*.py'
+```
+

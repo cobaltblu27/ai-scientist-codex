@@ -873,6 +873,8 @@ def phase_gate(phase: str) -> str | None:
         return "ideation_to_research"
     if phase == "research":
         return "research_to_review"
+    if phase == "writeup":
+        return "launch"
     return None
 
 
@@ -1006,16 +1008,19 @@ def evaluate_stop_decision(target_repo: Path, payload: dict[str, Any] | None = N
     if state.get("active") is True:
         phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
         cursor = ""
-        if phase == "research":
+        if phase in {"research", "writeup"}:
             orchestrator = phase_state.get("orchestrator") if isinstance(phase_state.get("orchestrator"), dict) else {}
             next_action = orchestrator.get("next_action")
             details = orchestrator.get("next_action_details") if isinstance(orchestrator.get("next_action_details"), dict) else {}
-            current_node = orchestrator.get("current_node") or phase_state.get("current_node")
+            current_node = orchestrator.get("current_node") or phase_state.get("current_node") or phase_state.get("selected_node")
             if next_action:
-                reason = details.get("reason")
+                reason = details.get("reason") or details.get("audit_verdict")
                 cursor = f" Run: {run_id}. Next action: {next_action}."
                 if current_node:
                     cursor += f" Node: {current_node}."
+                pending_audit = details.get("pending_audit")
+                if pending_audit:
+                    cursor += f" Pending audit: {pending_audit}."
                 if reason:
                     cursor += f" Reason: {reason}."
         elif phase == "ideation":

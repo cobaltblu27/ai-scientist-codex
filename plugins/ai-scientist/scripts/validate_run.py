@@ -39,6 +39,7 @@ GATE_DEST = {
     "ideation_to_research": ("ideation", "research"),
     "research_to_review": ("research", "review"),
     "review_to_writeup": ("review", "writeup"),
+    "launch": ("writeup", "launch"),
 }
 
 class ValidationError(Exception):
@@ -566,6 +567,48 @@ def check_review_to_writeup(root: Path, run: Path) -> None:
         raise ValidationError("rejected runs must block writeup or be marked failed/negative")
     check_handoff(run, "review_to_writeup")
 
+def check_writeup_artifacts(run: Path) -> None:
+    manifest = load_json(run / "writeup" / "manifest.json")
+    report_md = manifest.get("report_md")
+    report_tex = manifest.get("report_tex")
+    if not isinstance(report_md, str) or not report_md.strip():
+        raise ValidationError("writeup manifest must include report_md")
+    if not isinstance(report_tex, str) or not report_tex.strip():
+        raise ValidationError("writeup manifest must include report_tex")
+    md_path = run / report_md
+    tex_path = run / report_tex
+    if not md_path.exists():
+        raise ValidationError(f"writeup markdown report is missing: {report_md}")
+    if not tex_path.exists():
+        raise ValidationError(f"writeup latex report is missing: {report_tex}")
+    if manifest.get("disclosure_present") is not True:
+        raise ValidationError("writeup manifest must confirm AI Scientist disclosure")
+    if manifest.get("limitations_present") is not True:
+        raise ValidationError("writeup manifest must confirm limitations")
+    figures = manifest.get("figures")
+    if not isinstance(figures, list) or not figures:
+        raise ValidationError("writeup manifest must include at least one figure")
+    md_text = md_path.read_text()
+    tex_text = tex_path.read_text()
+    for figure in figures:
+        if not isinstance(figure, dict) or not isinstance(figure.get("path"), str):
+            raise ValidationError("each writeup figure must include a path")
+        figure_path = figure["path"]
+        if not (run / figure_path).exists():
+            raise ValidationError(f"writeup figure is missing: {figure_path}")
+        if figure_path not in md_text and Path(figure_path).name not in tex_text:
+            raise ValidationError(f"writeup report does not reference figure: {figure_path}")
+    if manifest.get("require_pdf") is not False:
+        report_pdf = manifest.get("report_pdf")
+        if not isinstance(report_pdf, str) or not report_pdf.strip():
+            raise ValidationError("writeup manifest must include report_pdf when require_pdf is true")
+        if not (run / report_pdf).exists():
+            raise ValidationError(f"writeup PDF report is missing: {report_pdf}")
+    audit = load_json(run / "writeup" / "audit" / "final-audit.json")
+    if audit.get("verdict") != "ACCEPT":
+        raise ValidationError("writeup final audit verdict must be ACCEPT")
+
+
 def check_launch(run: Path) -> None:
     decision = load_json(run / "verifier-decision.json")
     if decision.get("decision") != "go":
@@ -573,6 +616,7 @@ def check_launch(run: Path) -> None:
     blockers = decision.get("blockers")
     if blockers != []:
         raise ValidationError("verifier-decision.json blockers must be empty")
+    check_writeup_artifacts(run)
 
 def check_principles(run: Path) -> None:
     data = load_json(run / "principles.json")

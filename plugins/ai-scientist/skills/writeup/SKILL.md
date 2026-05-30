@@ -1,24 +1,31 @@
 ---
 name: writeup
-description: Create a final report from accepted AI Scientist artifacts with disclosure, limitations, mode/split details, and negative-result handling.
+description: Create a final report from accepted AI Scientist artifacts with disclosure, limitations, mode/split details, figures, and negative-result handling.
 ---
 
 # Writeup
 
-Use this skill only after review artifacts and launch checks are available.
+Use this skill only after `review_to_writeup` validation and approved handoff are recorded for the run.
 
 ## Requirements
 
+- Run `plugins/ai-scientist/scripts/ai_scientist_state_cli.py --target-repo <target> writeup doctor` first. If it reports missing Python or TeX dependencies, stop and ask the user to install them.
+- Include at least one final-paper plot. The default helper creates `writeup/figures/generated/baseline-vs-selected.png` from the accepted run metrics.
 - Include an explicit AI Scientist disclosure section stating that Codex assisted ideation, experimentation, review, and/or writing.
-- State the strictness mode and benchmark/split exactly as recorded in `.ai-scientist/config.json` and `run-status.json`.
-- Include result limitations, failed attempts, and known validity threats.
+- State the strictness mode and benchmark/split exactly as recorded in `.ai-scientist/config.json`, run artifacts, and structured review.
+- Include result limitations, failed attempts, known validity threats, split integrity evidence, leakage evidence, baseline comparison, and reproducibility artifacts.
 - Handle negative or failed results honestly; do not present rejected or engineer-mode outcomes as scientist-mode research claims.
-- Reference command logs, metrics, split integrity evidence, leakage evidence, baseline comparison, structured review, and verifier decision.
 
 ## Workflow
 
-1. Confirm `plugins/ai-scientist/scripts/validate_run.py <target> --gate launch` passes.
-2. Read accepted artifacts and structured review.
-3. Draft the report with abstract, setup, method, evidence, limitations, disclosure, and reproducibility appendix.
-4. If `verifier-decision.json` is missing, `no_go`, or has blockers, produce only a failed/negative run summary and do not claim launch approval.
-5. Record final report path in `journal.json` and summarize the artifact trail.
+1. Start state: `... ai_scientist_state_cli.py --target-repo <target> writeup start --run-id <run-id>`.
+2. Generate figures: `... writeup collect-figures --run-id <run-id>`.
+3. Draft `writeup/report.md` and `writeup/latex/template.tex`; both must reference every required figure and include disclosure plus limitations.
+4. Record the drafts: `... writeup record-reports --run-id <run-id>`.
+5. Compile PDF: `... writeup compile --run-id <run-id>`. If TeX dependencies are missing, stop and ask the user to install them; do not mark positive launch writeup complete without a PDF.
+6. Start or complete final audit: `... writeup audit-start --run-id <run-id>`, then record an independent JSON verdict with `... writeup audit-complete --run-id <run-id> --json '{"verdict":"ACCEPT",...}'`.
+7. Complete writeup: `... writeup complete --run-id <run-id>`.
+8. Run `plugins/ai-scientist/scripts/validate_run.py <target> --gate launch --run-id <run-id>`.
+9. Record validation and handoff: `... validation record --gate launch --exit-code 0`, then `... handoff record --gate launch --exit-code 0 --approved`.
+
+If the result is rejected, impossible to write honestly, or blocked by missing evidence, use `writeup negative-complete --reason <reason>` and do not claim launch approval.
