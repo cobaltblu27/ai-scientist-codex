@@ -16,6 +16,12 @@ provided by the target environment, such as `uv run python`,
 `conda run -n <env> python`, `micromamba run -n <env> python`, `python3`, or an
 absolute interpreter path. Do not assume a specific environment manager.
 
+## Local credentials
+
+Optional local API credentials may be kept in `plugins/ai-scientist/credentials.json`.
+That file is ignored by git. Use `plugins/ai-scientist/credentials.example.json`
+as the non-secret shape reference.
+
 ## Hard continuation setup
 
 AI Scientist can install a project-local Codex Stop hook so active runs cannot

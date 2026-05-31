@@ -6,6 +6,14 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Local API credentials. Keep real secrets out of git.
+credential.json
+credentials.json
+credential.jso
+plugins/ai-scientist/credential.json
+plugins/ai-scientist/credentials.json
+plugins/ai-scientist/credential.jso
+
 # Local workspace files and checkouts.
 /.agents/plugins/marketplace.json.local-before-rebase
 /.codex/
