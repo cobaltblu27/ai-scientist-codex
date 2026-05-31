@@ -5,3 +5,12 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local workspace files and checkouts.
+/.agents/plugins/marketplace.json.local-before-rebase
+/.codex/
+/AGENTS.md
+/AI-Scientist-v2/
+/main.py
+/oh-my-codex/
+/plugins/ai-scientist/credentials.example.json

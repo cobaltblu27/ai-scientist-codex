@@ -39,6 +39,7 @@ JOURNAL_EVENT_TYPES = {
     "dependency",
     "workspace",
     "note",
+    "finding",
 }
 IDEA_TERMINAL_STATUSES = {
     "accepted",
@@ -51,7 +52,7 @@ IDEA_TERMINAL_STATUSES = {
     "skipped",
 }
 NODE_RESOLVED_STATUSES = {"accepted", "invalid", "rejected"}
-NODE_UNRESOLVED_STATUSES = {"planned", "implementing", "running", "validating", "buggy", "repairing", "candidate"}
+NODE_UNRESOLVED_STATUSES = {"planning", "planned", "implementing", "running", "validating", "buggy", "repairing", "candidate"}
 NODE_TERMINAL_CRITIC_VERDICTS = {"accepted": "ACCEPT", "invalid": "INVALID", "rejected": "REJECT"}
 NODE_EVIDENCE_ADMIN_KEYS = {
     "status",
@@ -798,6 +799,23 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
     pending_critics = phase_state.get("pending_critics")
     if isinstance(pending_critics, dict) and pending_critics:
         return CompletionResult(False, f"research_critics_pending:{','.join(sorted(map(str, pending_critics.keys())))}", state)
+    pending_revision_critics = phase_state.get("pending_revision_critics")
+    if isinstance(pending_revision_critics, dict) and pending_revision_critics:
+        return CompletionResult(False, f"research_revision_critics_pending:{','.join(sorted(map(str, pending_revision_critics.keys())))}", state)
+    revisions = phase_state.get("revisions")
+    if isinstance(revisions, dict):
+        for revision_id, revision in revisions.items():
+            if not isinstance(revision, dict):
+                return CompletionResult(False, f"research_revision_invalid:{revision_id}", state)
+            status = str(revision.get("status") or "")
+            if status in {"pending", "proposed", "critic_pending"}:
+                return CompletionResult(False, f"research_revision_unresolved:{revision_id}:{status}", state)
+            if status == "branch_approved":
+                approved = revision.get("approved_alternative_ids") if isinstance(revision.get("approved_alternative_ids"), list) else []
+                created = revision.get("created_branch_node_ids") if isinstance(revision.get("created_branch_node_ids"), dict) else {}
+                missing = [str(item) for item in approved if str(item) not in created]
+                if missing:
+                    return CompletionResult(False, f"research_revision_branch_missing:{revision_id}:{','.join(missing)}", state)
     blocked_subagents = nonterminal_subagents(phase_state)
     if blocked_subagents:
         return CompletionResult(False, f"research_subagents_unresolved:{','.join(blocked_subagents)}", state)

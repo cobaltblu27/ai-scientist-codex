@@ -12,7 +12,7 @@ Use this skill to turn one selected idea into one or more experiment nodes, run 
 1. Do not run a Python orchestrator, nested `codex exec`, or any process that owns the research loop.
 2. Mutate research state only through `plugins/ai-scientist/scripts/ai_scientist_state_cli.py` or the same deterministic helper APIs. Do not hand-edit `loop-state.json`, `active-run.json`, `selection.json`, or `node.json` during normal execution.
 3. Keep the project-local Stop hook installed and active. If Stop hook blocks, resume from the recorded cursor; do not bypass it.
-4. A research run consumes exactly one selected idea. Ideation may produce multiple candidates, but each research run freezes one idea as input.
+4. A research run consumes exactly one selected idea and one frozen target-venue bar. Ideation may produce multiple candidates, but each research run freezes one idea, strictness mode, target venue, and token budget threshold as input.
 5. Use copy-based per-node workspaces under `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/`. Do not use git worktrees in v1.
 6. Do not mutate source files outside `.ai-scientist/` as part of the research loop. All experiment code changes happen in node workspaces.
 7. Official baseline, benchmark, and final-validation commands go through `resource run` so command specs, stdout/stderr, metrics, cwd, env, and resource events are auditable.
@@ -30,6 +30,7 @@ All run state lives under `.ai-scientist/`:
 - `.ai-scientist/runs/<run-id>/config.json`: frozen mode, selected idea snapshot, dependency plan, workspace plan, benchmark contract, resource config, seed policy, and selection thresholds.
 - `.ai-scientist/runs/<run-id>/loop-state.json`: active cursor, baseline status, official node statuses, subagent ledger, resource ledger, and selected node.
 - `.ai-scientist/runs/<run-id>/journal.jsonl`: append-only audit stream.
+- `.ai-scientist/runs/<run-id>/findings.jsonl` and `findings.md`: run-local finding memory for positive, negative, optimization, bug, drift, exhaustion, and transferable lessons.
 - `.ai-scientist/runs/<run-id>/selection.json`: final ranked selection.
 - `.ai-scientist/runs/<run-id>/baseline-workspace/`: copied baseline source.
 - `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/`: mutable node workspace.
@@ -101,6 +102,11 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   research start \
   --run-id <run-id> \
   --strictness-mode scientist \
+  --selected-idea-id <accepted-idea-id-or-rank> \
+  --target-venue-preset aaai_ijcai \
+  --target-venue-name AAAI \
+  --target-venue-notes '<optional venue bar notes>' \
+  --token-budget-percent 95 \
   --json '<frozen config/state payload>'
 ```
 
@@ -108,7 +114,9 @@ Prefer `--path <payload.json>` over inline `--json` for nontrivial payloads. The
 
 Research subagent concurrency is frozen at run start under `research.concurrency.max_subagents`. Resolution order is `research start --max-subagents <n>`, then payload/project override, then Codex `~/.codex/config.toml` `[agents].max_threads`, then `6`. The frozen config records the source. The resume cursor reports `available_subagent_slots`, `suggested_subagent_count`, and `subagent_concurrency_source`; use that count as the upper bound for parallel node workers.
 
-Research usage-cap defaults are also frozen at run start under `research.usage_cap`: enabled, warn at 85%, block new LLM/subagent work at 95%, poll every 600 seconds, and read `limit_id: codex` from `codex app-server account/rateLimits/read`. `research start` performs the first usage check. `research resume` refreshes stale usage, includes `usage_cap` in `next_action_details`, and returns `next_action: blocked_on_usage_limit` when capped. Before starting strategist/node/critic subagent work, run through the helper entrypoints so the cap is enforced and logged. Use `research usage-check --run-id <run-id> --force` for an explicit refresh. `research start --no-limit-host-cap` or `research.usage_cap.no_limit_host_cap: true` logs usage warnings without blocking; default mode fails closed if usage cannot be read.
+Research startup fails fast unless `--strictness-mode`, `--selected-idea-id`, `--target-venue-preset`, and `--token-budget-percent` are present and valid. The frozen target venue is stored under `config.json.research.target_venue`; pass it into all worker, critic, revision, and selection prompts. `workshop` and `domain_conference` can accept more incremental but honest work. `aaai_ijcai` and `top_ml` require stronger novelty, clearer mechanism, convincing ablations, reproducibility, and low tolerance for tuning-only improvements.
+
+Research usage-cap policy is frozen at run start under `research.usage_cap`: enabled, warn before the user-specified cap, block new LLM/subagent work at `research.usage_cap.block_new_work_at_percent`, poll every 600 seconds, and read `limit_id: codex` from `codex app-server account/rateLimits/read`. `research start` performs the first usage check. `research resume` refreshes stale usage, includes `usage_cap` in `next_action_details`, and returns `next_action: blocked_on_usage_limit` when capped. Before starting strategist/node/critic/revision subagent work, run through the helper entrypoints so the cap is enforced and logged. Use `research usage-check --run-id <run-id> --force` for an explicit refresh. `research start --no-limit-host-cap` or `research.usage_cap.no_limit_host_cap: true` logs usage warnings without blocking; default mode fails closed if usage cannot be read.
 
 Scientist/researcher runs must freeze a `research_contract` in `config.json` before work begins. It must state the primary hypothesis, success criteria, failure criteria, allowed rescue scope, kill criteria, metrics that matter, and non-negotiable comparisons. This contract is the standard critics use to distinguish supported hypotheses, solid negative results, and rescues from quiet claim narrowing.
 
@@ -181,8 +189,9 @@ Worker/local smoke tests may run directly inside a node workspace, but official 
 
 Official node statuses:
 
-- `planned`: workspace/approach exists but implementation has not started.
-- `implementing`: code changes are being made.
+- `planning`: architecture plan or branch approach is being created; implementation has not started.
+- `planned`: architecture/workspace/approach exists but implementation has not started.
+- `implementing`: code changes are being made; a half-finished node stays here and is not scientific failure evidence.
 - `running`: benchmark or substantial experiment is running.
 - `buggy`: command failed or behavior is broken; failure signature required.
 - `repairing`: active repair/debugging.
@@ -228,7 +237,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
   --reason "meaningful progress ready for independent critic"
 ```
 
-Use `--json` or `--path` only as explicit overrides. `candidate`, `buggy`, and `repairing` may branch into more work. Terminal states do not trigger further branching.
+Use `--json` or `--path` only as explicit overrides. `planning`, `planned`, `implementing`, `candidate`, `buggy`, and `repairing` may branch into more work. Terminal states do not trigger further branching.
 
 Accepted node evidence must include:
 
@@ -248,7 +257,108 @@ Accepted node outcome evidence must also include:
 - for `hypothesis_failed_with_evidence`: `fundamental_failure_reason` and `contract_evidence.failure_criteria_met: true`
 - for builder/engineer: `strong_model_evidence` with confirmation trials, tuning plateau or exhaustion, and `cheap_improvements_remaining: false`
 
-Rejected/invalid nodes need a clear rejection reason or failure signature.
+Rejected/invalid nodes need a clear rejection reason or failure signature. A weak score from an incomplete implementation is not a rejection reason and must remain `implementing`, `buggy`, or `repairing`.
+
+### Plan-First Incremental Implementation
+
+For large codebase changes, do not hand a worker the whole research plan as one oversized implementation prompt. Start with an architecture plan, then implement bounded steps.
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node plan-start --run-id <run-id> --node-id node-001 --json '{"objective":"<node objective>"}'
+```
+
+The returned prompt asks the worker to write only an architecture plan to `result_path`. Complete it after the worker writes `architecture_plan.implementation_steps`:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node plan-complete --run-id <run-id> --plan-id <plan-id>
+```
+
+Then start one bounded implementation step at a time:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node step-start --run-id <run-id> --node-id node-001
+```
+
+After the worker writes the step payload, complete the step:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node step-complete --run-id <run-id> --step-id <step-id>
+```
+
+If `done_definition_met` is false, the helper keeps the node `implementing` and sets `orchestrator.next_action = node_implementation_step`; spawn/continue a worker with the next step instead of judging the node. Only when `done_definition_met: true`, `recommended_status: candidate`, and complete node evidence are present should the node move to `candidate` for critics.
+
+If a worker identifies a meaningfully different approach before the current node is complete, do not directly branch. First finish reasonable same-node work or document why it is not applicable: debugging, hyperparameter tuning, layer/model variants within the same mechanism, expected ablations, and sanity checks. Then use the revision workflow below so a critic can decide whether the alternative is viable and paper-worthy under the frozen target venue bar.
+
+## Findings Memory
+
+Record useful findings whenever a node teaches something, even when the node fails or underperforms:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  finding record --run-id <run-id> --node-id node-001 --kind optimization --summary "dropout helped; wide layers failed" --transferable
+```
+
+Allowed kinds are `positive`, `negative`, `optimization`, `bug`, `drift`, `exhaustion`, and `transferable`. The helper writes both `findings.jsonl` and `findings.md`. Node planning prompts, implementation-step prompts, revision brainstorming prompts, and revision critic prompts include relevant findings so workers avoid known failed fixes and reuse transferable techniques.
+
+## Revision And Branching
+
+Revision means a different approach and therefore creates a new node only after critic approval. Repair, debugging, tuning, layer variants within the same mechanism, ablations, and local optimization remain same-node work.
+
+Start revision brainstorming only after optimization proof or non-applicable proof exists:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node revision-start --run-id <run-id> --node-id node-001
+```
+
+If the node has not recorded `optimization_attempts` or `optimization_not_applicable_reason`, `revision-start` fails fast. The returned prompt requires optimization attempts/metrics, useful findings, why the current direction is insufficient, and one to three alternatives with venue fit, anti-metric-hacking, and anti-claim-drift rationale.
+
+After the worker writes the revision payload:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node revision-complete --run-id <run-id> --revision-id <revision-id>
+```
+
+Then start and complete a revision critic:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node revision-critic-start --run-id <run-id> --revision-id <revision-id>
+
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node revision-critic-complete --run-id <run-id> --critic-id <critic-id>
+```
+
+Revision critic verdicts:
+
+- `CONTINUE_NODE`: block branch creation; continue same-direction implementation/tuning/ablation work.
+- `BRANCH`: approve one to three alternatives for child nodes.
+- `STOP_DRIFTED`: stop the lineage because continued branching is below the venue bar, metric hacking, or claim drift.
+- `STOP_EXHAUSTED`: stop the lineage because the goal appears fundamentally unachievable under current evidence.
+
+Only a `BRANCH` verdict allows child creation:
+
+```bash
+python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+  --target-repo <target-repo> \
+  node branch --run-id <run-id> --from-node node-001 --node-id node-002 --revision-id <revision-id> --alternative-id alt-001
+```
+
+There is no fixed branch-depth limit. Deeper branching is allowed while critics still find the lineage viable and paper-worthy for the frozen venue bar. Stop lineages that are mostly incremental hacks, drifted claims, or exhausted under the current evidence.
 
 ## Node Critics
 
@@ -324,7 +434,7 @@ Verdict mapping:
 
 Small progress or partial success must be `REVISE`/`repairing`, not `ACCEPT`. Critic completion fails if node evidence changed after `critic-start`, required runtime metadata is missing/wrong, required acceptance checks are missing, `cheap_improvements_remaining` is true, or actionable improvements are listed.
 
-In scientist/researcher mode, `claim_critic` must explicitly answer whether the original hypothesis is supported, failed with evidence, or an approved rescue. A narrowed but useful claim is not a success unless the selected `outcome_type` says it is a rescue or failed-hypothesis result.
+In scientist/researcher mode, `claim_critic` must explicitly answer whether the original hypothesis is supported, failed with evidence, or an approved rescue. A narrowed but useful claim is not a success unless the selected `outcome_type` says it is a rescue or failed-hypothesis result. `hypothesis_failed_with_evidence` is valid only for fundamental failure under the frozen contract; routine optimization failure, incomplete implementation, or evidence that a different approach may work must be `REVISE` or a branched node.
 
 ## Bug And Revision Repair
 
@@ -339,7 +449,7 @@ Buggy node records should include:
 - retryability
 - next action
 
-Do not complete research with any node in `buggy`, `repairing`, `candidate`, `planned`, `implementing`, `running`, or `validating`.
+Do not complete research with any node in `planning`, `buggy`, `repairing`, `candidate`, `planned`, `implementing`, `running`, or `validating`.
 
 When a critic returns `REVISE`, the helper creates a repair assignment and sets `orchestrator.next_action = node_repair`. Spawn or continue a worker for that node and pass the repair `result_path`, required revisions, critic ref, failed command/trial logs, and node workspace path. The worker edits only the node workspace unless explicitly authorized.
 
@@ -384,7 +494,7 @@ Good subagent tasks:
 
 Parallelism is allowed across different nodes up to frozen `research.concurrency.max_subagents`. Do not run multiple workers mutating the same node workspace at once. If GPU is needed, queue GPU-backed work through `resource run` and avoid oversubscribing VRAM.
 
-Usage-cap enforcement blocks `subagent update --status planned|running`, `node critic-start`, and active node transitions (`implementing`, `running`, `validating`, `repairing`) at or above 95% Codex usage. Benchmark/resource commands are not blocked, so already-started evidence collection can finish and be recorded. If a final selected accepted node already satisfies the configured good-enough threshold, completion and handoff work may continue; the cap is never a substitute for accepted critic-approved evidence.
+Usage-cap enforcement blocks `subagent update --status planned|running`, `node critic-start`, revision critic work, and active node transitions (`planning`, `implementing`, `running`, `validating`, `repairing`) at or above the frozen `block_new_work_at_percent` Codex usage threshold. Benchmark/resource commands are not blocked, so already-started evidence collection can finish and be recorded. If a final selected accepted node already satisfies the configured good-enough threshold, completion and handoff work may continue; the cap is never a substitute for accepted critic-approved evidence.
 
 When spawning a worker, include:
 
@@ -473,7 +583,7 @@ Prefer `--path <selection.json>` over inline `--json` for selection payloads.
 
 `selection finalize` requires the selected node to be accepted in `loop-state.json` with a fresh `ACCEPT` critic verdict, and all accepted nodes to appear in `ranked_nodes`.
 
-For scientist/researcher, selecting `hypothesis_failed_with_evidence` is a valid successful research-loop ending only when the frozen contract failure criteria are satisfied, the node has a `fundamental_failure_reason`, and the `claim_critic` marks `fundamental_failure: true`. Routine failed tuning, inconclusive tests, or a weak implementation do not qualify.
+For scientist/researcher, selecting `hypothesis_failed_with_evidence` is a valid successful research-loop ending only when the frozen contract failure criteria are satisfied, the node has a `fundamental_failure_reason`, `contract_evidence.fundamental_failure_not_implementation_failure: true`, `alternative_approaches_considered`, and the `claim_critic` marks `fundamental_failure: true`. Routine failed tuning, inconclusive tests, incomplete code, or a weak implementation do not qualify; branch a new node when another approach may work.
 
 ## Completion And Handoff
 
@@ -482,7 +592,7 @@ Before completion:
 1. Baseline is complete.
 2. All subagents are terminal.
 3. Blocking resources are resolved.
-4. Every node is terminal: `accepted`, `invalid`, or `rejected`.
+4. Every node is terminal: `accepted`, `invalid`, or `rejected`; no `planning`/`implementing`/partial node may be treated as final evidence.
 5. Every terminal node has a fresh critic ref matching its terminal verdict.
 6. No critic is pending.
 7. Selected node exists and is `accepted` with a fresh `ACCEPT` critic verdict.

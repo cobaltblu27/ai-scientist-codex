@@ -50,7 +50,13 @@ for line in sys.stdin:
     return fake_bin
 
 
-def run_cli(target: Path, *args: str, usage_primary: float = 10, usage_secondary: float | None = None) -> subprocess.CompletedProcess[str]:
+def run_cli(
+    target: Path,
+    *args: str,
+    usage_primary: float = 10,
+    usage_secondary: float | None = None,
+    inject_research_start_defaults: bool = True,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PATH"] = f"{fake_codex_bin(target)}{os.pathsep}{env.get('PATH', '')}"
     env["AI_SCIENTIST_FAKE_USAGE_PRIMARY"] = str(usage_primary)
@@ -58,8 +64,20 @@ def run_cli(target: Path, *args: str, usage_primary: float = 10, usage_secondary
         env["AI_SCIENTIST_FAKE_USAGE_SECONDARY"] = str(usage_secondary)
     else:
         env.pop("AI_SCIENTIST_FAKE_USAGE_SECONDARY", None)
+    argv = list(args)
+    if inject_research_start_defaults and len(argv) >= 2 and argv[0] == "research" and argv[1] == "start":
+        defaults = {
+            "--strictness-mode": "scientist",
+            "--selected-idea-id": "fixture-idea-001",
+            "--target-venue-preset": "aaai_ijcai",
+            "--target-venue-name": "AAAI",
+            "--token-budget-percent": "95",
+        }
+        for flag, value in defaults.items():
+            if flag not in argv:
+                argv.extend([flag, value])
     return subprocess.run(
-        [sys.executable, str(CLI), "--target-repo", str(target), *args],
+        [sys.executable, str(CLI), "--target-repo", str(target), *argv],
         env=env,
         text=True,
         capture_output=True,
@@ -153,8 +171,11 @@ def failed_paper_node_payload(score: float = 0.4, novelty: dict | None = None) -
                 "success_criteria_met": False,
                 "failure_criteria_met": True,
                 "routine_optimization_failure": False,
+                "implementation_failure": False,
+                "fundamental_failure_not_implementation_failure": True,
                 "tested_conditions": ["declared split", "leakage check", "controlled baseline comparison"],
             },
+            "alternative_approaches_considered": ["controlled baseline variant", "declared split sanity check"],
             "fundamental_failure_reason": "Controlled tests under the frozen contract show the original hypothesis does not hold.",
             "paper_worthiness": {"paper_worthy": True, "limitations": ["fixture negative-result evidence"]},
         }
@@ -179,6 +200,31 @@ def selection_payload(
         "ranked_nodes": [{"node_id": selected_node, "selection_score": int(selected_metric * 100)}],
         "rejected_or_superseded": [],
         "rationale": rationale,
+    }
+
+
+def revision_payload(revision_id: str, alternative_count: int = 1) -> dict:
+    alternatives = []
+    for index in range(1, alternative_count + 1):
+        alternatives.append(
+            {
+                "alternative_id": f"alt-{index:03d}",
+                "title": f"alternative {index}",
+                "scientific_rationale": "A different mechanism worth testing.",
+                "expected_mechanism": "mechanism differs from the parent node",
+                "venue_fit": "It can clear the frozen target venue bar with clean ablations.",
+                "why_not_metric_hacking": "It keeps the frozen benchmark and split.",
+                "why_not_claim_drift": "It preserves the selected idea's core claim.",
+                "risk": "May underperform.",
+            }
+        )
+    return {
+        "node_id": "node-001",
+        "revision_id": revision_id,
+        "optimization_attempts": [{"change": "learning rate sweep", "metrics": {"best_score": 0.42}, "conclusion": "plateau"}],
+        "useful_findings": ["same mechanism plateaued"],
+        "why_current_direction_insufficient": "The current direction has insufficient evidence after local optimization.",
+        "alternative_approaches": alternatives,
     }
 
 
@@ -332,6 +378,51 @@ def accept_paper_node_with_critics(target: Path, node_id: str = "node-001", payl
 
 
 class ResearchLoopV1Tests(unittest.TestCase):
+    def test_research_start_requires_frozen_startup_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", inject_research_start_defaults=False)
+            self.assertNotEqual(start.returncode, 0)
+            self.assertIn("--strictness-mode", start.stdout)
+            self.assertIn("--selected-idea-id", start.stdout)
+            self.assertIn("--target-venue-preset", start.stdout)
+            self.assertIn("--token-budget-percent", start.stdout)
+
+    def test_research_start_freezes_target_venue_and_token_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "researcher",
+                "--selected-idea-id",
+                "idea-abc",
+                "--target-venue-preset",
+                "aaai_ijcai",
+                "--target-venue-name",
+                "AAAI",
+                "--target-venue-notes",
+                "Needs clear mechanism and ablations.",
+                "--token-budget-percent",
+                "87",
+                inject_research_start_defaults=False,
+            )
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
+            self.assertEqual(config["selected_idea_id"], "idea-abc")
+            self.assertEqual(config["research"]["selected_idea_id"], "idea-abc")
+            self.assertEqual(config["research"]["target_venue"]["preset"], "aaai_ijcai")
+            self.assertEqual(config["research"]["target_venue"]["name"], "AAAI")
+            self.assertEqual(config["research"]["usage_cap"]["block_new_work_at_percent"], 87.0)
+            self.assertEqual(config["research"]["usage_cap"]["cap_threshold_percent"], 87.0)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["selected_idea_id"], "idea-abc")
+            self.assertEqual(state["state"]["target_venue"]["preset"], "aaai_ijcai")
+
     def test_compact_research_loop_validates_and_releases_stop_hook(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
@@ -1001,6 +1092,229 @@ class ResearchLoopV1Tests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
             validator = run_validator(target)
             self.assertEqual(validator.returncode, 0, validator.stderr + validator.stdout)
+
+
+    def test_plan_first_node_steps_keep_incomplete_work_unresolved_and_branchable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+
+            plan_start = run_cli(
+                target,
+                "node",
+                "plan-start",
+                "--node-id",
+                "node-001",
+                "--json",
+                json.dumps({"objective": "build a nontrivial model incrementally"}),
+            )
+            self.assertEqual(plan_start.returncode, 0, plan_start.stderr + plan_start.stdout)
+            plan_id = json.loads(plan_start.stdout)["plan_id"]
+            plan_payload = {
+                "node_id": "node-001",
+                "architecture_plan": {
+                    "objective": "incremental model build",
+                    "files_to_touch": ["model.py", "train.py"],
+                    "implementation_steps": [
+                        {"id": "step-001", "title": "create model shell", "instructions": "add model module", "done_check": "module imports"},
+                        {"id": "step-002", "title": "train and evaluate", "instructions": "wire training loop", "done_check": "metrics recorded"},
+                    ],
+                    "done_definition": ["metrics.json produced", "split checks pass"],
+                    "risks": ["partial implementation underperforms"],
+                },
+            }
+            plan_complete = run_cli(target, "node", "plan-complete", "--plan-id", plan_id, "--json", json.dumps(plan_payload))
+            self.assertEqual(plan_complete.returncode, 0, plan_complete.stderr + plan_complete.stdout)
+            step_start = run_cli(target, "node", "step-start", "--node-id", "node-001")
+            self.assertEqual(step_start.returncode, 0, step_start.stderr + step_start.stdout)
+            step_id = json.loads(step_start.stdout)["step_id"]
+            step_complete = run_cli(
+                target,
+                "node",
+                "step-complete",
+                "--step-id",
+                step_id,
+                "--json",
+                json.dumps(
+                    {
+                        "node_id": "node-001",
+                        "step_complete": False,
+                        "done_definition_met": False,
+                        "files_changed": ["model.py"],
+                        "commands_run": ["python -m py_compile model.py"],
+                        "remaining_work": ["training loop still missing"],
+                        "optimization_attempts": [{"change": "smoke-test smaller hidden dim", "metrics": {"score": 0.41}, "conclusion": "same mechanism is still weak"}],
+                        "spawned_node_ideas": [{"title": "smaller baseline", "rationale": "may validate data path faster"}],
+                        "recommended_status": "implementing",
+                    }
+                ),
+            )
+            self.assertEqual(step_complete.returncode, 0, step_complete.stderr + step_complete.stdout)
+            payload = json.loads(step_complete.stdout)
+            self.assertEqual(payload["node_status"], "implementing")
+            self.assertEqual(payload["next_action"], "node_implementation_step")
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["nodes"]["node-001"]["status"], "implementing")
+            self.assertEqual(state["state"]["orchestrator"]["next_action"], "node_implementation_step")
+
+            revision_start = run_cli(target, "node", "revision-start", "--node-id", "node-001")
+            self.assertEqual(revision_start.returncode, 0, revision_start.stderr + revision_start.stdout)
+            revision_start_payload = json.loads(revision_start.stdout)
+            self.assertIn("AAAI", revision_start_payload["prompt"])
+            revision_id = revision_start_payload["revision_id"]
+            revision_payload = {
+                "node_id": "node-001",
+                "revision_id": revision_id,
+                "optimization_attempts": [{"change": "smoke-test smaller hidden dim", "metrics": {"score": 0.41}, "conclusion": "plateaued"}],
+                "useful_findings": ["training path works but same mechanism has weak signal"],
+                "why_current_direction_insufficient": "The current same-mechanism variant is unlikely to clear the venue bar.",
+                "alternative_approaches": [
+                    {
+                        "alternative_id": "alt-001",
+                        "title": "mechanistic smaller baseline",
+                        "scientific_rationale": "Different modeling assumption with clearer mechanism.",
+                        "expected_mechanism": "regularized representation improves generalization",
+                        "venue_fit": "Potentially clears the target venue by testing a clearer mechanism.",
+                        "why_not_metric_hacking": "Keeps frozen split and declares all tuning.",
+                        "why_not_claim_drift": "Still tests the selected idea's generalization mechanism.",
+                        "risk": "May still underperform.",
+                    }
+                ],
+            }
+            revision_complete = run_cli(target, "node", "revision-complete", "--revision-id", revision_id, "--json", json.dumps(revision_payload))
+            self.assertEqual(revision_complete.returncode, 0, revision_complete.stderr + revision_complete.stdout)
+            critic_start = run_cli(target, "node", "revision-critic-start", "--revision-id", revision_id)
+            self.assertEqual(critic_start.returncode, 0, critic_start.stderr + critic_start.stdout)
+            critic_payload_started = json.loads(critic_start.stdout)
+            self.assertIn("AAAI", critic_payload_started["prompt"])
+            revision_critic = run_cli(
+                target,
+                "node",
+                "revision-critic-complete",
+                "--critic-id",
+                critic_payload_started["critic_id"],
+                "--json",
+                json.dumps({"verdict": "BRANCH", "rationale": "alt-001 is viable and above the venue bar", "selected_alternative_ids": ["alt-001"], "venue_bar_assessment": "meets bar", "paper_worthiness_assessment": "worth trying", "drift_assessment": "no drift"}),
+            )
+            self.assertEqual(revision_critic.returncode, 0, revision_critic.stderr + revision_critic.stdout)
+
+            branch = run_cli(
+                target,
+                "node",
+                "branch",
+                "--from-node",
+                "node-001",
+                "--node-id",
+                "node-002",
+                "--revision-id",
+                revision_id,
+                "--alternative-id",
+                "alt-001",
+                "--reason",
+                "critic approved a different approach",
+            )
+            self.assertEqual(branch.returncode, 0, branch.stderr + branch.stdout)
+            branch_payload = json.loads(branch.stdout)
+            self.assertEqual(branch_payload["node_status"], "planning")
+
+    def test_revision_start_requires_optimization_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            node = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "implementing")
+            self.assertEqual(node.returncode, 0, node.stderr + node.stdout)
+            revision = run_cli(target, "node", "revision-start", "--node-id", "node-001")
+            self.assertNotEqual(revision.returncode, 0)
+            self.assertIn("optimization_attempts", revision.stdout)
+
+    def test_revision_alternatives_are_capped_at_three(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            node = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "implementing", "--json", json.dumps({"node": {"optimization_attempts": [{"change": "lr sweep", "metrics": {"score": 0.4}}]}}))
+            self.assertEqual(node.returncode, 0, node.stderr + node.stdout)
+            started = run_cli(target, "node", "revision-start", "--node-id", "node-001")
+            self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            revision_id = json.loads(started.stdout)["revision_id"]
+            too_many = run_cli(target, "node", "revision-complete", "--revision-id", revision_id, "--json", json.dumps(revision_payload(revision_id, alternative_count=4)))
+            self.assertNotEqual(too_many.returncode, 0)
+            self.assertIn("capped at 3", too_many.stdout)
+
+    def test_continue_node_revision_blocks_branch_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            node = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "implementing", "--json", json.dumps({"node": {"optimization_attempts": [{"change": "lr sweep", "metrics": {"score": 0.4}}]}}))
+            self.assertEqual(node.returncode, 0, node.stderr + node.stdout)
+            started = run_cli(target, "node", "revision-start", "--node-id", "node-001")
+            self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            revision_id = json.loads(started.stdout)["revision_id"]
+            completed = run_cli(target, "node", "revision-complete", "--revision-id", revision_id, "--json", json.dumps(revision_payload(revision_id)))
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            critic_start = run_cli(target, "node", "revision-critic-start", "--revision-id", revision_id)
+            self.assertEqual(critic_start.returncode, 0, critic_start.stderr + critic_start.stdout)
+            critic_id = json.loads(critic_start.stdout)["critic_id"]
+            critic_done = run_cli(target, "node", "revision-critic-complete", "--critic-id", critic_id, "--json", json.dumps({"verdict": "CONTINUE_NODE", "rationale": "needs more tuning before branching", "required_same_node_work": ["finish ablation"]}))
+            self.assertEqual(critic_done.returncode, 0, critic_done.stderr + critic_done.stdout)
+            branch = run_cli(target, "node", "branch", "--node-id", "node-002", "--from-node", "node-001", "--revision-id", revision_id, "--alternative-id", "alt-001")
+            self.assertNotEqual(branch.returncode, 0)
+            self.assertIn("BRANCH", branch.stdout)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["nodes"]["node-001"]["status"], "implementing")
+
+    def test_stop_drifted_blocks_further_branching_from_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            node = run_cli(target, "node", "transition", "--node-id", "node-001", "--status", "implementing", "--json", json.dumps({"node": {"optimization_attempts": [{"change": "lr sweep", "metrics": {"score": 0.4}}]}}))
+            self.assertEqual(node.returncode, 0, node.stderr + node.stdout)
+            started = run_cli(target, "node", "revision-start", "--node-id", "node-001")
+            self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+            revision_id = json.loads(started.stdout)["revision_id"]
+            completed = run_cli(target, "node", "revision-complete", "--revision-id", revision_id, "--json", json.dumps(revision_payload(revision_id)))
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            critic_start = run_cli(target, "node", "revision-critic-start", "--revision-id", revision_id)
+            self.assertEqual(critic_start.returncode, 0, critic_start.stderr + critic_start.stdout)
+            critic_id = json.loads(critic_start.stdout)["critic_id"]
+            critic_done = run_cli(target, "node", "revision-critic-complete", "--critic-id", critic_id, "--json", json.dumps({"verdict": "STOP_DRIFTED", "rationale": "alternatives are metric hacking below venue bar"}))
+            self.assertEqual(critic_done.returncode, 0, critic_done.stderr + critic_done.stdout)
+            branch = run_cli(target, "node", "branch", "--node-id", "node-002", "--from-node", "node-001", "--revision-id", revision_id, "--alternative-id", "alt-001")
+            self.assertNotEqual(branch.returncode, 0)
+            node_doc = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "nodes" / "node-001" / "node.json").read_text())
+            self.assertEqual(node_doc["lineage_stop"]["verdict"], "STOP_DRIFTED")
+
+    def test_findings_are_written_and_injected_into_node_prompts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "builder")
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            finding = run_cli(target, "finding", "record", "--node-id", "node-000", "--kind", "optimization", "--summary", "wide layers failed but dropout helped", "--transferable")
+            self.assertEqual(finding.returncode, 0, finding.stderr + finding.stdout)
+            self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "findings.jsonl").exists())
+            self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "findings.md").exists())
+            plan = run_cli(target, "node", "plan-start", "--node-id", "node-001", "--json", json.dumps({"objective": "plan with memory"}))
+            self.assertEqual(plan.returncode, 0, plan.stderr + plan.stdout)
+            prompt = json.loads(plan.stdout)["prompt"]
+            self.assertIn("wide layers failed but dropout helped", prompt)
+            self.assertIn("AAAI", prompt)
+
+    def test_scientist_failed_hypothesis_rejects_implementation_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(target, "research", "start", "--run-id", "run-001", "--strictness-mode", "scientist", "--json", json.dumps({"research_contract": research_contract()}))
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            payload = failed_paper_node_payload(score=0.4)
+            payload["node"]["contract_evidence"]["implementation_failure"] = True
+            payload["node"]["contract_evidence"]["fundamental_failure_not_implementation_failure"] = False
+            accepted = accept_paper_node_with_critics(target, payload=payload)
+            self.assertNotEqual(accepted.returncode, 0)
+            self.assertIn("implementation failure", (accepted.stderr + accepted.stdout).lower())
+
 
     def test_stale_node_critic_result_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

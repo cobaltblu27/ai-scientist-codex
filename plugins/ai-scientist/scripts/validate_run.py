@@ -387,10 +387,18 @@ def check_outcome_and_metric(
             if evidence.get("success_criteria_met") is not True:
                 raise ValidationError("hypothesis_supported requires success_criteria_met")
         elif outcome == "hypothesis_failed_with_evidence":
-            if evidence.get("failure_criteria_met") is not True or evidence.get("routine_optimization_failure") is True:
-                raise ValidationError("hypothesis_failed_with_evidence requires fundamental failure evidence")
+            if (
+                evidence.get("failure_criteria_met") is not True
+                or evidence.get("routine_optimization_failure") is True
+                or evidence.get("implementation_failure") is True
+                or evidence.get("fundamental_failure_not_implementation_failure") is not True
+            ):
+                raise ValidationError("hypothesis_failed_with_evidence requires fundamental failure evidence distinct from implementation failure")
             if not node.get("fundamental_failure_reason"):
                 raise ValidationError("hypothesis_failed_with_evidence requires fundamental_failure_reason")
+            alternatives = node.get("alternative_approaches_considered")
+            if not isinstance(alternatives, list) or not alternatives:
+                raise ValidationError("hypothesis_failed_with_evidence requires alternative_approaches_considered")
         elif outcome == "rescue_finding_with_failed_hypothesis":
             if evidence.get("failure_criteria_met") is not True or evidence.get("rescue_scope_met") is not True:
                 raise ValidationError("rescue finding requires failed hypothesis and rescue scope evidence")
@@ -451,6 +459,15 @@ def check_research_file_artifacts(root: Path, run: Path) -> None:
 
 def check_research_loop_state(root: Path, run: Path) -> None:
     cfg = check_config(root, run)
+    if not isinstance(cfg.get("selected_idea_id"), str) or not cfg["selected_idea_id"].strip():
+        raise ValidationError("config.json selected_idea_id is required for research")
+    research_cfg = cfg.get("research") if isinstance(cfg.get("research"), dict) else {}
+    target_venue = research_cfg.get("target_venue") if isinstance(research_cfg.get("target_venue"), dict) else {}
+    if target_venue.get("preset") not in {"workshop", "domain_conference", "aaai_ijcai", "top_ml", "custom"}:
+        raise ValidationError("config.json research.target_venue preset is required for research")
+    usage_cap = research_cfg.get("usage_cap") if isinstance(research_cfg.get("usage_cap"), dict) else {}
+    if "block_new_work_at_percent" not in usage_cap:
+        raise ValidationError("config.json research.usage_cap.block_new_work_at_percent is required")
     loop_state = load_json(run / "loop-state.json")
     if loop_state.get("phase") != "research":
         raise ValidationError("loop-state.json phase must be research")

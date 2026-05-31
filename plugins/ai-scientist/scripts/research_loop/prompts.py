@@ -6,7 +6,7 @@ from typing import Any
 from .config import ACTIONS, STRICTNESS_MODES, ResearchConfig
 from .journal import write_json
 
-TEMPLATE_VERSION = "research-loop-prompts-v1"
+TEMPLATE_VERSION = "research-loop-prompts-v3"
 
 TEMPLATES = {
     "draft": "Draft a manifest-only experiment implementation for the idea.",
@@ -57,9 +57,24 @@ def build_prompt(config: ResearchConfig, action: str, node_id: str, parent_node_
                 "memory_mb": getattr(resources, "memory_mb", None),
             },
         },
+        "target_venue": getattr(config, "target_venue", None),
+        "findings_memory_required": True,
+        "planning_protocol": {
+            "plan_first": True,
+            "architecture_plan_required": True,
+            "incremental_steps_required": True,
+            "incomplete_work_status": "implementing",
+            "same_node_before_revision": ["debugging", "hyperparameter_tuning", "same_mechanism_layer_or_model_variants", "ablations", "sanity_checks"],
+            "new_research_direction_field": "spawned_node_ideas",
+            "revision_requires_critic_verdict": "BRANCH",
+            "revision_branch_verdicts": ["CONTINUE_NODE", "BRANCH", "STOP_DRIFTED", "STOP_EXHAUSTED"],
+        },
         "instructions": (
-            f"{TEMPLATES[action]} Return one JSON manifest only. Do not write directly to the target repo. "
-            "All generated file paths must be relative to the node workspace."
+            f"{TEMPLATES[action]} First create an architecture plan, then implement bounded steps until the node's done definition is met. "
+            "Return one JSON manifest only. Do not write directly to the target repo. "
+            "All generated file paths must be relative to the node workspace. "
+            "If the implementation is incomplete, report recommended_status=implementing rather than failed. "
+            "Record useful findings for later nodes. If a different approach is promising, include spawned_node_ideas; branching must go through evidence-gated revision and a BRANCH critic verdict under the frozen target venue bar."
         ),
     }
     return metadata
