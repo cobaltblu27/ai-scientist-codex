@@ -42,7 +42,7 @@ absolute interpreter path. Do not assume a specific environment manager.
 
 ## Overview
 
-This repository packages a Codex plugin under `plugins/ai-scientist/`. The plugin gives Codex a structured workflow for research-style experimentation inside a target repository.
+This repository is a Codex plugin root. It gives Codex a structured workflow for research-style experimentation inside a target repository.
 
 Instead of operating as a black-box paper generator, the plugin requires explicit artifacts for each stage:
 
@@ -146,49 +146,51 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 
 ```text
 .
+├── .codex-plugin/plugin.json
 ├── README.md
 ├── GUIDELINES.md
-└── plugins/
-    └── ai-scientist/
-        ├── .codex-plugin/plugin.json
-        ├── README.md
-        ├── references/
-        │   └── artifact-contract.md
-        ├── schemas/
-        │   ├── config.schema.json
-        │   ├── idea.schema.json
-        │   ├── journal.schema.json
-        │   ├── active-run.schema.json
-        │   ├── loop-state.schema.json
-        │   ├── principles.schema.json
-        │   ├── run-status.schema.json
-        │   └── verifier-decision.schema.json
-        ├── scripts/
-        │   ├── ai_scientist_state.py
-        │   ├── ai_scientist_stop_hook.py
-        │   ├── ideation_orchestrator.py
-        │   ├── install_codex_hooks.py
-        │   └── validate_run.py
-        ├── skills/
-        │   ├── ideation/SKILL.md
-        │   ├── research-loop/SKILL.md
-        │   ├── review/SKILL.md
-        │   └── writeup/SKILL.md
-        └── tests/
-            └── fixtures/
+├── hooks.json
+├── pyproject.toml
+├── config/
+├── references/
+│   └── artifact-contract.md
+├── schemas/
+│   ├── config.schema.json
+│   ├── idea.schema.json
+│   ├── journal.schema.json
+│   ├── active-run.schema.json
+│   ├── loop-state.schema.json
+│   ├── principles.schema.json
+│   ├── run-status.schema.json
+│   └── verifier-decision.schema.json
+├── skills/
+│   ├── ideation/SKILL.md
+│   ├── research-loop/SKILL.md
+│   ├── review/SKILL.md
+│   └── writeup/SKILL.md
+├── src/
+│   ├── cli/
+│   ├── core/
+│   ├── hooks/
+│   ├── ideation/
+│   ├── research/
+│   ├── validation/
+│   └── writeup/
+└── tests/
+    └── fixtures/
 ```
 
 ## Install or use locally
 
-Use `plugins/ai-scientist/` as the plugin root.
+Use this repository root as the plugin root.
 
 The plugin manifest is:
 
 ```bash
-plugins/ai-scientist/.codex-plugin/plugin.json
+.codex-plugin/plugin.json
 ```
 
-For local development, point your Codex/plugin tooling at `plugins/ai-scientist` or copy that directory into your local plugin workspace.
+For local development, point your Codex/plugin tooling at this checkout or copy this checkout into your local plugin workspace.
 
 For hard continuation, install the project-local Codex Stop hook in the target repository:
 
@@ -206,9 +208,9 @@ while a run is active or lacks passing completion audit evidence.
 From this repository root, verify the plugin manifest and the valid minimal fixture:
 
 ```bash
-python -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
+python -m json.tool .codex-plugin/plugin.json >/dev/null
 uv run ai-scientist validate run \
-  plugins/ai-scientist/tests/fixtures/valid-minimal \
+  tests/fixtures/valid-minimal \
   --gate all
 ```
 
@@ -218,7 +220,7 @@ You can also confirm that negative fixtures fail closed. For example, this shoul
 
 ```bash
 uv run ai-scientist validate run \
-  plugins/ai-scientist/tests/fixtures/missing-leakage-evidence \
+  tests/fixtures/missing-leakage-evidence \
   --gate research_to_review
 ```
 
@@ -398,7 +400,7 @@ A typical run looks like this:
 See the detailed contract in:
 
 ```text
-plugins/ai-scientist/references/artifact-contract.md
+references/artifact-contract.md
 ```
 
 ## Strictness modes
@@ -576,17 +578,17 @@ See [`GUIDELINES.md`](GUIDELINES.md) for detailed maintainer guidance.
 
 When changing the artifact contract, update these together:
 
-1. `plugins/ai-scientist/references/artifact-contract.md`
-2. schemas in `plugins/ai-scientist/schemas/`
+1. `references/artifact-contract.md`
+2. schemas in `schemas/`
 3. `uv run ai-scientist validate run`
-4. positive and negative fixtures in `plugins/ai-scientist/tests/fixtures/`
+4. positive and negative fixtures in `tests/fixtures/`
 5. skill instructions that mention the changed contract
 
 Before claiming a change is complete, run at least:
 
 ```bash
-python -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-uv run ai-scientist validate run plugins/ai-scientist/tests/fixtures/valid-minimal --gate all
+python -m json.tool .codex-plugin/plugin.json >/dev/null
+uv run ai-scientist validate run tests/fixtures/valid-minimal --gate all
 ```
 
 ## Status

@@ -13,7 +13,7 @@ dev = [
 ]
 
 [project.scripts]
-ai-scientist = "ai_scientist_codex.cli.main:main"
+ai-scientist = "cli.main:main"
 
 [build-system]
 requires = ["setuptools>=68"]
