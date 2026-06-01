@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Thin CLI entrypoint for the Codex-native AI Scientist research loop."""
+"""Compatibility wrapper for the AI Scientist research loop."""
 from __future__ import annotations
 
-from pathlib import Path
-import sys
+from _ai_scientist_src import ensure_src
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+ensure_src()
 
-from research_loop.orchestrator import main
+from ai_scientist_codex.research.loop.orchestrator import main
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

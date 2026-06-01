@@ -23,7 +23,7 @@ Use this skill after research-loop artifacts are complete and before writeup.
 3. Confirm no train/test leakage and no deceptive metric selection.
 4. Compare best accepted node to baseline and check mode-specific criteria.
 5. Write `.ai-scientist/runs/<run-id>/review/structured-review.json` with sections for leakage, split integrity, baseline comparison, strictness-mode criteria, limitations, and verdict.
-6. Run `plugins/ai-scientist/scripts/validate_run.py <target> --gate review_to_writeup`.
+6. Run `ai-scientist validate run <target> --gate review_to_writeup`.
 7. Any rejection blocks writeup unless the writeup is clearly marked failed/negative.
 
 ## Output

@@ -10,7 +10,7 @@ Use this skill to turn one selected idea into one or more experiment nodes, run 
 ## Non-Negotiable Rules
 
 1. Do not run a Python orchestrator, nested `codex exec`, or any process that owns the research loop.
-2. Mutate research state only through `plugins/ai-scientist/scripts/ai_scientist_state_cli.py` or the same deterministic helper APIs. Do not hand-edit `loop-state.json`, `active-run.json`, `selection.json`, or `node.json` during normal execution.
+2. Mutate research state only through `ai-scientist` or the same deterministic helper APIs. Do not hand-edit `loop-state.json`, `active-run.json`, `selection.json`, or `node.json` during normal execution.
 3. Keep the project-local Stop hook installed and active. If Stop hook blocks, resume from the recorded cursor; do not bypass it.
 4. A research run consumes exactly one selected idea and one frozen target-venue bar. Ideation may produce multiple candidates, but each research run freezes one idea, strictness mode, target venue, and token budget threshold as input.
 5. Use copy-based per-node workspaces under `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/`. Do not use git worktrees in v1.
@@ -91,13 +91,13 @@ If environment/package corruption, missing core dependencies, CUDA/toolchain cha
 Install/check the Stop hook:
 
 ```bash
-python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo>
+ai-scientist hooks install --project-root <target-repo>
 ```
 
 Start a research run:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   research start \
   --run-id <run-id> \
@@ -123,7 +123,7 @@ Scientist/researcher runs must freeze a `research_contract` in `config.json` bef
 Resume:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   research resume --run-id <run-id>
 ```
@@ -131,7 +131,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 The resume response returns `next_action` and `next_action_details`. Follow that cursor. To update cursor after completing a step:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   research set-next-action --run-id <run-id> --lane <lane> --reason "<reason>"
 ```
@@ -143,7 +143,7 @@ Use lanes such as `setup`, `dependency_plan`, `workspace`, `baseline`, `node_wor
 Initialize the baseline workspace:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   workspace init --run-id <run-id> --source <target-repo>
 ```
@@ -153,7 +153,7 @@ This creates `.ai-scientist/runs/<run-id>/baseline-workspace/`. Essential config
 Create a node workspace:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node create-workspace --run-id <run-id> --node-id node-001 --reason "start first approach"
 ```
@@ -167,7 +167,7 @@ The benchmark command is the official entrypoint contract for baseline and node 
 Official commands must be run with `resource run`:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   resource run \
   --run-id <run-id> \
@@ -204,7 +204,7 @@ Official node statuses:
 Record transitions:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node transition \
   --run-id <run-id> \
@@ -216,7 +216,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 For node work, first transition the node into an active status and capture the returned `result_path`. Give that path to the worker. The worker writes JSON only to that file. A later `node transition` with no `--json` reads the assigned path by default.
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node transition \
   --run-id <run-id> \
@@ -228,7 +228,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 After the worker writes the node evidence payload to `result_path`:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node transition \
   --run-id <run-id> \
@@ -264,7 +264,7 @@ Rejected/invalid nodes need a clear rejection reason or failure signature. A wea
 For large codebase changes, do not hand a worker the whole research plan as one oversized implementation prompt. Start with an architecture plan, then implement bounded steps.
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node plan-start --run-id <run-id> --node-id node-001 --json '{"objective":"<node objective>"}'
 ```
@@ -272,7 +272,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 The returned prompt asks the worker to write only an architecture plan to `result_path`. Complete it after the worker writes `architecture_plan.implementation_steps`:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node plan-complete --run-id <run-id> --plan-id <plan-id>
 ```
@@ -280,7 +280,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Then start one bounded implementation step at a time:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node step-start --run-id <run-id> --node-id node-001
 ```
@@ -288,7 +288,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 After the worker writes the step payload, complete the step:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node step-complete --run-id <run-id> --step-id <step-id>
 ```
@@ -302,7 +302,7 @@ If a worker identifies a meaningfully different approach before the current node
 Record useful findings whenever a node teaches something, even when the node fails or underperforms:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   finding record --run-id <run-id> --node-id node-001 --kind optimization --summary "dropout helped; wide layers failed" --transferable
 ```
@@ -316,7 +316,7 @@ Revision means a different approach and therefore creates a new node only after 
 Start revision brainstorming only after optimization proof or non-applicable proof exists:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node revision-start --run-id <run-id> --node-id node-001
 ```
@@ -326,7 +326,7 @@ If the node has not recorded `optimization_attempts` or `optimization_not_applic
 After the worker writes the revision payload:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node revision-complete --run-id <run-id> --revision-id <revision-id>
 ```
@@ -334,11 +334,11 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Then start and complete a revision critic:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node revision-critic-start --run-id <run-id> --revision-id <revision-id>
 
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node revision-critic-complete --run-id <run-id> --critic-id <critic-id>
 ```
@@ -353,7 +353,7 @@ Revision critic verdicts:
 Only a `BRANCH` verdict allows child creation:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node branch --run-id <run-id> --from-node node-001 --node-id node-002 --revision-id <revision-id> --alternative-id alt-001
 ```
@@ -367,7 +367,7 @@ Terminal node states are critic-gated. Direct `node transition --status accepted
 Start a critic after node evidence is in `candidate` or `validating`:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node critic-start --run-id <run-id> --node-id node-001
 ```
@@ -377,7 +377,7 @@ Scientist/researcher require two critic roles: `evidence_auditor` and `claim_cri
 `critic-start` returns `required_model`, `required_reasoning_effort`, `critic_role`, `rubric_snapshot`, `evidence_fingerprint`, `prompt`, and `result_path`. Spawn the critic with the returned runtime, then record parent-side spawn metadata:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node critic-spawn-record \
   --run-id <run-id> \
@@ -420,7 +420,7 @@ Give the returned `prompt` and `result_path` to the fresh critic. The critic wri
 Complete the critic:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node critic-complete --run-id <run-id> --critic-id <critic-id>
 ```
@@ -471,7 +471,7 @@ Repair payload:
 Complete repair:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   node repair-complete --run-id <run-id> --repair-id <repair-id>
 ```
@@ -510,7 +510,7 @@ When spawning a worker, include:
 Record subagent status. The first update returns `result_path`; give that path to the worker and require JSON-only output there:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   subagent update \
   --run-id <run-id> \
@@ -522,7 +522,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 After the worker writes its result payload to `result_path`:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   subagent update \
   --run-id <run-id> \
@@ -574,7 +574,7 @@ Selection payload:
 Record selection:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   selection finalize --run-id <run-id> --json '<selection JSON>'
 ```
@@ -597,12 +597,12 @@ Before completion:
 6. No critic is pending.
 7. Selected node exists and is `accepted` with a fresh `ACCEPT` critic verdict.
 8. `selection.json` is final and matches `loop-state.json`.
-9. Node evidence satisfies `validate_run.py --gate research_to_review`.
+9. Node evidence satisfies `ai-scientist validate run <target-repo> --gate research_to_review`.
 
 Complete research with a passing audit:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   research complete --run-id <run-id> --path .ai-scientist/runs/<run-id>/logs/completion-audit.json
 ```
@@ -610,22 +610,22 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Then run validator:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py \
+ai-scientist validate run \
   <target-repo> --gate research_to_review --run-id <run-id>
 ```
 
 Record validation:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
-  validation record --run-id <run-id> --gate research_to_review --exit-code 0 --command "validate_run.py <target-repo> --gate research_to_review --run-id <run-id>"
+  validation record --run-id <run-id> --gate research_to_review --exit-code 0 --command "ai-scientist validate run <target-repo> --gate research_to_review --run-id <run-id>"
 ```
 
 Record approved handoff:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   handoff record --run-id <run-id> --gate research_to_review --exit-code 0 --approved --reason "research evidence ready for review"
 ```
@@ -635,7 +635,7 @@ Stop hook should allow ending only after completion, validation record, and appr
 Cancel only when explicitly requested or impossible to continue:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   research cancel --run-id <run-id> --reason "<reason>"
 ```

@@ -14,7 +14,7 @@ You are the ideation orchestrator. The current Codex session owns the loop. Pyth
 1. Treat the invocation text as the research topic. Do not require a Markdown topic file.
 2. Do not mutate target repository source code during ideation. The only target-repository writes are under `.ai-scientist/`.
 3. Install/check the project-local Stop hook before starting a real run.
-4. All state transitions go through `plugins/ai-scientist/scripts/ai_scientist_state_cli.py`.
+4. All state transitions go through `ai-scientist`.
 5. Record subagent intents before spawning generators, critics, or the ranker. Pending intents intentionally block Stop until you record completion or cancellation.
 6. Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use `gpt-5.5` with `xhigh` effort for substantive idea generation when model controls are available.
 7. Spawn a fresh critic for each draft or revised draft. Include previous critic verdict/revision notes in the new critic prompt; do not reuse long critic context.
@@ -71,13 +71,13 @@ Mode presets live in frozen `config.json`. Read them instead of hardcoding promp
 From the target repository root, install/check the Stop hook:
 
 ```bash
-python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo>
+ai-scientist hooks install --project-root <target-repo>
 ```
 
 Start the run:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation start \
   --run-id <run-id> \
@@ -91,7 +91,7 @@ If `--strictness-mode` is omitted, default is `scientist`. If `--num-ideas` is o
 Resume from state:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation resume --run-id <run-id> --prompt
 ```
@@ -116,7 +116,7 @@ The helper computes `next_action`. Follow it exactly.
 Before spawning any subagent:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation intent start-batch --run-id <run-id> --role generator --count <n>
 ```
@@ -126,7 +126,7 @@ Use `--role critic --idea-ids <idea-id> ...` for critic batches. Ranking remains
 Each returned intent includes `result_path`. Give that path to the subagent and require it to overwrite the file with JSON only. `intent complete --intent-id <id>` reads `result_path` by default. Use `--json` or `--path` only as explicit overrides.
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation intent complete --run-id <run-id> --intent-id <intent-id>
 ```
@@ -134,7 +134,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 If the subagent result is malformed or unusable, cancel the pending intent with a reason, then resume:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation intent cancel --run-id <run-id> --intent-id <intent-id> --reason "malformed generator output"
 ```
@@ -178,7 +178,7 @@ Full prose, related work, and detailed plans belong in the referenced draft log,
 If using direct recording instead of `intent complete`:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   idea draft --run-id <run-id> --json '<canonical idea JSON>'
 ```
@@ -190,7 +190,7 @@ Use Semantic Scholar only when the cursor requests it or when the mode/prompt ma
 Live query:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   idea search-semantic-scholar --run-id <run-id> --idea-id <idea-id> --query "<query>"
 ```
@@ -198,7 +198,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Precomputed evidence payload:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   idea search-semantic-scholar --run-id <run-id> --idea-id <idea-id> --json '<evidence JSON>'
 ```
@@ -206,7 +206,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Batch evidence attachment:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   idea record-evidence-batch --run-id <run-id> --idea-ids idea-001 idea-002 --queries "query 1" "query 2"
 ```
@@ -249,7 +249,7 @@ Allowed verdicts:
 Record verdict:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   idea critic-record --run-id <run-id> --idea-id <idea-id> --json '<critic JSON>'
 ```
@@ -259,7 +259,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 For `REVISE`, either keep the same idea thread:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   idea revise-start --run-id <run-id> --idea-id <idea-id> --reason "<revision reason>"
 ```
@@ -269,7 +269,7 @@ Then spawn a new generator for the revised draft.
 Or abandon it explicitly:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   idea reject --run-id <run-id> --idea-id <idea-id> --reason "abandoned_after_revise"
 ```
@@ -277,7 +277,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 For budget exhaustion on an active idea:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   idea exhaust --run-id <run-id> --idea-id <idea-id> --reason "reflection_budget_exhausted"
 ```
@@ -289,7 +289,7 @@ Rejected/exhausted ideas stay in the audit trail and final `ideas.json` with `ev
 Only finalize the latest draft after a fresh critic verdict matching the latest draft hash.
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation finalize-ready --run-id <run-id>
 ```
@@ -303,7 +303,7 @@ After all requested slots are attempted, or after budget forces stopping, rank c
 Default deterministic ranking:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation rank-candidates --run-id <run-id>
 ```
@@ -311,7 +311,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Optional agent override:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation rank-candidates --run-id <run-id> --mode agent
 ```
@@ -351,7 +351,7 @@ Ranking payload:
 Record ranking:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation rank-finalize --run-id <run-id> --json '<ranking JSON>'
 ```
@@ -371,7 +371,7 @@ Successful completion requires:
 Complete:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation complete --run-id <run-id>
 ```
@@ -379,7 +379,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 If budget was exhausted but at least one researchable candidate exists:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation complete --run-id <run-id> --budget-exhausted
 ```
@@ -387,7 +387,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 If no researchable candidate exists:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation exhaust --run-id <run-id>
 ```
@@ -402,7 +402,7 @@ Terminal statuses:
 Cancel only when the user asks or continuation is impossible:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo <target-repo> \
   ideation cancel --run-id <run-id> --reason "<reason>"
 ```
@@ -412,7 +412,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Run this before reporting a successful research-ready handoff:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py \
+ai-scientist validate run \
   <target-repo> --gate ideation_to_research --run-id <run-id>
 ```
 

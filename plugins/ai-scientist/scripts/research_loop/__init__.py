@@ -1,4 +1,2 @@
-"""Codex-native research-loop orchestration package."""
+"""Compatibility package for AI Scientist research-loop helpers."""
 
-__all__ = ["__version__"]
-__version__ = "0.1.0"

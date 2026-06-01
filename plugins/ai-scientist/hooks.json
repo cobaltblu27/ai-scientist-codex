@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/ideation_hook.py SessionStart"
+            "command": "ai-scientist hooks codex-event SessionStart"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/ideation_hook.py UserPromptSubmit"
+            "command": "ai-scientist hooks codex-event UserPromptSubmit"
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/ideation_hook.py Stop"
+            "command": "ai-scientist hooks codex-event Stop"
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/ideation_hook.py PreToolUse"
+            "command": "ai-scientist hooks codex-event PreToolUse"
           }
         ]
       }
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/ideation_hook.py PostToolUse"
+            "command": "ai-scientist hooks codex-event PostToolUse"
           }
         ]
       }

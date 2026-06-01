@@ -193,8 +193,8 @@ For local development, point your Codex/plugin tooling at `plugins/ai-scientist`
 For hard continuation, install the project-local Codex Stop hook in the target repository:
 
 ```bash
-python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo>
-python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo> --check
+uv run ai-scientist hooks install --project-root <target-repo>
+uv run ai-scientist hooks check --project-root <target-repo>
 ```
 
 The hook is standalone and reads `.ai-scientist/active-run.json` plus
@@ -207,7 +207,7 @@ From this repository root, verify the plugin manifest and the valid minimal fixt
 
 ```bash
 python -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python plugins/ai-scientist/scripts/validate_run.py \
+uv run ai-scientist validate run \
   plugins/ai-scientist/tests/fixtures/valid-minimal \
   --gate all
 ```
@@ -217,7 +217,7 @@ A successful run prints a `PASS` message.
 You can also confirm that negative fixtures fail closed. For example, this should fail because leakage evidence is missing:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py \
+uv run ai-scientist validate run \
   plugins/ai-scientist/tests/fixtures/missing-leakage-evidence \
   --gate research_to_review
 ```
@@ -227,7 +227,7 @@ python plugins/ai-scientist/scripts/validate_run.py \
 The `ideation` skill is backed by an agent-driven loop:
 
 ```text
-plugins/ai-scientist/scripts/ai_scientist_state_cli.py
+uv run ai-scientist
 ```
 
 The current Codex session is the orchestrator. Python only manages deterministic
@@ -250,7 +250,7 @@ Default loop settings are `--num-ideas 10`, `--reflection-budget 10`, and
 Example start:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+uv run ai-scientist \
   --target-repo . \
   ideation start \
   --run-id ideation-001 \
@@ -261,7 +261,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Then continue from the cursor:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+uv run ai-scientist \
   --target-repo . \
   ideation resume --run-id ideation-001 --prompt
 ```
@@ -291,7 +291,7 @@ Expected artifacts:
 Validate the transition into research when the run artifacts are prepared:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate ideation_to_research
+uv run ai-scientist validate run <target-repo> --gate ideation_to_research
 ```
 
 ### Step 2: Plan and run research
@@ -319,7 +319,7 @@ Expected artifacts include:
 Before moving to review, validate:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate research_to_review
+uv run ai-scientist validate run <target-repo> --gate research_to_review
 ```
 
 ### Step 3: Review the run
@@ -343,7 +343,7 @@ Expected artifact:
 Validate the transition into writeup:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate review_to_writeup
+uv run ai-scientist validate run <target-repo> --gate review_to_writeup
 ```
 
 ### Step 4: Write the final report
@@ -360,7 +360,7 @@ Include disclosure, strictness mode, benchmark split, limitations, and reproduci
 Before publication or final launch, validate:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
+uv run ai-scientist validate run <target-repo> --gate launch
 ```
 
 ## Artifact contract
@@ -436,7 +436,7 @@ Requires:
 Validation command:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate ideation_to_research
+uv run ai-scientist validate run <target-repo> --gate ideation_to_research
 ```
 
 ### Research to review
@@ -458,7 +458,7 @@ Requires:
 Validation command:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate research_to_review
+uv run ai-scientist validate run <target-repo> --gate research_to_review
 ```
 
 ### Review to writeup
@@ -477,7 +477,7 @@ Requires:
 Validation command:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate review_to_writeup
+uv run ai-scientist validate run <target-repo> --gate review_to_writeup
 ```
 
 ### Launch or final approval
@@ -500,7 +500,7 @@ Example:
 Validation command:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
+uv run ai-scientist validate run <target-repo> --gate launch
 ```
 
 ## Validator usage
@@ -508,18 +508,18 @@ python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
 Main validator:
 
 ```text
-plugins/ai-scientist/scripts/validate_run.py
+uv run ai-scientist validate run
 ```
 
 Supported gates:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate ideation_to_research
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate research_to_review
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate review_to_writeup
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate launch
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate principles
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate all
+uv run ai-scientist validate run <target> --gate ideation_to_research
+uv run ai-scientist validate run <target> --gate research_to_review
+uv run ai-scientist validate run <target> --gate review_to_writeup
+uv run ai-scientist validate run <target> --gate launch
+uv run ai-scientist validate run <target> --gate principles
+uv run ai-scientist validate run <target> --gate all
 ```
 
 `<target>` can be a target repository, a fixture root, or an `.ai-scientist/` directory.
@@ -578,7 +578,7 @@ When changing the artifact contract, update these together:
 
 1. `plugins/ai-scientist/references/artifact-contract.md`
 2. schemas in `plugins/ai-scientist/schemas/`
-3. `plugins/ai-scientist/scripts/validate_run.py`
+3. `uv run ai-scientist validate run`
 4. positive and negative fixtures in `plugins/ai-scientist/tests/fixtures/`
 5. skill instructions that mention the changed contract
 
@@ -586,7 +586,7 @@ Before claiming a change is complete, run at least:
 
 ```bash
 python -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python plugins/ai-scientist/scripts/validate_run.py plugins/ai-scientist/tests/fixtures/valid-minimal --gate all
+uv run ai-scientist validate run plugins/ai-scientist/tests/fixtures/valid-minimal --gate all
 ```
 
 ## Status

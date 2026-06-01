@@ -9,12 +9,12 @@ This plugin provides Codex-native research workflows inspired by AI-scientist st
 - `review` — evaluate evidence for leakage, split integrity, baseline comparison, and mode criteria.
 - `writeup` — generate a final report with explicit disclosure, limitations, and negative-result handling.
 
-## Python launcher
+## CLI launcher
 
-Command examples use `python` for portability. Replace it with the launcher
-provided by the target environment, such as `uv run python`,
-`conda run -n <env> python`, `micromamba run -n <env> python`, `python3`, or an
-absolute interpreter path. Do not assume a specific environment manager.
+Command examples use the unified `ai-scientist` CLI. From this checkout, run it
+as `uv run ai-scientist ...`; after installation, `ai-scientist ...` is the
+console command. Legacy `plugins/ai-scientist/scripts/*.py` paths remain as thin
+compatibility wrappers for older hooks and docs.
 
 ## Local credentials
 
@@ -28,8 +28,8 @@ AI Scientist can install a project-local Codex Stop hook so active runs cannot
 silently end before their loop state and completion audit pass:
 
 ```bash
-python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo>
-python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo> --check
+ai-scientist hooks install --project-root <target-repo>
+ai-scientist hooks check --project-root <target-repo>
 ```
 
 The hook is standalone: it reads `.ai-scientist/active-run.json` and
@@ -41,11 +41,11 @@ active or incomplete phases, and does not depend on OMX or `oh-my-codex`.
 See `references/artifact-contract.md`. Validate run artifacts with:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate ideation_to_research
-python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate research_to_review
-python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate review_to_writeup
-python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate launch
-python plugins/ai-scientist/scripts/validate_run.py <fixture-or-target-repo> --gate principles
+ai-scientist validate run <fixture-or-target-repo> --gate ideation_to_research
+ai-scientist validate run <fixture-or-target-repo> --gate research_to_review
+ai-scientist validate run <fixture-or-target-repo> --gate review_to_writeup
+ai-scientist validate run <fixture-or-target-repo> --gate launch
+ai-scientist validate run <fixture-or-target-repo> --gate principles
 ```
 
 The validator is deterministic and fail-closed: missing evidence, malformed JSON/JSONL, non-approved handoffs, non-zero validator exits, no-go verifier decisions, or incomplete principle traceability return a non-zero exit.
@@ -57,9 +57,9 @@ process that launches nested Codex agents. Use the helper CLI only for state and
 audit mutations:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py --target-repo <target-repo> research start --run-id <run-id>
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py --target-repo <target-repo> resource run --node-id <node-id> --trial-id <trial-id> -- <command>
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py --target-repo <target-repo> selection finalize --selected-node <node-id>
+ai-scientist --target-repo <target-repo> research start --run-id <run-id>
+ai-scientist --target-repo <target-repo> resource run --node-id <node-id> --trial-id <trial-id> -- <command>
+ai-scientist --target-repo <target-repo> selection finalize --selected-node <node-id>
 ```
 
 The helper writes compact v1 artifacts under `.ai-scientist/runs/<run-id>/` and
@@ -72,7 +72,7 @@ The ideation skill is agent-driven. The current Codex session is the long-runnin
 orchestrator; Python only records deterministic state through:
 
 ```bash
-plugins/ai-scientist/scripts/ai_scientist_state_cli.py
+ai-scientist
 ```
 
 Install the project-local Stop hook first. Then start ideation state, use
@@ -88,7 +88,7 @@ plugin defaults from `plugins/ai-scientist/config/config.json`.
 Example:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+ai-scientist \
   --target-repo . \
   ideation start \
   --run-id ideation-001 \
