@@ -77,82 +77,17 @@ with open(args.metrics_out, 'w') as fh:
     return target
 
 
-def orchestrator_args(
-    target: Path,
-    idea_path: Path,
-    *,
-    run_id: str,
-    metric_key: str,
-    metric_direction: str,
-    success_threshold: float,
-    strictness_mode: str = "balanced",
-) -> list[str | Path]:
-    return [
-        *AI_SCIENTIST_CMD,
-        "research-loop",
-        "run",
-        "--target-repo",
-        target,
-        "--idea-json",
-        idea_path,
-        "--run-id",
-        run_id,
-        "--strictness-mode",
-        strictness_mode,
-        "--entry-script",
-        target / "baseline.py",
-        "--dataset-loader",
-        "fixture_loader:load",
-        "--baseline-command",
-        f"{sys.executable} {target / 'baseline.py'} --metrics-out metrics.json --metric-key {metric_key} --value {'1.0' if metric_direction == 'minimize' else '0.5'}",
-        "--metric-key",
-        metric_key,
-        "--metric-direction",
-        metric_direction,
-        "--success-threshold",
-        str(success_threshold),
-        "--split-policy",
-        "fixed fixture train/test split",
-        "--split-manifest",
-        target / "data" / "split-manifest.json",
-        "--max-nodes",
-        "5",
-        "--max-debug-attempts",
-        "1",
-        "--max-improve-attempts",
-        "1",
-        "--max-tuning-attempts",
-        "1",
-        "--max-ablation-attempts",
-        "1",
-        "--max-parallel",
-        "2",
-        "--max-gpus",
-        "1",
-        "--cpu-cores",
-        "2",
-        "--memory-mb",
-        "1024",
-        "--node-timeout-sec",
-        "30",
-        "--agent-runner",
-        "fixture",
-        "--fixture-scenario",
-        "minimize_success" if metric_direction == "minimize" else "success",
-    ]
-
-
 def write_minimal_research_run(target: Path, *, decision: str | None = "approved", direction: str = "maximize") -> Path:
     """Create a compact final-validation fixture matching the v4 research artifact contract."""
     ai = target / ".ai-scientist"
     run = ai / "runs" / "run-001"
     node = run / "nodes" / "node-001"
-    write_json(ai / "config.json", {"strictness_mode": "balanced", "target_repo": str(target), "api_budgets": {"research": 0}})
+    write_json(ai / "config.json", {"strictness_mode": "engineer", "target_repo": str(target), "resources": {"max_parallel": 1}})
     write_json(ai / "ideas" / "ideas.json", {"ideas": [{"id": "fixture-idea", "title": "Fixture"}]})
     metric_key = "accuracy" if direction == "maximize" else "loss"
     baseline_value = 0.50 if direction == "maximize" else 0.50
     candidate_value = 0.70 if direction == "maximize" else 0.30
-    write_json(run / "research-plan.json", {"metric_key": metric_key, "metric_direction": direction, "strictness_mode": "balanced"})
+    write_json(run / "research-plan.json", {"metric_key": metric_key, "metric_direction": direction, "strictness_mode": "engineer"})
     write_json(run / "dependency-plan.json", {"planned_dependencies": []})
     write_json(run / "dependency-status.json", {"status": "approved", "dependencies": []})
     (run / "api-ledger.jsonl").parent.mkdir(parents=True, exist_ok=True)
@@ -164,14 +99,14 @@ def write_minimal_research_run(target: Path, *, decision: str | None = "approved
     write_json(run / "baseline" / "leakage_check.json", {"passed": True})
     write_json(run / "baseline" / "runtime-mutation-check.json", {"passed": True, "changed_paths": []})
     write_json(run / "baseline" / "resource_usage.json", {"requested": {}, "enforced": {}})
-    write_json(node / "node.json", {"node_id": "node-001", "action": "improve", "strictness_mode": "balanced", "status": "completed"})
-    write_json(node / "prompt.json", {"action": "improve", "strictness_mode": "balanced", "node_id": "node-001", "template_id": "improve", "template_version": "1", "metric_contract": {"metric_key": metric_key, "metric_direction": direction}})
+    write_json(node / "node.json", {"node_id": "node-001", "action": "improve", "strictness_mode": "engineer", "status": "completed"})
+    write_json(node / "prompt.json", {"action": "improve", "strictness_mode": "engineer", "node_id": "node-001", "template_id": "improve", "template_version": "1", "metric_contract": {"metric_key": metric_key, "metric_direction": direction}})
     write_json(node / "metrics.json", {metric_key: candidate_value, "score": candidate_value})
     (node / "command.log").write_text("node ok\n")
     write_json(node / "split_integrity.json", {"passed": True})
     write_json(node / "leakage_check.json", {"passed": True})
     write_json(node / "result_summary.json", {"summary": "candidate improved"})
-    write_json(node / "mode_deliverables.json", {"balanced": {"rationale": True, "split_leakage_evidence": True, "result_summary": True}})
+    write_json(node / "mode_deliverables.json", {"engineer": {"rationale": True, "split_leakage_evidence": True, "result_summary": True}})
     write_json(node / "runtime-mutation-check.json", {"passed": True, "changed_paths": []})
     write_json(node / "resource_usage.json", {"requested": {"gpus": 1}, "enforced": {"gpus": 1}})
     write_json(run / "selection.json", {"selected_node": "node-001", "metric_key": metric_key, "metric_direction": direction, "baseline_metric": baseline_value, "selected_metric": candidate_value, "comparison": ">" if direction == "maximize" else "<", "threshold_passed": True})
@@ -181,11 +116,11 @@ def write_minimal_research_run(target: Path, *, decision: str | None = "approved
         {"event": "finish", "node_id": "node-001"},
     ]))
     write_json(run / "journal.json", {"events": [{"event": "finalized"}]})
-    from research.loop.handoff import artifact_snapshot
+    from legacy.research_loop_v1.handoff import artifact_snapshot
 
     snapshot = artifact_snapshot(run)
     validation = {"gate": "research_to_review", "validation_mode": "evidence", "exit_code": 0, "selected_node": "node-001", "metric_key": metric_key, "metric_direction": direction, "artifact_snapshot": snapshot}
-    write_json(run / "run-status.json", {"strictness_mode": "balanced", "last_validation": validation, "last_validations": {"research_to_review": validation}})
+    write_json(run / "run-status.json", {"strictness_mode": "engineer", "last_validation": validation, "last_validations": {"research_to_review": validation}})
     (run / "handoff.jsonl").write_text(json.dumps({"gate": "research_to_review", "from_phase": "research", "to_phase": "review", "approved": True, "validator_exit_code": 0, "approved_at": "2026-05-07T00:00:00Z", "artifact_snapshot": snapshot}) + "\n")
     write_json(run / "verifier-decision.json", {"decision": "go", "blockers": []})
     if decision is not None:

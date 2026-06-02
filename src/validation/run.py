@@ -12,20 +12,23 @@ from typing import Any
 from core.state import evaluate_completion, journal_has_event, node_evidence_fingerprint, node_fresh_critic_reason, validate_node_contract
 
 ALLOWED_DEP_STATUSES = {"approved", "rejected", "not_needed"}
-MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
-PAPER_MODES = {"scientist", "researcher"}
-PRACTICAL_MODES = {"balanced", "builder", "engineer"}
+MODES = {"scientist", "engineer", "custom"}
+PAPER_MODES = {"scientist"}
+PRACTICAL_MODES = {"engineer"}
 PAPER_OUTCOME_TYPES = {"hypothesis_supported", "hypothesis_failed_with_evidence", "rescue_finding_with_failed_hypothesis"}
 OUTCOME_TYPES = PAPER_OUTCOME_TYPES | {"practical_improvement"}
 REQUIRED_CONTRACT_KEYS = {
     "primary_hypothesis",
+    "goal_type",
     "success_criteria",
     "failure_criteria",
     "allowed_rescue_scope",
     "kill_criteria",
+    "non_drift_definition",
     "metrics_that_matter",
     "non_negotiable_comparisons",
 }
+PERFORMANCE_GOAL_TERMS = {"performance", "model_performance", "enhanced_model_performance", "benchmarking"}
 DEFAULT_CRITIC_AGENT = {"model": "gpt-5.5", "reasoning_effort": "xhigh", "required": True}
 REQUIRED_ACCEPTANCE_CHECKS = {
     "metric_contract_valid",
@@ -100,12 +103,11 @@ def check_config(root: Path, run: Path) -> dict[str, Any]:
     cfg_path = run / "config.json"
     cfg = load_json(cfg_path if cfg_path.exists() else root / "config.json")
     if cfg.get("strictness_mode") not in MODES:
-        raise ValidationError("config.json strictness_mode must be one of the five modes")
+        raise ValidationError("config.json strictness_mode must be scientist, engineer, or custom")
     if not cfg.get("target_repo"):
         raise ValidationError("config.json target_repo is required")
-    budgets = cfg.get("api_budgets")
-    if not isinstance(budgets, dict) or not budgets:
-        raise ValidationError("config.json api_budgets must be a non-empty object")
+    if cfg.get("strictness_mode") == "custom" and not cfg.get("custom_criteria"):
+        raise ValidationError("custom mode requires custom_criteria")
     return cfg
 
 def check_last_validation(run: Path, gate: str) -> dict[str, Any]:
@@ -119,7 +121,7 @@ def check_last_validation(run: Path, gate: str) -> dict[str, Any]:
     status = load_json(run / "run-status.json")
     mode = status.get("strictness_mode")
     if mode not in MODES:
-        raise ValidationError("run-status.json strictness_mode must be one of the five modes")
+        raise ValidationError("run-status.json strictness_mode must be scientist, engineer, or custom")
     validations = status.get("last_validations")
     last = validations.get(gate) if isinstance(validations, dict) else None
     if not isinstance(last, dict):
@@ -171,8 +173,43 @@ def idea_is_researchable(idea: dict[str, Any], preset: dict[str, Any]) -> bool:
     if evaluation == "ACCEPTED":
         return True
     if evaluation == "ACCEPTED_WITHOUT_REFERENCE":
+        contract = idea.get("research_contract") if isinstance(idea.get("research_contract"), dict) else {}
+        if contract_is_performance(contract) and not contract_has_baseline_reference(contract):
+            return False
         return bool(preset.get("allow_selection_without_reference"))
     return False
+
+
+def contract_is_performance(contract: dict[str, Any]) -> bool:
+    goal_type = str(contract.get("goal_type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return goal_type in PERFORMANCE_GOAL_TERMS or "performance" in goal_type
+
+
+def contract_has_baseline_reference(contract: dict[str, Any]) -> bool:
+    baseline = contract.get("baseline_reference")
+    if not isinstance(baseline, dict) or not baseline:
+        return False
+    if not baseline.get("usability"):
+        return False
+    return any(baseline.get(key) for key in ("title", "paper", "model", "source", "citation", "url", "doi"))
+
+
+def validate_idea_research_contract(idea: dict[str, Any]) -> None:
+    if idea.get("evaluation") not in {"ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"}:
+        return
+    contract = idea.get("research_contract")
+    if not isinstance(contract, dict) or not contract:
+        raise ValidationError(f"accepted idea missing research_contract: {idea.get('id')}")
+    missing = sorted(key for key in REQUIRED_CONTRACT_KEYS if not contract.get(key))
+    if missing:
+        raise ValidationError(f"accepted idea research_contract missing fields: {idea.get('id')}:{', '.join(missing)}")
+    if contract_is_performance(contract):
+        if not contract_has_baseline_reference(contract):
+            raise ValidationError(f"performance idea missing usable baseline_reference: {idea.get('id')}")
+        if not contract.get("benchmark_plan"):
+            raise ValidationError(f"performance idea missing benchmark_plan: {idea.get('id')}")
+        if not contract.get("target_threshold"):
+            raise ValidationError(f"performance idea missing target_threshold: {idea.get('id')}")
 
 
 def artifact_snapshot(run: Path) -> str:
@@ -208,6 +245,7 @@ def check_ideation_to_research(root: Path, run: Path) -> None:
             raise ValidationError(f"terminal idea must include integer score: {idea.get('id')}")
         if preset.get("s2_required") and idea.get("evaluation") == "ACCEPTED" and int(idea.get("literature_search_count") or 0) <= 0:
             raise ValidationError(f"ACCEPTED idea missing required literature evidence: {idea.get('id')}")
+        validate_idea_research_contract(idea)
     if isinstance(cfg.get("dependency_plan"), dict):
         plan = cfg["dependency_plan"]
     else:
@@ -285,7 +323,7 @@ def check_research_contract(cfg: dict[str, Any]) -> None:
         return
     contract = cfg.get("research_contract")
     if not isinstance(contract, dict) or not contract:
-        raise ValidationError("research_contract is required for scientist/researcher")
+        raise ValidationError("research_contract is required for scientist")
     missing = sorted(key for key in REQUIRED_CONTRACT_KEYS if not contract.get(key))
     if missing:
         raise ValidationError(f"research_contract missing fields: {', '.join(missing)}")
@@ -405,7 +443,7 @@ def check_outcome_and_metric(
     else:
         if not beats:
             raise ValidationError("selected node must beat baseline under declared benchmark")
-        if mode in {"builder", "engineer"}:
+        if mode == "engineer":
             if outcome != "practical_improvement":
                 raise ValidationError(f"{mode} selected node requires practical_improvement outcome")
             strong = node.get("strong_model_evidence") if isinstance(node.get("strong_model_evidence"), dict) else {}
@@ -461,90 +499,49 @@ def check_research_loop_state(root: Path, run: Path) -> None:
     cfg = check_config(root, run)
     if not isinstance(cfg.get("selected_idea_id"), str) or not cfg["selected_idea_id"].strip():
         raise ValidationError("config.json selected_idea_id is required for research")
-    research_cfg = cfg.get("research") if isinstance(cfg.get("research"), dict) else {}
-    target_venue = research_cfg.get("target_venue") if isinstance(research_cfg.get("target_venue"), dict) else {}
-    if target_venue.get("preset") not in {"workshop", "domain_conference", "aaai_ijcai", "top_ml", "custom"}:
-        raise ValidationError("config.json research.target_venue preset is required for research")
-    usage_cap = research_cfg.get("usage_cap") if isinstance(research_cfg.get("usage_cap"), dict) else {}
-    if "block_new_work_at_percent" not in usage_cap:
-        raise ValidationError("config.json research.usage_cap.block_new_work_at_percent is required")
     loop_state = load_json(run / "loop-state.json")
     if loop_state.get("phase") != "research":
         raise ValidationError("loop-state.json phase must be research")
     phase_state = loop_state.get("state")
     if not isinstance(phase_state, dict):
         raise ValidationError("loop-state.json state must be an object")
+    if phase_state.get("mode") != cfg.get("strictness_mode"):
+        raise ValidationError("loop-state.json mode must match config.json strictness_mode")
+    tasks = phase_state.get("tasks") if isinstance(phase_state.get("tasks"), dict) else {}
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict):
+            raise ValidationError(f"task state must be object: {task_id}")
+        if task.get("status") not in {"completed", "cancelled", "failed", "abandoned"}:
+            raise ValidationError(f"unresolved task blocks research_to_review: {task_id}:{task.get('status')}")
+    resources = phase_state.get("resources") if isinstance(phase_state.get("resources"), dict) else {}
+    leases = resources.get("leases") if isinstance(resources.get("leases"), dict) else {}
+    active_leases = [
+        str(lease_id)
+        for lease_id, lease in leases.items()
+        if not isinstance(lease, dict) or str(lease.get("status") or "acquired") in {"acquired", "running"}
+    ]
+    if active_leases:
+        raise ValidationError(f"active resource leases block research_to_review: {', '.join(sorted(active_leases))}")
     nodes = phase_state.get("nodes")
     if not isinstance(nodes, dict) or not nodes:
         raise ValidationError("loop-state.json must contain at least one node")
-    selected_node = phase_state.get("selected_node")
+    selection_state = phase_state.get("selection")
+    if not isinstance(selection_state, dict) or selection_state.get("status") != "final":
+        raise ValidationError("loop-state.json selection must be final")
+    selected_node = selection_state.get("selected_node") or phase_state.get("selected_node")
     if not isinstance(selected_node, str) or not selected_node:
         raise ValidationError("loop-state.json selected_node is required")
-    selection = load_json(run / "selection.json")
-    if selection.get("selection_status") != "final" or selection.get("selected_node") != selected_node:
-        raise ValidationError("selection.json must finalize the selected node")
-    if selection.get("metric_direction") not in {"maximize", "minimize"}:
-        raise ValidationError("selection.json metric_direction must be maximize or minimize")
-    accepted_nodes = [node_id for node_id, node_state in nodes.items() if isinstance(node_state, dict) and node_state.get("status") == "accepted"]
-    ranked_nodes = selection.get("ranked_nodes")
-    if not isinstance(ranked_nodes, list):
-        raise ValidationError("selection.json ranked_nodes must be a list")
-    ranked_ids = {item.get("node_id") for item in ranked_nodes if isinstance(item, dict)}
-    missing_ranked = sorted(set(accepted_nodes) - ranked_ids)
-    if missing_ranked:
-        raise ValidationError(f"selection.json missing accepted nodes: {', '.join(missing_ranked)}")
-    baseline_score = metric_score(load_json(run / "baseline" / "metrics.json"))
-    mode = cfg["strictness_mode"]
-    selected_score = None
-    for node_id, node_state in nodes.items():
-        if not isinstance(node_state, dict):
-            raise ValidationError(f"loop-state node must be object: {node_id}")
-        status = node_state.get("status")
-        node_json_path = run / "nodes" / node_id / "node.json"
-        if status == "accepted":
-            critic_reason = node_fresh_critic_reason(node_id, node_state, required_verdict="ACCEPT")
-            if critic_reason:
-                raise ValidationError(critic_reason)
-            node_doc = load_json(node_json_path)
-            critic_reason = node_fresh_critic_reason(node_id, node_doc, required_verdict="ACCEPT")
-            if critic_reason:
-                raise ValidationError(critic_reason)
-            reason = validate_node_contract(node_id, node_doc, official_status="accepted")
-            if reason:
-                raise ValidationError(f"node.json invalid for {node_id}: {reason}")
-            if node_doc.get("requires_worker_repair") is True:
-                raise ValidationError(f"accepted node has unresolved repair: {node_id}")
-            check_required_critic_roles(run, cfg, node_id, node_doc)
-            metrics = node_doc.get("metrics")
-            if isinstance(metrics, dict):
-                score = metric_score(metrics)
-                if node_id == selected_node:
-                    selected_score = score
-                    selected_node_doc = node_doc
-            if mode in {"scientist", "researcher"}:
-                novelty = node_doc.get("novelty")
-                if not isinstance(novelty, dict) or novelty.get("pass") is not True:
-                    raise ValidationError(f"novelty evidence must pass for {mode}: {node_id}")
-        elif status in {"invalid", "rejected"}:
-            expected_verdict = "INVALID" if status == "invalid" else "REJECT"
-            critic_reason = node_fresh_critic_reason(node_id, node_state, required_verdict=expected_verdict)
-            if critic_reason:
-                raise ValidationError(critic_reason)
-            node_doc = load_json(node_json_path)
-            critic_reason = node_fresh_critic_reason(node_id, node_doc, required_verdict=expected_verdict)
-            if critic_reason:
-                raise ValidationError(critic_reason)
-            if not (node_state.get("rejection_reason") or node_state.get("failure_signature")):
-                raise ValidationError(f"rejected/invalid node missing reason: {node_id}")
-        else:
-            raise ValidationError(f"unresolved node state blocks research_to_review: {node_id}:{status}")
-    if selected_score is None:
-        raise ValidationError("selected node metrics.score is required")
-    direction = selection["metric_direction"]
-    selected_node_doc = locals().get("selected_node_doc")
-    if not isinstance(selected_node_doc, dict):
-        raise ValidationError("selected node document is required")
-    check_outcome_and_metric(cfg, selected_node_doc, selected_score=selected_score, baseline_score=baseline_score, direction=direction, selected_node=selected_node)
+    if selected_node not in nodes:
+        raise ValidationError("selected node is missing from loop-state nodes")
+    selected = nodes[selected_node]
+    if not isinstance(selected, dict):
+        raise ValidationError("selected node state must be an object")
+    if selected.get("status") != "accepted":
+        raise ValidationError("selected node must be accepted")
+    if (run / "selection.json").exists():
+        selection = load_json(run / "selection.json")
+        if selection.get("status") != "final" or selection.get("selected_node") != selected_node:
+            raise ValidationError("selection.json must finalize the selected node")
     check_loop_completion(root, run, "research")
 
 

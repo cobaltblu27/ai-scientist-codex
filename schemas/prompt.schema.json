@@ -21,10 +21,8 @@
     "strictness_mode": {
       "enum": [
         "scientist",
-        "researcher",
-        "balanced",
-        "builder",
-        "engineer"
+        "engineer",
+        "custom"
       ]
     },
     "node_id": {

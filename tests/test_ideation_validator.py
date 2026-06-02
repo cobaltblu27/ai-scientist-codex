@@ -22,6 +22,23 @@ def proposal_grade_idea() -> dict:
         "id": "idea-001",
         "title": "Benchmark-Preserving Leakage-Aware Intervention",
         "hypothesis": "A benchmark-preserving intervention will improve held-out accuracy while reducing leakage-driven error compared with the named baseline.",
+        "research_contract": {
+            "primary_hypothesis": "A benchmark-preserving intervention improves held-out accuracy while reducing leakage-driven error compared with the named baseline.",
+            "goal_type": "performance",
+            "success_criteria": "The intervention improves held-out accuracy over the named baseline and matched ablation under the fixed split with passing leakage checks.",
+            "failure_criteria": "A fully implemented intervention with matched ablation fails to improve held-out accuracy under the fixed split and passing leakage checks.",
+            "allowed_rescue_scope": "Only explicitly disclosed leakage or benchmark hygiene findings are allowed as rescues.",
+            "kill_criteria": "Stop rather than drift if comparable held-out accuracy cannot be measured under the fixed split.",
+            "non_drift_definition": "A dataset inspection report or weak negative result without the fixed-split intervention comparison is claim drift.",
+            "metrics_that_matter": ["held-out accuracy"],
+            "non_negotiable_comparisons": ["named baseline", "matched ablation", "fixed split", "leakage check"],
+            "baseline_reference": {
+                "title": "Benchmark-Preserving Experiment Design",
+                "usability": "Use the paper's fixed-split benchmark discipline as the baseline comparison protocol.",
+            },
+            "benchmark_plan": "Run baseline, intervention, and matched ablation on the same fixed split and compare held-out accuracy with leakage checks.",
+            "target_threshold": "Intervention must beat baseline and matched ablation on held-out accuracy under the fixed split.",
+        },
         "scientific_insight": "The proposal isolates whether the measured improvement comes from a mechanism that changes generalization behavior rather than from hidden split drift, extra data access, or broader capacity. It predicts a measurable accuracy improvement only when the mechanism is present and the benchmark policy is fixed.",
         "related_work": "Benchmark-Preserving Experiment Design motivates fixed split comparisons, while Leakage-Aware Model Evaluation shows why leakage checks must accompany held-out metrics. This proposal differs by requiring both papers' controls in the ideation acceptance criteria.",
         "abstract": "This proposal tests a small benchmark-preserving intervention under fixed data access and evaluation rules. It compares the existing baseline, the proposed method, and a matched ablation on held-out accuracy while logging split integrity and leakage evidence. The expected result is not only a metric gain but a pattern of failures that supports or weakens the hypothesized mechanism. The work is intentionally narrow so a later research-loop agent can implement and audit it without inventing new scientific assumptions.",
@@ -128,7 +145,7 @@ class IdeationValidatorTests(unittest.TestCase):
             self.assertEqual(ledger[0]["provider"], "semantic_scholar")
             self.assertFalse(ledger[0]["cached"])
 
-    def test_finalize_ideation_writes_valid_gate_artifacts(self) -> None:
+    def test_legacy_finalize_ideation_fails_modern_gate(self) -> None:
         with TemporaryDirectory() as td:
             target = Path(td)
             (target / "README.md").write_text("fixture target\n")
@@ -145,8 +162,8 @@ class IdeationValidatorTests(unittest.TestCase):
             state = ideation_state.add_finalized_idea(target, state, proposal_grade_idea())
             result = finalize_ideation.finalize_ideation(target, state, PLUGIN_ROOT)
 
-            self.assertTrue(result["ok"], result)
-            self.assertEqual(read_json(target / ".ai-scientist" / "runs" / "ideation-test" / "run-status.json")["status"], "validated")
+            self.assertFalse(result["ok"], result)
+            self.assertEqual(read_json(target / ".ai-scientist" / "runs" / "ideation-test" / "run-status.json")["status"], "validation_failed")
             self.assertEqual(len(read_json(target / ".ai-scientist" / "ideas" / "ideas.json")["ideas"]), 1)
 
 

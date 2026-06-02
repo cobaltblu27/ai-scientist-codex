@@ -90,15 +90,12 @@ Use this when you want Codex to run bounded experiments for a selected idea whil
 
 It manages:
 
-- dependency planning before execution
-- approval state for dependencies
-- API budgeting and `journal.jsonl` API-call records
-- baseline evidence
-- experiment node evidence
-- leakage checks
-- split integrity checks
-- result summaries
-- mode-specific deliverables
+- an orchestrator cursor kept alive by the Stop hook
+- checkpointed worker, critic, revision-worker, and revision-critic work records
+- mode-specific prompt paths under `prompts/research-loop/`
+- explicit resource leases for experiment commands
+- command, metric, and result evidence in `journal.jsonl`
+- final selection and completion audit evidence
 - phase-gate validation
 
 No research mode permits leakage, split manipulation, or deceptive scoring.
@@ -163,8 +160,11 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 │   ├── principles.schema.json
 │   ├── run-status.schema.json
 │   └── verifier-decision.schema.json
+├── prompts/
+│   └── research-loop/
 ├── skills/
 │   ├── ideation/SKILL.md
+│   ├── research-loop-legacy/SKILL.md
 │   ├── research-loop/SKILL.md
 │   ├── review/SKILL.md
 │   └── writeup/SKILL.md
@@ -241,7 +241,9 @@ state, Semantic Scholar recording, validation, and handoff artifacts:
    orchestrator.
 3. Native Codex subagents generate ideas, critique drafts, and rank candidates.
 4. Helper commands record drafts, Semantic Scholar evidence, critic verdicts,
-   final idea decisions, ranking, and terminal run state.
+   final idea decisions, ranking, and terminal run state. Accepted ideas include
+   a `research_contract` that freezes the hypothesis, success/failure criteria,
+   non-drift rule, metrics, and comparisons for the later research loop.
 5. The project-local Stop hook blocks ending until ideation reaches
    `COMPLETED`, `COMPLETED_BUDGET_EXHAUSTED`, `EXHAUSTED_NO_CANDIDATE`, or
    `CANCELLED`.
@@ -304,7 +306,7 @@ Example prompt:
 
 ```text
 Run research-loop for idea-001 on this repository.
-Preserve the benchmark split, plan dependencies first, and use balanced mode.
+Preserve the benchmark split, use scientist mode, and run experiments through resource leases.
 ```
 
 Expected artifacts include:
@@ -312,10 +314,9 @@ Expected artifacts include:
 ```text
 .ai-scientist/runs/<run-id>/config.json
 .ai-scientist/runs/<run-id>/journal.jsonl
-.ai-scientist/runs/<run-id>/baseline/
-.ai-scientist/runs/<run-id>/nodes/
 .ai-scientist/runs/<run-id>/loop-state.json
-.ai-scientist/runs/<run-id>/run-status.json
+.ai-scientist/runs/<run-id>/selection.json
+.ai-scientist/runs/<run-id>/logs/resources/
 ```
 
 Before moving to review, validate:
@@ -380,19 +381,11 @@ A typical run looks like this:
     <run-id>/
       config.json
       journal.jsonl
-      run-status.json
-      verifier-decision.json
-      principles.json
-      baseline/
-        metrics.json
-        command.log
-      nodes/
-        <node-id>/
-          metrics.json
-          command.log
-          split-integrity.json
-          leakage-check.json
-          result-summary.json
+      loop-state.json
+      selection.json
+      logs/
+        resources/
+        tasks/
       review/
         structured-review.json
 ```
@@ -405,15 +398,13 @@ references/artifact-contract.md
 
 ## Strictness modes
 
-The research loop supports five strictness modes:
+The canonical research loop supports three modes:
 
 | Mode | Purpose | Acceptance meaning |
 | --- | --- | --- |
 | `scientist` | Strongest evidence standard: multi-seed reproducibility, strict ablation, hypothesis-causality evidence, leakage/split checks. | Credible research claim. |
-| `researcher` | Paper-oriented evidence with some pragmatic tuning after hypothesis validation. | Research-style evidence with disclosed pragmatism. |
-| `balanced` | Baseline beat with leakage/split checks and lightweight ablation or sensitivity evidence. | Honest useful finding. |
-| `builder` | Practical held-out improvement with baseline comparison and leakage/split checks. | Strong practical candidate. |
 | `engineer` | Aggressive tuning and selection allowed with fixed benchmark/split and tuning log. | Strong usable model, not a paper claim. |
+| `custom` | User-provided `custom_criteria` define the acceptance bar. | Accepted only against those criteria and universal integrity rules. |
 
 No mode permits leakage, split manipulation, or deceptive metrics.
 
@@ -426,6 +417,9 @@ Every transition is intended to fail closed if required evidence is missing or i
 Requires:
 
 - at least one researchable candidate in `runs/<run-id>/ideas.json`
+- accepted candidates include a `research_contract`; performance-focused
+  candidates include a usable baseline reference, benchmark plan, and target
+  threshold
 - `config.json` with strictness mode, target repo, and API budgets
 - `config.json` with dependency plan entries marked as one of:
   - `approved`
@@ -445,15 +439,11 @@ uv run ai-scientist validate run <target-repo> --gate ideation_to_research
 
 Requires:
 
-- baseline metrics and command log
-- at least one experiment node
-- node command logs
-- node metrics
-- split integrity evidence
-- leakage evidence
-- result summary
-- mode-specific deliverables
-- best node beats baseline under the declared benchmark
+- completed research loop state
+- no unresolved checkpointed work
+- no active resource leases
+- final selection pointing at an accepted node/outcome
+- completion audit evidence
 - approved `journal.jsonl` handoff record
 - passing validator result
 

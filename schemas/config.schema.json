@@ -5,11 +5,7 @@
     "schema_version",
     "run_id",
     "strictness_mode",
-    "target_repo",
-    "api_budgets",
-    "workspace",
-    "dependency_plan",
-    "benchmark_contract"
+    "target_repo"
   ],
   "properties": {
     "schema_version": {
@@ -21,10 +17,8 @@
     "strictness_mode": {
       "enum": [
         "scientist",
-        "researcher",
-        "balanced",
-        "builder",
-        "engineer"
+        "engineer",
+        "custom"
       ]
     },
     "target_repo": {
@@ -37,7 +31,7 @@
       "type": "string"
     },
     "api_budgets": {
-      "description": "Per-service phase budgets such as semantic_scholar.max_calls.",
+      "description": "Optional per-service phase budgets such as semantic_scholar.max_calls.",
       "type": "object",
       "additionalProperties": true
     },
@@ -117,10 +111,12 @@
       "type": "object",
       "properties": {
         "primary_hypothesis": {"type": "string"},
+        "goal_type": {"type": "string"},
         "success_criteria": {},
         "failure_criteria": {},
         "allowed_rescue_scope": {},
         "kill_criteria": {},
+        "non_drift_definition": {},
         "metrics_that_matter": {},
         "non_negotiable_comparisons": {}
       },
@@ -141,6 +137,9 @@
         "critic_gate": {
           "type": "object",
           "additionalProperties": true
+        },
+        "baseline_worker_prompt": {
+          "type": "string"
         }
       },
       "additionalProperties": true
@@ -149,6 +148,20 @@
       "type": "object",
       "additionalProperties": true
     },
+    "arguments": {
+      "description": "Frozen research-loop skill arguments for the run.",
+      "type": "object",
+      "properties": {
+        "target_repo": {"type": "string"},
+        "target_idea": {},
+        "selected_idea_id": {"type": "string"},
+        "python_environment": {},
+        "mode": {"enum": ["scientist", "engineer", "custom"]},
+        "target_venue": {}
+      },
+      "additionalProperties": true
+    },
+    "custom_criteria": {},
     "selection": {
       "type": "object",
       "additionalProperties": true

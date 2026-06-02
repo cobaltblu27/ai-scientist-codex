@@ -5,7 +5,7 @@
   "properties": {
     "run_id": {"type": "string"},
     "idea_id": {"type": "string"},
-    "strictness_mode": {"enum": ["scientist", "researcher", "balanced", "builder", "engineer"]},
+    "strictness_mode": {"enum": ["scientist", "engineer", "custom"]},
     "metric_key": {"type": "string", "minLength": 1},
     "metric_direction": {"enum": ["maximize", "minimize"]},
     "success_threshold": {"type": "number"},

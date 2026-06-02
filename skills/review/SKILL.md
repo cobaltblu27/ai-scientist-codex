@@ -18,7 +18,7 @@ Use this skill after research-loop artifacts are complete and before writeup.
 - split integrity evidence for every accepted node.
 - leakage evidence for every accepted node.
 - Baseline comparison using the declared benchmark metric and split.
-- Strictness-mode criteria for `scientist`, `researcher`, `balanced`, `builder`, or `engineer` as declared in `run-status.json`.
+- Strictness-mode criteria for `scientist`, `engineer`, or `custom` as declared in the research run config and selection evidence.
 - Command/evidence trail for claimed scores.
 - A verdict: accept, revise, reject, or negative-result.
 

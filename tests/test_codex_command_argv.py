@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-import subprocess
 import unittest
-from unittest import mock
-
-from research.loop import agents
-from research.loop import config as config_module
 
 from test_support import SRC_DIR
 
@@ -31,41 +26,6 @@ class CodexCommandArgvTests(unittest.TestCase):
 
         self.assertNotIn("CodexAgentRunner", text)
         self.assertEqual(subprocess_codex_lines, [])
-
-    def test_research_codex_runner_uses_global_approval_flag(self) -> None:
-        config = config_module.ResearchConfig(
-            target_repo=SRC_DIR,
-            idea_json=None,
-            run_id="run-001",
-            strictness_mode="balanced",
-            entry_script=None,
-            dataset_loader=None,
-            baseline_command="true",
-            metric_key="accuracy",
-            metric_direction="maximize",
-            success_threshold=None,
-            split_policy="fixed",
-            split_manifest=None,
-            max_nodes=1,
-            max_debug_attempts=1,
-            max_improve_attempts=1,
-            max_tuning_attempts=1,
-            max_ablation_attempts=1,
-            max_parallel=1,
-            resources=config_module.ResourceCaps(),
-            node_timeout_sec=30,
-            agent_runner="codex",
-            codex_cmd="codex",
-            codex_model="gpt-5.5",
-            fixture_scenario="success",
-        )
-        with mock.patch.object(agents.subprocess, "run") as run:
-            run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="{}\n", stderr="")
-
-            agents.CodexRunner().run({"action": "draft"}, config)
-
-        cmd = run.call_args.args[0]
-        assert_approval_before_exec(self, cmd)
 
 
 if __name__ == "__main__":

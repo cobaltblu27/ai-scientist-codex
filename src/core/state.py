@@ -465,6 +465,12 @@ def set_active_run(
     codex_session_id: str | None = None,
     codex_thread_id: str | None = None,
 ) -> dict[str, Any]:
+    current = load_active_run(target_repo)
+    if current and current.get("run_id") == run_id:
+        if codex_session_id is None and isinstance(current.get("codex_session_id"), str):
+            codex_session_id = current["codex_session_id"]
+        if codex_thread_id is None and isinstance(current.get("codex_thread_id"), str):
+            codex_thread_id = current["codex_thread_id"]
     payload = {
         "schema_version": 1,
         "run_id": run_id,
@@ -794,35 +800,40 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
     phase_state = state.get("state")
     if not isinstance(phase_state, dict):
         return CompletionResult(False, "research_state_missing", state)
-    if phase_state.get("baseline_status") != "complete":
-        return CompletionResult(False, "research_baseline_incomplete", state)
-    pending_critics = phase_state.get("pending_critics")
-    if isinstance(pending_critics, dict) and pending_critics:
-        return CompletionResult(False, f"research_critics_pending:{','.join(sorted(map(str, pending_critics.keys())))}", state)
-    pending_revision_critics = phase_state.get("pending_revision_critics")
-    if isinstance(pending_revision_critics, dict) and pending_revision_critics:
-        return CompletionResult(False, f"research_revision_critics_pending:{','.join(sorted(map(str, pending_revision_critics.keys())))}", state)
-    revisions = phase_state.get("revisions")
-    if isinstance(revisions, dict):
-        for revision_id, revision in revisions.items():
-            if not isinstance(revision, dict):
-                return CompletionResult(False, f"research_revision_invalid:{revision_id}", state)
-            status = str(revision.get("status") or "")
-            if status in {"pending", "proposed", "critic_pending"}:
-                return CompletionResult(False, f"research_revision_unresolved:{revision_id}:{status}", state)
-            if status == "branch_approved":
-                approved = revision.get("approved_alternative_ids") if isinstance(revision.get("approved_alternative_ids"), list) else []
-                created = revision.get("created_branch_node_ids") if isinstance(revision.get("created_branch_node_ids"), dict) else {}
-                missing = [str(item) for item in approved if str(item) not in created]
-                if missing:
-                    return CompletionResult(False, f"research_revision_branch_missing:{revision_id}:{','.join(missing)}", state)
-    blocked_subagents = nonterminal_subagents(phase_state)
-    if blocked_subagents:
-        return CompletionResult(False, f"research_subagents_unresolved:{','.join(blocked_subagents)}", state)
-    blocked_resources = blocking_resources(phase_state)
-    if blocked_resources:
-        return CompletionResult(False, f"research_resources_unresolved:{','.join(blocked_resources)}", state)
-    selected_node = phase_state.get("selected_node") or state.get("selected_node")
+    baseline = phase_state.get("baseline") if isinstance(phase_state.get("baseline"), dict) else {}
+    if baseline.get("required") is True and baseline.get("status") != "ready":
+        return CompletionResult(False, "research_baseline_not_ready", state)
+    work = phase_state.get("work") if isinstance(phase_state.get("work"), dict) else {}
+    work_terminal_statuses = {"completed", "cancelled", "failed", "abandoned", "accepted", "rejected"}
+    open_work = [
+        str(work_id)
+        for work_id, record in work.items()
+        if not isinstance(record, dict) or str(record.get("status") or "") not in work_terminal_statuses
+    ]
+    if open_work:
+        return CompletionResult(False, f"research_work_unresolved:{','.join(sorted(open_work))}", state)
+    tasks = phase_state.get("tasks") if isinstance(phase_state.get("tasks"), dict) else {}
+    task_terminal_statuses = work_terminal_statuses
+    open_tasks = [
+        str(task_id)
+        for task_id, task in tasks.items()
+        if not isinstance(task, dict) or str(task.get("status") or "") not in task_terminal_statuses
+    ]
+    if open_tasks:
+        return CompletionResult(False, f"research_tasks_unresolved:{','.join(sorted(open_tasks))}", state)
+    resources = phase_state.get("resources") if isinstance(phase_state.get("resources"), dict) else {}
+    leases = resources.get("leases") if isinstance(resources.get("leases"), dict) else {}
+    active_leases = [
+        str(lease_id)
+        for lease_id, lease in leases.items()
+        if not isinstance(lease, dict) or str(lease.get("status") or "acquired") in {"acquired", "running"}
+    ]
+    if active_leases:
+        return CompletionResult(False, f"research_resources_unresolved:{','.join(sorted(active_leases))}", state)
+    selection = phase_state.get("selection")
+    if not isinstance(selection, dict) or selection.get("status") != "final":
+        return CompletionResult(False, "research_selection_not_final", state)
+    selected_node = selection.get("selected_node") or phase_state.get("selected_node") or state.get("selected_node")
     if not has_substantive_value(selected_node):
         return CompletionResult(False, "research_selected_node_missing", state)
     nodes = phase_state.get("nodes")
@@ -830,26 +841,12 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, "research_nodes_missing", state)
     if selected_node not in nodes:
         return CompletionResult(False, "research_selected_node_not_in_state", state)
-    for node_id, node in nodes.items():
-        if not isinstance(node, dict):
-            return CompletionResult(False, f"research_node_state_invalid:{node_id}", state)
-        status = str(node.get("status") or "")
-        if status in NODE_UNRESOLVED_STATUSES:
-            return CompletionResult(False, f"research_node_unresolved:{node_id}", state)
-        if status not in NODE_RESOLVED_STATUSES:
-            return CompletionResult(False, f"research_node_status_invalid:{node_id}", state)
-        critic_reason = node_fresh_critic_reason(node_id, node, required_verdict=NODE_TERMINAL_CRITIC_VERDICTS[status])
-        if critic_reason:
-            return CompletionResult(False, critic_reason, state)
-        if status in {"invalid", "rejected"} and not has_substantive_value(node.get("rejection_reason") or node.get("failure_signature")):
-            return CompletionResult(False, f"research_rejected_node_missing_reason:{node_id}", state)
-    if nodes[selected_node].get("status") != "accepted":
+    selected = nodes[selected_node]
+    if not isinstance(selected, dict):
+        return CompletionResult(False, f"research_node_state_invalid:{selected_node}", state)
+    if selected.get("status") != "accepted":
         return CompletionResult(False, "research_selected_node_not_accepted", state)
-    selected_critic_reason = node_fresh_critic_reason(str(selected_node), nodes[selected_node], required_verdict="ACCEPT")
-    if selected_critic_reason:
-        return CompletionResult(False, selected_critic_reason, state)
-    selection = phase_state.get("selection")
-    if not isinstance(selection, dict) or selection.get("selected_node") != selected_node:
+    if selection.get("selected_node") != selected_node:
         return CompletionResult(False, "research_selection_missing_or_stale", state)
     return CompletionResult(True, "research_state_complete", state)
 
@@ -1004,6 +1001,57 @@ def resolve_target_repo_from_payload(payload: dict[str, Any], cwd: Path | None =
     return (cwd or Path.cwd()).resolve()
 
 
+def payload_identity_value(payload: dict[str, Any], keys: tuple[str, ...], env_keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in env_keys:
+        value = os.environ.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def stop_caller_identity(payload: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
+    payload = payload or {}
+    session_id = payload_identity_value(
+        payload,
+        ("codex_session_id", "codexSessionId", "session_id", "sessionId"),
+        ("CODEX_SESSION_ID", "CODEX_SESSION"),
+    )
+    thread_id = payload_identity_value(
+        payload,
+        ("codex_thread_id", "codexThreadId", "thread_id", "threadId"),
+        ("CODEX_THREAD_ID", "CODEX_THREAD"),
+    )
+    return session_id, thread_id
+
+
+def stop_is_worker_context(payload: dict[str, Any] | None = None) -> bool:
+    payload = payload or {}
+    marker = payload.get("ai_scientist_worker") or payload.get("aiScientistWorker")
+    if marker is True or (isinstance(marker, str) and marker.strip().lower() in {"1", "true", "yes"}):
+        return True
+    return os.environ.get("AI_SCIENTIST_WORKER", "").strip().lower() in {"1", "true", "yes"}
+
+
+def active_run_owned_by_caller(active: dict[str, Any], payload: dict[str, Any] | None = None) -> bool | None:
+    owner_session = active.get("codex_session_id")
+    owner_thread = active.get("codex_thread_id")
+    has_owner = isinstance(owner_session, str) and bool(owner_session.strip()) or isinstance(owner_thread, str) and bool(owner_thread.strip())
+    if not has_owner:
+        return None
+    caller_session, caller_thread = stop_caller_identity(payload)
+    if isinstance(owner_session, str) and owner_session.strip() and caller_session == owner_session.strip():
+        return True
+    if isinstance(owner_thread, str) and owner_thread.strip() and caller_thread == owner_thread.strip():
+        return True
+    if caller_session or caller_thread:
+        return False
+    return True
+
+
 def evaluate_stop_decision(target_repo: Path, payload: dict[str, Any] | None = None) -> StopDecision:
     active = load_active_run(target_repo)
     if not active:
@@ -1024,6 +1072,10 @@ def evaluate_stop_decision(target_repo: Path, payload: dict[str, Any] | None = N
         message = f"AI Scientist {phase} is validating run {run_id}. Continue until validation clears active-run.json."
         return StopDecision("block", f"ai_scientist_{phase}_validating", message, run_id, phase, str(state_path))
     if state.get("active") is True:
+        if phase == "research" and stop_is_worker_context(payload):
+            return StopDecision("allow", "ai_scientist_research_worker_stop_ignored", run_id=run_id, phase=phase, state_path=str(state_path))
+        if phase == "research" and active_run_owned_by_caller(active, payload) is False:
+            return StopDecision("allow", "ai_scientist_research_non_orchestrator_stop_ignored", run_id=run_id, phase=phase, state_path=str(state_path))
         phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
         cursor = ""
         if phase in {"research", "writeup"}:

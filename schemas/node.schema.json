@@ -69,7 +69,7 @@
       "additionalProperties": true
     },
     "novelty": {
-      "description": "Required to pass for accepted scientist/researcher nodes.",
+      "description": "Required to pass for accepted scientist nodes.",
       "type": "object",
       "properties": {
         "pass": {

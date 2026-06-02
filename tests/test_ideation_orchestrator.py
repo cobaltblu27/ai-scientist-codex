@@ -16,6 +16,32 @@ VALIDATOR_ARGS = [*CLI_ARGS, "validate", "run"]
 from core.state import evaluate_stop_decision
 
 
+def research_contract(goal_type: str = "performance") -> dict[str, object]:
+    contract: dict[str, object] = {
+        "primary_hypothesis": "The intervention improves held-out score on the declared benchmark.",
+        "goal_type": goal_type,
+        "success_criteria": "Held-out score improves over the reference baseline by at least 0.03 in the declared benchmark.",
+        "failure_criteria": "A fully implemented and validated experiment fails to improve held-out score under the declared benchmark.",
+        "allowed_rescue_scope": "Only explicitly disclosed benchmark hygiene rescue findings are allowed.",
+        "kill_criteria": "Stop when evidence cannot be produced without changing split, benchmark, or environment.",
+        "non_drift_definition": "A report about dataset properties or an underimplemented negative result is claim drift.",
+        "metrics_that_matter": ["score"],
+        "non_negotiable_comparisons": ["baseline", "declared split", "reference paper"],
+    }
+    if goal_type == "performance":
+        contract.update(
+            {
+                "baseline_reference": {
+                    "title": "Reference Benchmark Model",
+                    "usability": "Use the paper's reported protocol to define the comparable held-out score; if the exact score is absent, rerun the benchmark plan below.",
+                },
+                "benchmark_plan": "Run the repository baseline and candidate on the same split and calculate held-out score with the declared metric.",
+                "target_threshold": "Candidate score must beat baseline by at least 0.03.",
+            }
+        )
+    return contract
+
+
 def run_cli(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [*CLI_ARGS, "--target-repo", str(target), *args],
@@ -39,6 +65,7 @@ def idea_payload(idea_id: str, title: str = "Fixture idea") -> dict[str, object]
         "id": idea_id,
         "title": title,
         "hypothesis": "Changing the model update rule will improve the benchmark score.",
+        "research_contract": research_contract(),
         "expected_metric": "score",
         "risks": ["May not improve over baseline"],
         "novelty_rationale": "The combination has not been tested in this repository.",
@@ -63,6 +90,7 @@ def compact_payload(idea_id: str, title: str, family_key: str | None = None, *, 
         "family_key": family_key or idea_id,
         "title": title,
         "hypothesis": "This protocol will improve held-out score over the baseline.",
+        "research_contract": research_contract(),
         "unique_protocol": f"Run baseline, apply {title}, compare held-out score.",
         "expected_metric": "score",
         "smoke_runnable_now": True,
@@ -258,6 +286,65 @@ class AgentDrivenIdeationTests(unittest.TestCase):
 
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("critic_stale_for_current_idea", completed.stdout)
+
+    def test_contract_alias_is_persisted_as_research_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
+            payload = compact_payload("idea-001", "Alias contract")
+            payload["contract"] = payload.pop("research_contract")
+            payload["contract"]["extra_nested"] = {"kept": True}
+
+            drafted = run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload))
+
+            self.assertEqual(drafted.returncode, 0, drafted.stderr + drafted.stdout)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            contract = state["state"]["idea_states"]["idea-001"]["latest_draft"]["research_contract"]
+            self.assertTrue(contract["extra_nested"]["kept"])
+            self.assertNotIn("contract", state["state"]["idea_states"]["idea-001"]["latest_draft"])
+
+    def test_accept_blocks_without_research_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
+            payload = compact_payload("idea-001", "Missing contract")
+            payload.pop("research_contract")
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+
+            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+
+            self.assertNotEqual(finalized.returncode, 0)
+            self.assertIn("research_contract_required", finalized.stdout)
+
+    def test_performance_contract_requires_baseline_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
+            payload = compact_payload("idea-001", "No baseline")
+            payload["research_contract"].pop("baseline_reference")
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+
+            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+
+            self.assertNotEqual(finalized.returncode, 0)
+            self.assertIn("performance_contract_baseline_reference_required", finalized.stdout)
+
+    def test_non_performance_contract_accepts_hard_natural_language_criteria(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
+            payload = compact_payload("idea-001", "Leakage probe")
+            payload["research_contract"] = research_contract("leakage")
+            payload["research_contract"]["success_criteria"] = "Detect leakage only if a control model predicts labels from split identifiers with statistically significant lift across held-out folds."
+            payload["research_contract"]["failure_criteria"] = "A fully implemented leakage audit finds no statistically meaningful split-derived signal under the declared controls."
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+
+            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+
+            self.assertEqual(finalized.returncode, 0, finalized.stderr + finalized.stdout)
 
     def test_successful_engineer_ideation_validates_and_stop_hook_allows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

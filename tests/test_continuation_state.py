@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -129,6 +130,40 @@ class ContinuationStateTests(unittest.TestCase):
             self.assertTrue(journal.exists())
             records = [json.loads(line) for line in journal.read_text().splitlines()]
             self.assertEqual(records[-1]["event_type"], "stop_hook")
+
+    def test_owned_active_research_blocks_orchestrator_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start_phase(target, "run-001", "research", {"baseline_status": "running"})
+            set_active_run(target, "run-001", "research", "active", codex_thread_id="orchestrator-thread")
+
+            decision = evaluate_stop_decision(target, {"thread_id": "orchestrator-thread"})
+
+            self.assertEqual(decision.decision, "block")
+            self.assertEqual(decision.reason, "ai_scientist_research_active")
+
+    def test_owned_active_research_allows_non_orchestrator_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start_phase(target, "run-001", "research", {"baseline_status": "running"})
+            set_active_run(target, "run-001", "research", "active", codex_thread_id="orchestrator-thread")
+
+            decision = evaluate_stop_decision(target, {"thread_id": "worker-thread"})
+
+            self.assertEqual(decision.decision, "allow")
+            self.assertEqual(decision.reason, "ai_scientist_research_non_orchestrator_stop_ignored")
+
+    def test_worker_marker_allows_active_research_stop_without_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start_phase(target, "run-001", "research", {"baseline_status": "running"})
+            set_active_run(target, "run-001", "research", "active", codex_thread_id="orchestrator-thread")
+
+            with mock.patch.dict("os.environ", {"AI_SCIENTIST_WORKER": "1"}):
+                decision = evaluate_stop_decision(target, {})
+
+            self.assertEqual(decision.decision, "allow")
+            self.assertEqual(decision.reason, "ai_scientist_research_worker_stop_ignored")
 
     def test_research_completion_requires_validation_and_handoff_journal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

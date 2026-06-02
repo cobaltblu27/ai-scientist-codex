@@ -212,9 +212,26 @@ Canonical draft payload should include at least:
 ```json
 {
   "id": "idea-001",
-  "family_key": "leakage-aware-optimizer",
+  "family_key": "family_key",
   "title": "Short title",
   "hypothesis": "Concrete hypothesis",
+  "research_contract": {
+    "primary_hypothesis": "The exact hypothesis the research loop must resolve",
+    "goal_type": "performance",
+    "success_criteria": "Hard, non-drifting success rule",
+    "failure_criteria": "Hard rule for when the original hypothesis is genuinely false",
+    "allowed_rescue_scope": "What narrowed findings are allowed, if any",
+    "kill_criteria": "When to stop rather than drift",
+    "non_drift_definition": "What would count as quiet claim drift",
+    "metrics_that_matter": ["score"],
+    "non_negotiable_comparisons": ["baseline", "reference paper"],
+    "baseline_reference": {
+      "title": "Comparable reference paper or model",
+      "usability": "How this reference can be used for baseline calculation"
+    },
+    "benchmark_plan": "How to calculate an apples-to-apples benchmark score in this repo",
+    "target_threshold": "Minimum score or statistical rule required for success"
+  },
   "unique_protocol": "What makes this experiment distinct from same-family ideas",
   "expected_metric": "Metric or benchmark target",
   "smoke_runnable_now": true,
@@ -226,7 +243,7 @@ Canonical draft payload should include at least:
 }
 ```
 
-Full prose, related work, and detailed plans belong in the referenced draft log, not in persisted state or final `ideas.json`.
+Full prose, related work, and detailed plans belong in the referenced draft log, not in persisted state or final `ideas.json`. The `research_contract` is the exception: it must be persisted because research start freezes it as the anti-drift contract for node workers and critics.
 
 </Generator_Agent>
 
@@ -289,6 +306,7 @@ Critic prompt must include:
 - evidence/search results if available
 - previous critic verdict and required revisions if this is a revised draft
 - instruction to return JSON only
+- the requirement that `research_contract` blocks quiet drift from the original goal into a merely valid report or weak negative result
 
 Critic payload schema:
 

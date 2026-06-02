@@ -101,6 +101,23 @@
         "baseline_status": {
           "type": "string"
         },
+        "baseline": {
+          "type": "object",
+          "properties": {
+            "required": {"type": "boolean"},
+            "status": {
+              "enum": ["not_required", "planning", "preparing_split", "calculating_score", "ready", "failed", "abandoned"]
+            },
+            "split_manifest_ref": {"type": "string"},
+            "fixed_split_dir": {"type": "string"},
+            "baseline_score_refs": {"type": "array"},
+            "repo_refs": {"type": "array"}
+          },
+          "additionalProperties": true
+        },
+        "work": {
+          "type": "object"
+        },
         "nodes": {
           "type": "object"
         },

@@ -132,12 +132,20 @@ def accepted_node_payload(score: float = 0.8, novelty: dict | None = None) -> di
 def research_contract() -> dict:
     return {
         "primary_hypothesis": "The intervention improves held-out score on the declared benchmark.",
+        "goal_type": "performance",
         "success_criteria": "Accepted score beats baseline with clean split/leakage evidence.",
         "failure_criteria": "A controlled test proves the hypothesis does not hold under the declared benchmark.",
         "allowed_rescue_scope": "Only explicitly disclosed benchmark hygiene rescue findings are allowed.",
         "kill_criteria": "Stop when evidence cannot be produced without changing split, benchmark, or environment.",
+        "non_drift_definition": "A dataset-inspection report or underimplemented negative result does not satisfy the original performance claim.",
         "metrics_that_matter": ["score"],
         "non_negotiable_comparisons": ["baseline", "declared split", "leakage check"],
+        "baseline_reference": {
+            "title": "Reference Benchmark Model",
+            "usability": "Use the reference protocol to calculate an apples-to-apples held-out score.",
+        },
+        "benchmark_plan": "Run baseline and candidate on the same split and calculate the declared score.",
+        "target_threshold": "Candidate score must beat baseline by at least 0.03.",
     }
 
 
@@ -420,6 +428,76 @@ class ResearchLoopV1Tests(unittest.TestCase):
             state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
             self.assertEqual(state["state"]["selected_idea_id"], "idea-abc")
             self.assertEqual(state["state"]["target_venue"]["preset"], "aaai_ijcai")
+
+    def test_research_start_freezes_selected_idea_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            contract = research_contract()
+            contract["extra_nested"] = {"preserved": True}
+            selected_idea = {
+                "id": "idea-abc",
+                "title": "Contract idea",
+                "hypothesis": "The intervention improves held-out score.",
+                "expected_metric": "score",
+                "research_contract": contract,
+            }
+
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "researcher",
+                "--selected-idea-id",
+                "idea-abc",
+                "--target-venue-preset",
+                "aaai_ijcai",
+                "--token-budget-percent",
+                "87",
+                "--json",
+                json.dumps({"selected_idea": selected_idea}),
+                inject_research_start_defaults=False,
+            )
+
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
+            self.assertEqual(config["research_contract"], contract)
+            self.assertEqual(config["selected_idea"]["research_contract"], contract)
+
+    def test_research_start_synthesizes_legacy_contract_without_idea_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            selected_idea = {
+                "id": "idea-abc",
+                "title": "Legacy idea",
+                "hypothesis": "The intervention improves held-out score.",
+                "expected_metric": "score",
+            }
+
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "researcher",
+                "--selected-idea-id",
+                "idea-abc",
+                "--target-venue-preset",
+                "aaai_ijcai",
+                "--token-budget-percent",
+                "87",
+                "--json",
+                json.dumps({"selected_idea": selected_idea}),
+                inject_research_start_defaults=False,
+            )
+
+            self.assertEqual(start.returncode, 0, start.stderr + start.stdout)
+            config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
+            self.assertEqual(config["research_contract"]["primary_hypothesis"], selected_idea["hypothesis"])
 
     def test_compact_research_loop_validates_and_releases_stop_hook(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

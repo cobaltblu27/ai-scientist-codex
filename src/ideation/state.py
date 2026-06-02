@@ -48,6 +48,7 @@ IDEA_OUTPUT_SCHEMA = {
         "family_key",
         "title",
         "hypothesis",
+        "research_contract",
         "unique_protocol",
         "expected_metric",
         "smoke_runnable_now",
@@ -58,18 +59,30 @@ IDEA_OUTPUT_SCHEMA = {
         "risk_flags",
     ]
 }
+RESEARCH_CONTRACT_REQUIRED_FIELDS = {
+    "primary_hypothesis",
+    "goal_type",
+    "success_criteria",
+    "failure_criteria",
+    "allowed_rescue_scope",
+    "kill_criteria",
+    "non_drift_definition",
+    "metrics_that_matter",
+    "non_negotiable_comparisons",
+}
+PERFORMANCE_GOAL_TERMS = {"performance", "model_performance", "enhanced_model_performance", "benchmarking"}
 
 
 DEFAULT_PROMPTS = {
     "idea_generation_prompt_template": (
         "You are an AI Scientist idea-generation subagent running in {mode} mode.\n"
         "Topic: {prompt}\n"
-        "Produce one canonical research idea for slot {idea_id}. Return structured JSON only."
+        "Produce one canonical research idea for slot {idea_id}. Include research_contract with primary_hypothesis, goal_type, success_criteria, failure_criteria, allowed_rescue_scope, kill_criteria, non_drift_definition, metrics_that_matter, and non_negotiable_comparisons. Performance goals also need baseline_reference, benchmark_plan, and target_threshold. Return structured JSON only."
     ),
     "critic_prompt_template": (
         "You are a short-lived critic for {mode} mode. Review idea {idea_id} draft {draft_version}.\n"
         "Previous verdict: {previous_verdict}\n"
-        "Return JSON only with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags."
+        "Reject or revise drafts whose research_contract permits claim drift, substitutes a valid report for the original goal, or lacks hard success/failure criteria. Return JSON only with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags."
     ),
     "ranking_prompt_template": (
         "Rank terminal ideation candidates for {mode} mode. Return JSON only when agent ranking is explicitly requested; default ranking is deterministic."
@@ -399,11 +412,19 @@ def compact_idea_payload(payload: dict[str, Any], idea_id: str, run_id: str) -> 
     if minimum_command is not None:
         minimum_command = str(minimum_command).strip() or None
     family_key = str(payload.get("family_key") or slug_key(title or hypothesis)).strip()
+    research_contract = payload.get("research_contract")
+    if research_contract is None:
+        research_contract = payload.get("contract")
+    if research_contract is None:
+        research_contract = {}
+    if not isinstance(research_contract, dict):
+        raise IdeationStateError("research_contract must be a JSON object")
     return {
         "id": idea_id,
         "family_key": family_key,
         "title": title,
         "hypothesis": hypothesis,
+        "research_contract": deepcopy(research_contract),
         "unique_protocol": summarize_protocol(payload),
         "expected_metric": expected_metric,
         "smoke_runnable_now": bool(payload.get("smoke_runnable_now")),
@@ -537,6 +558,67 @@ def validate_family_dedup(phase_state: dict[str, Any], candidate_id: str) -> Non
             raise IdeationStateError(f"duplicate_idea_family:{candidate_id}:{idea_id}")
 
 
+def contract_goal_type(contract: dict[str, Any]) -> str:
+    return str(contract.get("goal_type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def is_performance_contract(contract: dict[str, Any]) -> bool:
+    goal_type = contract_goal_type(contract)
+    return goal_type in PERFORMANCE_GOAL_TERMS or "performance" in goal_type
+
+
+def contract_has_baseline_reference(contract: dict[str, Any]) -> bool:
+    baseline = contract.get("baseline_reference")
+    if not isinstance(baseline, dict) or not baseline:
+        return False
+    if not has_substantive_value(baseline.get("usability")):
+        return False
+    return any(has_substantive_value(baseline.get(key)) for key in ("title", "paper", "model", "source", "citation", "url", "doi"))
+
+
+def validate_research_contract(contract: Any, *, require_performance_baseline: bool = True) -> None:
+    if not isinstance(contract, dict) or not contract:
+        raise IdeationStateError("research_contract_required")
+    missing = sorted(key for key in RESEARCH_CONTRACT_REQUIRED_FIELDS if not has_substantive_value(contract.get(key)))
+    if missing:
+        raise IdeationStateError(f"research_contract_missing_fields:{','.join(missing)}")
+    if not has_substantive_value(contract.get("success_criteria")):
+        raise IdeationStateError("research_contract_success_criteria_required")
+    if is_performance_contract(contract):
+        if require_performance_baseline and not contract_has_baseline_reference(contract):
+            raise IdeationStateError("performance_contract_baseline_reference_required")
+        if require_performance_baseline and not has_substantive_value(contract.get("benchmark_plan")):
+            raise IdeationStateError("performance_contract_benchmark_plan_required")
+        if require_performance_baseline and not has_substantive_value(contract.get("target_threshold")):
+            raise IdeationStateError("performance_contract_target_threshold_required")
+
+
+def idea_contract(idea: dict[str, Any]) -> dict[str, Any]:
+    draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
+    contract = draft.get("research_contract")
+    return contract if isinstance(contract, dict) else {}
+
+
+def contract_quality_penalty(idea: dict[str, Any]) -> int:
+    contract = idea_contract(idea)
+    if not contract:
+        return 25
+    try:
+        validate_research_contract(contract, require_performance_baseline=False)
+    except IdeationStateError:
+        return 20
+    success = contract.get("success_criteria")
+    non_drift = contract.get("non_drift_definition")
+    penalty = 0
+    if isinstance(success, str) and len(success.strip()) < 40:
+        penalty += 5
+    if isinstance(non_drift, str) and len(non_drift.strip()) < 40:
+        penalty += 5
+    if is_performance_contract(contract) and not contract_has_baseline_reference(contract):
+        penalty += 20
+    return penalty
+
+
 def terminal_ideas(state: dict[str, Any]) -> list[dict[str, Any]]:
     values = []
     for idea in idea_states(state).values():
@@ -550,6 +632,9 @@ def is_researchable_idea(idea: dict[str, Any], config: dict[str, Any]) -> bool:
     if evaluation == "ACCEPTED":
         return True
     if evaluation == "ACCEPTED_WITHOUT_REFERENCE":
+        contract = idea_contract(idea)
+        if is_performance_contract(contract) and not contract_has_baseline_reference(contract):
+            return False
         return bool(mode_preset(config).get("allow_selection_without_reference"))
     return False
 
@@ -1585,6 +1670,9 @@ def apply_finalized_idea(phase_state: dict[str, Any], idea: dict[str, Any], eval
     idea["score"] = critic["score"]
     idea["rank"] = None
     idea["manual_selection_only"] = evaluation == "ACCEPTED_WITHOUT_REFERENCE" and not preset.get("allow_selection_without_reference")
+    contract = idea_contract(idea)
+    if evaluation == "ACCEPTED_WITHOUT_REFERENCE" and is_performance_contract(contract) and not contract_has_baseline_reference(contract):
+        idea["manual_selection_only"] = True
     idea["updated_at"] = utc_now()
     remove_active_idea(phase_state, str(idea["id"]))
     key = "accepted_without_reference_count" if evaluation == "ACCEPTED_WITHOUT_REFERENCE" else "accepted_count"
@@ -1607,6 +1695,7 @@ def finalize_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None)
         validate_minimum_command(draft, contract)
         validate_family_dedup(phase_state, resolved_id)
         evaluation, status = finalization_decision(idea, preset)
+        validate_research_contract(idea_contract(idea), require_performance_baseline=True)
         apply_finalized_idea(phase_state, idea, evaluation, status, preset)
         increment_iteration(phase_state)
         update_cursor(state, cfg)
@@ -1642,6 +1731,7 @@ def finalize_ready(target_repo: Path, run_id: str, *, idea_ids: list[str] | None
                 raise IdeationStateError(f"duplicate_idea_family:{resolved_id}:{batch_keys[dedup_key]}")
             batch_keys[dedup_key] = resolved_id
             evaluation, status = finalization_decision(idea, preset)
+            validate_research_contract(idea_contract(idea), require_performance_baseline=True)
             decisions.append((resolved_id, evaluation, status))
         for resolved_id, evaluation, status in decisions:
             apply_finalized_idea(phase_state, ideas[resolved_id], evaluation, status, preset)
@@ -1730,12 +1820,14 @@ def deterministic_ranking_payload(state: dict[str, Any], cfg: dict[str, Any]) ->
         penalties += min(20.0, 5.0 * len(as_string_list(draft.get("requires_implementation"))))
         if not has_literature_evidence(idea):
             penalties += 8.0
+        contract_penalty = contract_quality_penalty(idea)
+        penalties += float(contract_penalty)
         score = max(0, min(100, round(base_score - penalties)))
         scored.append(
             {
                 "idea_id": idea["id"],
                 "score": int(score),
-                "score_components": {"base": round(base_score, 2), "penalties": round(penalties, 2), "rubric_scores": rubric},
+                "score_components": {"base": round(base_score, 2), "penalties": round(penalties, 2), "contract_penalty": contract_penalty, "rubric_scores": rubric},
                 "rationale": "Deterministic weighted rubric ranking with runnable, implementation, duplicate, and evidence penalties.",
                 "risk_flags": draft.get("risk_flags", []),
                 "family_key": family,

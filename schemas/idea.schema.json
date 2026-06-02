@@ -12,6 +12,7 @@
           "family_key",
           "title",
           "hypothesis",
+          "research_contract",
           "unique_protocol",
           "expected_metric",
           "smoke_runnable_now",
@@ -32,6 +33,24 @@
           "family_key": {"type": "string"},
           "title": {"type": "string"},
           "hypothesis": {"type": "string"},
+          "research_contract": {
+            "type": "object",
+            "properties": {
+              "primary_hypothesis": {"type": "string"},
+              "goal_type": {"type": "string"},
+              "success_criteria": {},
+              "failure_criteria": {},
+              "allowed_rescue_scope": {},
+              "kill_criteria": {},
+              "non_drift_definition": {},
+              "metrics_that_matter": {},
+              "non_negotiable_comparisons": {},
+              "baseline_reference": {"type": "object"},
+              "benchmark_plan": {},
+              "target_threshold": {}
+            },
+            "additionalProperties": true
+          },
           "unique_protocol": {"type": "string"},
           "expected_metric": {"type": "string"},
           "smoke_runnable_now": {"type": "boolean"},
