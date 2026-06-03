@@ -26,6 +26,7 @@ from core.state import (
     load_json_if_exists,
     load_loop_state,
     mutate_loop_state,
+    node_evidence_fingerprint,
     run_dir,
     run_lock,
     selection_path,
@@ -41,6 +42,8 @@ WORK_TERMINAL_STATUSES = {"completed", "cancelled", "failed", "abandoned", "acce
 TASK_TERMINAL_STATUSES = WORK_TERMINAL_STATUSES
 LEASE_ACTIVE_STATUSES = {"acquired", "running"}
 RESOURCE_KEYS = ("gpus", "cpu_cores", "memory_mb")
+REVISION_BRAINSTORM_SKILL = "skills/revision-brainstorm/SKILL.md"
+CRITIC_METADATA_KEYS = {"critic_ref", "critic_verdict", "critic_completed_at", "critic_result_path", "critic_id", "critic_role"}
 
 
 class ResearchError(ValueError):
@@ -182,6 +185,7 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
             "baseline_worker_prompt": prompt_path_for(mode, "baseline-worker"),
             "critic_prompt": prompt_path_for(mode, "critic"),
             "revision_worker_prompt": prompt_path_for(mode, "revision-worker"),
+            "revision_brainstorm_skill": REVISION_BRAINSTORM_SKILL,
         },
         "created_at": utc_now(),
     }
@@ -194,6 +198,7 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     research = cfg.setdefault("research", {})
     if isinstance(research, dict):
         research.setdefault("baseline_worker_prompt", prompt_path_for(mode, "baseline-worker"))
+        research.setdefault("revision_brainstorm_skill", REVISION_BRAINSTORM_SKILL)
     if research_contract is not None:
         cfg["research_contract"] = research_contract
     if criteria is not None:
@@ -385,6 +390,20 @@ def update_nodes_from_result(phase_state: dict[str, Any], payload: dict[str, Any
                     current["updated_at"] = utc_now()
 
 
+def stamp_critic_fingerprints(phase_state: dict[str, Any], nodes_patch: dict[str, Any]) -> None:
+    nodes = phase_state.get("nodes") if isinstance(phase_state.get("nodes"), dict) else {}
+    for node_id, patch in nodes_patch.items():
+        if not isinstance(patch, dict) or not any(key in patch for key in CRITIC_METADATA_KEYS):
+            continue
+        current = nodes.get(str(node_id))
+        if not isinstance(current, dict):
+            continue
+        fingerprint = node_evidence_fingerprint(current)
+        current["node_evidence_fingerprint"] = fingerprint
+        if "critic_evidence_fingerprint" not in patch:
+            current["critic_evidence_fingerprint"] = fingerprint
+
+
 def cmd_research_start(args: argparse.Namespace) -> int:
     target = target_repo(args)
     payload = load_payload(args)
@@ -461,10 +480,21 @@ def cmd_research_checkpoint(args: argparse.Namespace) -> int:
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
         patch = payload.get("state") if isinstance(payload.get("state"), dict) else payload
-        for key in ("baseline", "work", "tasks", "nodes", "resources", "selection"):
+        for key in ("baseline", "work", "tasks", "resources", "selection"):
             if isinstance(patch.get(key), dict):
                 current = phase_state.setdefault(key, {})
                 current.update(patch[key])
+        if isinstance(patch.get("nodes"), dict):
+            nodes = phase_state.setdefault("nodes", {})
+            for node_id, node_patch in patch["nodes"].items():
+                if isinstance(node_patch, dict):
+                    current_node = nodes.setdefault(str(node_id), {})
+                    current_node.update(node_patch)
+                    current_node.setdefault("node_id", str(node_id))
+                    current_node["updated_at"] = utc_now()
+                else:
+                    nodes[str(node_id)] = node_patch
+            stamp_critic_fingerprints(phase_state, patch["nodes"])
         if isinstance(patch.get("orchestrator"), dict):
             phase_state.setdefault("orchestrator", {}).update(patch["orchestrator"])
         orchestrator = phase_state.setdefault("orchestrator", {})

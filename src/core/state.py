@@ -67,6 +67,7 @@ NODE_EVIDENCE_ADMIN_KEYS = {
     "critic_reviews",
     "node_evidence_fingerprint",
     "rejection_reason",
+    "acceptance_rationale",
     "revision_reason",
     "reason",
     "open_repair_id",
@@ -213,9 +214,7 @@ def node_fresh_critic_reason(node_id: str, node: dict[str, Any], *, required_ver
     if required_verdict is not None and verdict != required_verdict:
         return f"research_node_critic_verdict_invalid:{node_id}:{verdict}"
     fingerprint = node.get("critic_evidence_fingerprint")
-    current_fingerprint = node.get("node_evidence_fingerprint")
-    if not isinstance(current_fingerprint, str):
-        current_fingerprint = node_evidence_fingerprint(node)
+    current_fingerprint = node_evidence_fingerprint(node)
     if not isinstance(fingerprint, str) or fingerprint != current_fingerprint:
         return f"research_node_critic_stale:{node_id}"
     return None
@@ -846,6 +845,9 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, f"research_node_state_invalid:{selected_node}", state)
     if selected.get("status") != "accepted":
         return CompletionResult(False, "research_selected_node_not_accepted", state)
+    critic_reason = node_fresh_critic_reason(str(selected_node), selected, required_verdict="ACCEPT")
+    if critic_reason:
+        return CompletionResult(False, critic_reason, state)
     if selection.get("selected_node") != selected_node:
         return CompletionResult(False, "research_selection_missing_or_stale", state)
     return CompletionResult(True, "research_state_complete", state)

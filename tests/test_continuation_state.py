@@ -16,6 +16,7 @@ from core.state import (
     complete_phase,
     evaluate_stop_decision,
     load_loop_state,
+    node_evidence_fingerprint,
     set_active_run,
     start_phase,
 )
@@ -168,21 +169,21 @@ class ContinuationStateTests(unittest.TestCase):
     def test_research_completion_requires_validation_and_handoff_journal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
+            node = {
+                "status": "accepted",
+                "critic_ref": "logs/critics/critic-node-001.json",
+                "critic_verdict": "ACCEPT",
+            }
+            fingerprint = node_evidence_fingerprint(node)
+            node["critic_evidence_fingerprint"] = fingerprint
+            node["node_evidence_fingerprint"] = fingerprint
             state = start_phase(
                 target,
                 "run-001",
                 "research",
                 {
                     "baseline_status": "complete",
-                    "nodes": {
-                        "node-001": {
-                            "status": "accepted",
-                            "critic_ref": "logs/critics/critic-node-001.json",
-                            "critic_verdict": "ACCEPT",
-                            "critic_evidence_fingerprint": "fp1",
-                            "node_evidence_fingerprint": "fp1",
-                        }
-                    },
+                    "nodes": {"node-001": node},
                     "selected_node": "node-001",
                     "selection": {"status": "final", "selected_node": "node-001"},
                 },

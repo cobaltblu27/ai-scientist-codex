@@ -38,12 +38,37 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("The orchestrator must not implement the node directly", skill_text)
         self.assertIn("first return must be a plan", skill_text)
         self.assertIn("Resource-Heavy Runs", skill_text)
+        self.assertIn("Critic_Revision_Flow", skill_text)
+        self.assertIn("Branching", skill_text)
+        self.assertIn("Research completion is two-stage", skill_text)
+        self.assertIn("custom criteria remain the acceptance standard", skill_text)
+        self.assertIn("allowed_rescue_scope", skill_text)
+        self.assertIn("kill_criteria", skill_text)
+        self.assertIn("baseline/baseline.json` for the run-level authoritative", skill_text)
+        self.assertIn(".ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/", skill_text)
+        self.assertIn("git rev-parse HEAD", skill_text)
+        self.assertIn("git worktree", skill_text)
+        self.assertIn("workspace_artifact_links", skill_text)
+        self.assertIn("copy_with_symlinks", skill_text)
+        self.assertIn("Terminal work statuses are `completed`, `cancelled`, `failed`, `abandoned`, `accepted`, and `rejected`", skill_text)
+        self.assertIn("--gpus <n> --cpu-cores <n> --memory-mb <n> --timeout-sec <seconds> --poll-sec <seconds>", skill_text)
+        self.assertIn("revision_critic_ref", skill_text)
+        self.assertIn("safe to implement or branch from; it does not mean the node itself is accepted", skill_text)
         legacy = REPO_ROOT / "skills" / "research-loop-legacy" / "SKILL.md"
         self.assertTrue(legacy.exists())
         self.assertIn("name: research-loop-legacy", legacy.read_text())
+        revision_skill = REPO_ROOT / "skills" / "revision-brainstorm" / "SKILL.md"
+        self.assertTrue(revision_skill.exists())
+        self.assertIn("branch_from_node", revision_skill.read_text())
         for mode in ["scientist", "engineer", "custom"]:
-            self.assertTrue((REPO_ROOT / "prompts" / "research-loop" / mode / "critic.md").exists())
-            self.assertTrue((REPO_ROOT / "prompts" / "research-loop" / mode / "revision-worker.md").exists())
+            critic_path = REPO_ROOT / "prompts" / "research-loop" / mode / "critic.md"
+            revision_path = REPO_ROOT / "prompts" / "research-loop" / mode / "revision-worker.md"
+            self.assertTrue(critic_path.exists())
+            self.assertTrue(revision_path.exists())
+            critic_text = critic_path.read_text()
+            self.assertIn("revision plan", critic_text)
+            self.assertIn("does not accept the node", critic_text)
+            self.assertIn("revision-brainstorm", revision_path.read_text())
         self.assertTrue((REPO_ROOT / "prompts" / "research-loop" / "orchestrator.md").exists())
         self.assertTrue((REPO_ROOT / "prompts" / "research-loop" / "worker.md").exists())
         self.assertTrue((REPO_ROOT / "prompts" / "research-loop" / "baseline-worker.md").exists())
@@ -57,11 +82,26 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("research checkpoint", orchestrator)
         self.assertIn("Do not start editing", orchestrator)
         self.assertIn("Checkpoint the worker assignment", orchestrator)
+        self.assertIn("parent_node_id", orchestrator)
+        self.assertIn("fresh `ACCEPT` critic verdict", orchestrator)
+        self.assertIn("Research completion is two-stage", orchestrator)
+        self.assertIn("custom criteria are the acceptance standard", orchestrator)
+        self.assertIn("revision_critic_ref", orchestrator)
+        self.assertIn("agent_thread_id", orchestrator)
+        self.assertIn("git rev-parse HEAD", orchestrator)
+        self.assertIn("workspace_artifact_links", orchestrator)
+        self.assertIn("Terminal work statuses", orchestrator)
+        self.assertIn("--gpus 1 --cpu-cores 4 --memory-mb 8192 --timeout-sec 3600 --poll-sec 30", orchestrator)
         self.assertIn("first return must be a plan", worker)
         self.assertIn("fixed_split_dir", worker)
         self.assertIn("target_threshold", worker)
+        self.assertIn("custom_criteria", worker)
+        self.assertIn("baseline/baseline.json", worker)
+        self.assertIn("workspace_artifact_links", worker)
+        self.assertIn("report a blocker", worker)
         self.assertIn("baseline/splits", baseline_worker)
         self.assertIn("baseline/baseline.json", baseline_worker)
+        self.assertIn("run-level authoritative baseline manifest", baseline_worker)
 
     def test_rejects_removed_modes_and_requires_custom_criteria(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -117,6 +157,7 @@ class ResearchWorkflowTests(unittest.TestCase):
             self.assertEqual(cfg["arguments"]["target_venue"], "fixture venue")
             self.assertEqual(cfg["arguments"]["target_idea"]["id"], "idea-001")
             self.assertEqual(cfg["research"]["baseline_worker_prompt"], "prompts/research-loop/baseline-worker.md")
+            self.assertEqual(cfg["research"]["revision_brainstorm_skill"], "skills/revision-brainstorm/SKILL.md")
             self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "baseline").exists())
 
             removed_task = run_cli(target, "research", "task-start", "--run-id", "run-001", "--task-id", "task-001", "--kind", "critic")
@@ -137,6 +178,9 @@ class ResearchWorkflowTests(unittest.TestCase):
                                 "status": "accepted",
                                 "summary": "accepted fixture",
                                 "evidence_refs": ["journal"],
+                                "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
+                                "critic_verdict": "ACCEPT",
+                                "critic_completed_at": "2026-01-01T00:00:00Z",
                             }
                         },
                         "orchestrator": {"next_action": "select"},
@@ -253,7 +297,16 @@ class ResearchWorkflowTests(unittest.TestCase):
                             "repo_refs": [],
                         },
                         "work": {"baseline-worker-001": {"kind": "baseline-worker", "status": "completed"}},
-                        "nodes": {"node-001": {"node_id": "node-001", "status": "accepted", "summary": "accepted fixture"}},
+                        "nodes": {
+                            "node-001": {
+                                "node_id": "node-001",
+                                "status": "accepted",
+                                "summary": "accepted fixture",
+                                "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
+                                "critic_verdict": "ACCEPT",
+                                "critic_completed_at": "2026-01-01T00:00:00Z",
+                            }
+                        },
                     }
                 ),
             )
@@ -278,6 +331,252 @@ class ResearchWorkflowTests(unittest.TestCase):
                 json.dumps({"baseline": {"required": True, "status": "ready"}}),
             )
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            done = run_cli(target, "research", "complete", "--run-id", "run-001", "--json", json.dumps(audit))
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_revision_work_and_branch_metadata_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "engineer",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps({"resources": {"max_parallel": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            checkpoint = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--run-id",
+                "run-001",
+                "--json",
+                json.dumps(
+                    {
+                        "work": {
+                            "revision-node-002": {
+                                "kind": "revision-worker",
+                                "node_id": "node-002",
+                                "status": "completed",
+                                "prompt_path": "prompts/research-loop/engineer/revision-worker.md",
+                                "skill_path": "skills/revision-brainstorm/SKILL.md",
+                                "result_ref": ".ai-scientist/runs/run-001/logs/revisions/node-002/revision-node-002/result.json",
+                            },
+                            "revision-critic-node-002": {
+                                "kind": "revision-critic",
+                                "node_id": "node-002",
+                                "status": "completed",
+                                "prompt_path": "prompts/research-loop/engineer/critic.md",
+                                "result_ref": ".ai-scientist/runs/run-001/logs/critics/node-002/revision-critic-node-002/verdict.json",
+                            },
+                        },
+                        "nodes": {
+                            "node-001": {"node_id": "node-001", "status": "rejected", "summary": "weak parent"},
+                            "node-002": {
+                                "node_id": "node-002",
+                                "status": "planning",
+                                "parent_node_id": "node-001",
+                                "branch_reason": "failed experiments suggested a narrower implementation path within the contract",
+                                "branch_source_evidence_refs": [".ai-scientist/runs/run-001/logs/workers/node-001/result.json"],
+                                "revision_plan_ref": ".ai-scientist/runs/run-001/logs/revisions/node-002/revision-node-002/result.json",
+                            },
+                        },
+                    }
+                ),
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stdout + checkpoint.stderr)
+            state = read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
+            node = state["state"]["nodes"]["node-002"]
+            self.assertEqual(node["parent_node_id"], "node-001")
+            self.assertIn("branch_source_evidence_refs", node)
+            self.assertEqual(state["state"]["work"]["revision-node-002"]["skill_path"], "skills/revision-brainstorm/SKILL.md")
+
+    def test_completion_requires_fresh_accept_critic_for_selected_node(self) -> None:
+        audit = {"passed": True, "prompt_to_artifact_checklist": ["selected accepted node"], "verification_evidence": ["unit fixture"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "scientist",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps({"resources": {"max_parallel": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            checkpoint = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--run-id",
+                "run-001",
+                "--json",
+                json.dumps({"nodes": {"node-001": {"node_id": "node-001", "status": "accepted", "summary": "accepted fixture"}}}),
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stdout + checkpoint.stderr)
+            select = run_cli(target, "research", "select", "--run-id", "run-001", "--node-id", "node-001", "--summary", "accepted fixture")
+            self.assertEqual(select.returncode, 0, select.stdout + select.stderr)
+            blocked = run_cli(target, "research", "complete", "--run-id", "run-001", "--json", json.dumps(audit))
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("research_node_missing_critic_ref:node-001", blocked.stdout)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "scientist",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps({"resources": {"max_parallel": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            checkpoint = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--run-id",
+                "run-001",
+                "--json",
+                json.dumps(
+                    {
+                        "nodes": {
+                            "node-001": {
+                                "node_id": "node-001",
+                                "status": "accepted",
+                                "summary": "accepted fixture",
+                                "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
+                                "critic_verdict": "REVISE",
+                                "critic_completed_at": "2026-01-01T00:00:00Z",
+                            }
+                        }
+                    }
+                ),
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stdout + checkpoint.stderr)
+            select = run_cli(target, "research", "select", "--run-id", "run-001", "--node-id", "node-001", "--summary", "accepted fixture")
+            self.assertEqual(select.returncode, 0, select.stdout + select.stderr)
+            blocked = run_cli(target, "research", "complete", "--run-id", "run-001", "--json", json.dumps(audit))
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("research_node_critic_verdict_invalid:node-001:REVISE", blocked.stdout)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "scientist",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps({"resources": {"max_parallel": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            checkpoint = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--run-id",
+                "run-001",
+                "--json",
+                json.dumps(
+                    {
+                        "nodes": {
+                            "node-001": {
+                                "node_id": "node-001",
+                                "status": "accepted",
+                                "summary": "accepted fixture",
+                                "metric": 0.75,
+                                "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
+                                "critic_verdict": "ACCEPT",
+                                "critic_completed_at": "2026-01-01T00:00:00Z",
+                            }
+                        }
+                    }
+                ),
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stdout + checkpoint.stderr)
+            stale = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--run-id",
+                "run-001",
+                "--json",
+                json.dumps({"nodes": {"node-001": {"metric": 0.8}}}),
+            )
+            self.assertEqual(stale.returncode, 0, stale.stdout + stale.stderr)
+            select = run_cli(target, "research", "select", "--run-id", "run-001", "--node-id", "node-001", "--summary", "accepted fixture")
+            self.assertEqual(select.returncode, 0, select.stdout + select.stderr)
+            blocked = run_cli(target, "research", "complete", "--run-id", "run-001", "--json", json.dumps(audit))
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("research_node_critic_stale:node-001", blocked.stdout)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "scientist",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps({"resources": {"max_parallel": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            checkpoint = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--run-id",
+                "run-001",
+                "--json",
+                json.dumps(
+                    {
+                        "nodes": {
+                            "node-001": {
+                                "node_id": "node-001",
+                                "status": "accepted",
+                                "summary": "accepted fixture",
+                                "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
+                                "critic_verdict": "ACCEPT",
+                                "critic_completed_at": "2026-01-01T00:00:00Z",
+                            }
+                        }
+                    }
+                ),
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stdout + checkpoint.stderr)
+            state = read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
+            node = state["state"]["nodes"]["node-001"]
+            self.assertEqual(node["critic_evidence_fingerprint"], node["node_evidence_fingerprint"])
+            select = run_cli(target, "research", "select", "--run-id", "run-001", "--node-id", "node-001", "--summary", "accepted fixture")
+            self.assertEqual(select.returncode, 0, select.stdout + select.stderr)
             done = run_cli(target, "research", "complete", "--run-id", "run-001", "--json", json.dumps(audit))
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
