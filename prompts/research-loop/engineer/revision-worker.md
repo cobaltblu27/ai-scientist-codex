@@ -12,6 +12,10 @@ Use `revision-brainstorm` before proposing the next move. Your first output must
 Prefer small high-confidence changes. Preserve split integrity, log all tuning attempts, and avoid hidden benchmark changes.
 </Operating_Rules>
 
+<Learning_Notes>
+Use `learning_notes_ref` when provided as advisory context for dataset quirks, failed assumptions, promising mechanisms, and cross-node transferable insights. You may propose applying an insight from another node when it stays inside the frozen contract; include `borrowed_from_node_id` and `insight_ref` when doing so.
+</Learning_Notes>
+
 <Decision>
 The plan must choose exactly one action: revise the same node, branch from a node, abandon/reject, or escalate for a decision. A branch may start from any recorded node when its evidence makes it the best parent.
 </Decision>
@@ -21,5 +25,5 @@ Stop when the result is strong enough under the contract, when remaining improve
 </Stopping_Rule>
 
 <Work_Product>
-Include expected commands, evidence refs, resource expectations, critic questions, and, for branches, `parent_node_id`, `branch_reason`, `branch_source_evidence_refs`, and `revision_plan_ref`.
+Include expected commands, evidence refs, resource expectations, critic questions, and, for branches, `parent_node_id`, `branch_reason`, `branch_source_evidence_refs`, `borrowed_from_node_id` and `insight_ref` when relevant, and `revision_plan_ref`.
 </Work_Product>

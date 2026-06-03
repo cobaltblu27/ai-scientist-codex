@@ -1,11 +1,11 @@
 # Engineer Ideation Generator
 
 <Purpose>
-Generate one implementation-ready research or model-improvement idea for the assigned ideation slot. Do not edit files. Return JSON only to the requested result path.
+Generate one implementation-ready model-improvement idea for the assigned ideation slot under the fixed run-owned performance contract. Do not edit files. Return JSON only to the requested result path.
 </Purpose>
 
 <Inputs>
-Use the orchestrator assignment: research topic, strictness mode, idea id, shared ideation contract, preflight reference papers or "none found" note, Heiemeier answers/insights, unresolved assumptions from the preflight, prior critic verdict when revising, and required result path.
+Use the orchestrator assignment: research topic, strictness mode, idea id, run-owned `research_contract`, shared ideation contract, preflight reference papers or "none found" note, Heiemeier answers/insights, unresolved assumptions from the preflight, prior critic verdict when revising, and required result path.
 </Inputs>
 
 <Preflight_Context>
@@ -17,15 +17,13 @@ Use `skills/literature-search/SKILL.md` before finalizing performance-focused id
 </Required_Skill>
 
 <Engineering_Standard>
-Prioritize likely performance improvement, implementation feasibility, benchmark comparability, repo fit, and low-risk evaluation. Novelty is useful but not required unless the assignment asks for it.
+Prioritize likely performance improvement, implementation feasibility, benchmark comparability, repo fit, and low-risk evaluation without changing the fixed dataset, split, baseline, metric, evaluator, or target threshold. Novelty is useful but not required unless the assignment asks for it.
 </Engineering_Standard>
 
 <Research_Contract>
-Every idea must include `research_contract` with `primary_hypothesis`, `goal_type`, `success_criteria`, `failure_criteria`, `allowed_rescue_scope`, `kill_criteria`, `non_drift_definition`, `metrics_that_matter`, and `non_negotiable_comparisons`.
-
-For performance goals, include `baseline_reference` with `usability`, `benchmark_plan`, and `target_threshold`. The target must be machine-checkable where possible.
+Do not create or edit a per-idea `research_contract`. The run-owned contract is binding for every idea. An idea may propose only a model-improvement direction inside the fixed dataset, split, baseline, metric, evaluator, and goal.
 </Research_Contract>
 
 <Output>
-Return one canonical idea object with id, family_key, title, hypothesis, research_contract, unique_protocol, expected_metric, smoke_runnable_now, requires_implementation, minimum_command, evidence_refs, rubric_scores, and risk_flags. Include evidence refs from the literature search when they influenced the idea or baseline reference.
+Return one canonical idea object with id, family_key, title, hypothesis, mechanism, implementation_sketch, expected_metric, expected_metric_effect, fit_to_research_contract, novelty_angle, unique_protocol, smoke_runnable_now, requires_implementation, minimum_command, evidence_refs, rubric_scores, and risk_flags. Include evidence refs from the literature search when they influenced the idea.
 </Output>

@@ -6,15 +6,15 @@ Review one latest ideation draft as an independent scientist-mode critic. Return
 
 <Checks>
 - Hypothesis fidelity and novelty.
-- Whether the `research_contract` blocks claim drift.
-- Whether success and failure criteria are hard enough for a later research loop.
-- Whether performance ideas include a usable baseline reference, benchmark plan, and target threshold.
-- Whether leakage ideas define statistically meaningful leakage evidence rather than general dataset insight.
+- Whether the idea fits the run-owned `research_contract` without changing dataset, split, baseline, metric, evaluator, target threshold, or goal.
+- Whether `fit_to_research_contract` is explicit and credible.
+- Whether the idea is a distinct model-improvement direction under the fixed benchmark.
 - Feasibility, ablation value, split integrity, and evidence quality.
+- Whether scientist mode has a plausible novelty or big-picture finding path, even if the individual idea is not yet a full paper claim.
 </Checks>
 
 <Verdicts>
-Use `ACCEPT`, `REVISE`, `REJECT`, or `ACCEPT_WITHOUT_REFERENCE` only when mode policy allows it. Do not accept a draft that substitutes a valid report, dataset inspection, or partial implementation for the original research claim.
+Use `ACCEPT`, `REVISE`, `REJECT`, or `ACCEPT_WITHOUT_REFERENCE` only when mode policy allows it. Reject or revise drafts that change the fixed benchmark contract or substitute a valid report, dataset inspection, or partial implementation for a model-improvement direction.
 </Verdicts>
 
 <Output>

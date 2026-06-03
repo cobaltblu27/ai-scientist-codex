@@ -194,22 +194,36 @@ def contract_has_baseline_reference(contract: dict[str, Any]) -> bool:
     return any(baseline.get(key) for key in ("title", "paper", "model", "source", "citation", "url", "doi"))
 
 
-def validate_idea_research_contract(idea: dict[str, Any]) -> None:
-    if idea.get("evaluation") not in {"ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"}:
-        return
-    contract = idea.get("research_contract")
+def first_substantive_value(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value:
+            return value
+    return None
+
+
+CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS = {
+    "fixed_dataset": ("fixed_dataset", "dataset", "dataset_ref"),
+    "fixed_split": ("fixed_split", "split_protocol", "split_ref", "fixed_split_ref"),
+    "fixed_baseline": ("fixed_baseline", "baseline_reference", "baseline_ref"),
+    "metrics": ("metrics_that_matter", "metrics", "metric"),
+    "evaluator_command": ("evaluator_command", "evaluator", "benchmark_command", "benchmark_plan"),
+}
+
+
+def validate_campaign_research_contract(contract: Any) -> None:
     if not isinstance(contract, dict) or not contract:
-        raise ValidationError(f"accepted idea missing research_contract: {idea.get('id')}")
+        raise ValidationError("config.json research_contract is required for ideation_to_research")
     missing = sorted(key for key in REQUIRED_CONTRACT_KEYS if not contract.get(key))
     if missing:
-        raise ValidationError(f"accepted idea research_contract missing fields: {idea.get('id')}:{', '.join(missing)}")
-    if contract_is_performance(contract):
-        if not contract_has_baseline_reference(contract):
-            raise ValidationError(f"performance idea missing usable baseline_reference: {idea.get('id')}")
-        if not contract.get("benchmark_plan"):
-            raise ValidationError(f"performance idea missing benchmark_plan: {idea.get('id')}")
-        if not contract.get("target_threshold"):
-            raise ValidationError(f"performance idea missing target_threshold: {idea.get('id')}")
+        raise ValidationError(f"config.json research_contract missing fields: {', '.join(missing)}")
+    if not contract_is_performance(contract):
+        raise ValidationError("config.json research_contract goal_type must be performance")
+    if not contract_has_baseline_reference(contract):
+        raise ValidationError("config.json research_contract missing usable baseline_reference")
+    for name, aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.items():
+        if not first_substantive_value(contract, aliases):
+            raise ValidationError(f"config.json research_contract missing {name}")
 
 
 def artifact_snapshot(run: Path) -> str:
@@ -224,6 +238,7 @@ def artifact_snapshot(run: Path) -> str:
 
 def check_ideation_to_research(root: Path, run: Path) -> None:
     cfg = check_config(root, run)
+    validate_campaign_research_contract(cfg.get("research_contract"))
     preset = ideation_mode_preset(cfg)
     ideas = load_json(run / "ideas.json")
     if not isinstance(ideas.get("ideas"), list) or not ideas["ideas"]:
@@ -236,16 +251,20 @@ def check_ideation_to_research(root: Path, run: Path) -> None:
     ]
     if not researchable:
         raise ValidationError("ideas.json must contain at least one researchable candidate for ideation_to_research")
+    loop_state = load_json(run / "loop-state.json")
+    phase_state = loop_state.get("state") if isinstance(loop_state.get("state"), dict) else {}
+    ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
     for idea in ideas["ideas"]:
         if not isinstance(idea, dict):
             raise ValidationError("ideas.json ideas must be objects")
-        if idea.get("evaluation") == "ACCEPTED" and (not isinstance(idea.get("rank"), int) or idea["rank"] <= 0):
+        if ranking.get("status") == "final" and idea.get("evaluation") == "ACCEPTED" and (not isinstance(idea.get("rank"), int) or idea["rank"] <= 0):
             raise ValidationError(f"ACCEPTED idea must include positive rank: {idea.get('id')}")
         if not isinstance(idea.get("score"), int):
             raise ValidationError(f"terminal idea must include integer score: {idea.get('id')}")
         if preset.get("s2_required") and idea.get("evaluation") == "ACCEPTED" and int(idea.get("literature_search_count") or 0) <= 0:
             raise ValidationError(f"ACCEPTED idea missing required literature evidence: {idea.get('id')}")
-        validate_idea_research_contract(idea)
+        if idea.get("evaluation") in {"ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"} and not idea.get("fit_to_research_contract"):
+            raise ValidationError(f"accepted idea missing fit_to_research_contract: {idea.get('id')}")
     if isinstance(cfg.get("dependency_plan"), dict):
         plan = cfg["dependency_plan"]
     else:
@@ -261,14 +280,12 @@ def check_ideation_to_research(root: Path, run: Path) -> None:
     journal = load_jsonl(run / "journal.jsonl")
     if preset.get("s2_required") and not any(record.get("event_type") == "api_call" for record in journal):
         raise ValidationError("journal.jsonl must contain at least one ideation api_call record")
-    loop_state = load_json(run / "loop-state.json")
-    phase_state = loop_state.get("state") if isinstance(loop_state.get("state"), dict) else {}
-    ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
-    if ranking.get("status") != "final":
-        raise ValidationError("loop-state.json ranking must be final")
-    selected = ranking.get("selected_idea_id")
-    if selected not in {idea.get("id") for idea in researchable}:
-        raise ValidationError("selected_idea_id must refer to a researchable candidate")
+    handoff = phase_state.get("handoff") if isinstance(phase_state.get("handoff"), dict) else {}
+    batch_ids = handoff.get("idea_batch")
+    if not isinstance(batch_ids, list) or not batch_ids:
+        raise ValidationError("loop-state.json handoff.idea_batch must list accepted ideas")
+    if any(item not in {idea.get("id") for idea in researchable} for item in batch_ids):
+        raise ValidationError("handoff.idea_batch must refer only to researchable candidates")
     check_handoff(run, "ideation_to_research")
     check_loop_completion(root, run, "ideation")
 
@@ -497,7 +514,14 @@ def check_research_file_artifacts(root: Path, run: Path) -> None:
 
 def check_research_loop_state(root: Path, run: Path) -> None:
     cfg = check_config(root, run)
-    if not isinstance(cfg.get("selected_idea_id"), str) or not cfg["selected_idea_id"].strip():
+    campaign_mode = bool(cfg.get("campaign_mode"))
+    if campaign_mode:
+        idea_batch = cfg.get("idea_batch")
+        if not isinstance(idea_batch, list) or not idea_batch:
+            raise ValidationError("campaign research config requires non-empty idea_batch")
+        if not isinstance(cfg.get("research_contract"), dict) or not cfg["research_contract"]:
+            raise ValidationError("campaign research config requires research_contract")
+    elif not isinstance(cfg.get("selected_idea_id"), str) or not cfg["selected_idea_id"].strip():
         raise ValidationError("config.json selected_idea_id is required for research")
     loop_state = load_json(run / "loop-state.json")
     if loop_state.get("phase") != "research":
@@ -507,6 +531,13 @@ def check_research_loop_state(root: Path, run: Path) -> None:
         raise ValidationError("loop-state.json state must be an object")
     if phase_state.get("mode") != cfg.get("strictness_mode"):
         raise ValidationError("loop-state.json mode must match config.json strictness_mode")
+    if campaign_mode:
+        if not isinstance(phase_state.get("idea_batch"), list) or not phase_state["idea_batch"]:
+            raise ValidationError("campaign loop-state requires idea_batch")
+        learning_notes = phase_state.get("learning_notes") if isinstance(phase_state.get("learning_notes"), dict) else {}
+        notes_path = learning_notes.get("path") or cfg.get("learning_notes_ref")
+        if not isinstance(notes_path, str) or not notes_path:
+            raise ValidationError("campaign research requires learning_notes_ref")
     tasks = phase_state.get("tasks") if isinstance(phase_state.get("tasks"), dict) else {}
     for task_id, task in tasks.items():
         if not isinstance(task, dict):

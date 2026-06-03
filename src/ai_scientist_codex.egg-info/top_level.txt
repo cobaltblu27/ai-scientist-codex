@@ -2,6 +2,7 @@ cli
 core
 hooks
 ideation
+legacy
 research
 validation
 writeup

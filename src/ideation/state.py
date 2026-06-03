@@ -49,9 +49,13 @@ IDEA_OUTPUT_SCHEMA = {
         "family_key",
         "title",
         "hypothesis",
-        "research_contract",
         "unique_protocol",
         "expected_metric",
+        "mechanism",
+        "implementation_sketch",
+        "expected_metric_effect",
+        "fit_to_research_contract",
+        "novelty_angle",
         "smoke_runnable_now",
         "requires_implementation",
         "minimum_command",
@@ -72,6 +76,13 @@ RESEARCH_CONTRACT_REQUIRED_FIELDS = {
     "non_negotiable_comparisons",
 }
 PERFORMANCE_GOAL_TERMS = {"performance", "model_performance", "enhanced_model_performance", "benchmarking"}
+CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS = {
+    "fixed_dataset": ("fixed_dataset", "dataset", "dataset_ref"),
+    "fixed_split": ("fixed_split", "split_protocol", "split_ref", "fixed_split_ref"),
+    "fixed_baseline": ("fixed_baseline", "baseline_reference", "baseline_ref"),
+    "metrics": ("metrics_that_matter", "metrics", "metric"),
+    "evaluator_command": ("evaluator_command", "evaluator", "benchmark_command", "benchmark_plan"),
+}
 
 
 def prompt_path_for(mode: str, role: str) -> str:
@@ -405,21 +416,18 @@ def compact_idea_payload(payload: dict[str, Any], idea_id: str, run_id: str) -> 
     if minimum_command is not None:
         minimum_command = str(minimum_command).strip() or None
     family_key = str(payload.get("family_key") or slug_key(title or hypothesis)).strip()
-    research_contract = payload.get("research_contract")
-    if research_contract is None:
-        research_contract = payload.get("contract")
-    if research_contract is None:
-        research_contract = {}
-    if not isinstance(research_contract, dict):
-        raise IdeationStateError("research_contract must be a JSON object")
-    return {
+    compact = {
         "id": idea_id,
         "family_key": family_key,
         "title": title,
         "hypothesis": hypothesis,
-        "research_contract": deepcopy(research_contract),
         "unique_protocol": summarize_protocol(payload),
         "expected_metric": expected_metric,
+        "mechanism": payload.get("mechanism"),
+        "implementation_sketch": payload.get("implementation_sketch"),
+        "expected_metric_effect": payload.get("expected_metric_effect"),
+        "fit_to_research_contract": payload.get("fit_to_research_contract"),
+        "novelty_angle": payload.get("novelty_angle"),
         "smoke_runnable_now": bool(payload.get("smoke_runnable_now")),
         "requires_implementation": requires_implementation,
         "minimum_command": minimum_command,
@@ -428,6 +436,11 @@ def compact_idea_payload(payload: dict[str, Any], idea_id: str, run_id: str) -> 
         "risk_flags": risk_flags,
         "source_run_id": str(payload.get("source_run_id") or run_id),
     }
+    for aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.values():
+        for key in aliases:
+            if key in payload:
+                compact[key] = deepcopy(payload[key])
+    return compact
 
 
 def pyproject_commands(target_repo: Path) -> list[str]:
@@ -586,10 +599,46 @@ def validate_research_contract(contract: Any, *, require_performance_baseline: b
             raise IdeationStateError("performance_contract_target_threshold_required")
 
 
-def idea_contract(idea: dict[str, Any]) -> dict[str, Any]:
-    draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-    contract = draft.get("research_contract")
+def first_substantive_value(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if has_substantive_value(value):
+            return value
+    return None
+
+
+def normalize_contract_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True).lower()
+    if isinstance(value, list):
+        return json.dumps(value, sort_keys=True).lower()
+    return str(value or "").strip().lower()
+
+
+def validate_campaign_research_contract(contract: Any) -> None:
+    validate_research_contract(contract, require_performance_baseline=True)
+    if not isinstance(contract, dict) or not is_performance_contract(contract):
+        raise IdeationStateError("campaign_research_contract_goal_type_must_be_performance")
+    missing = sorted(name for name, aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.items() if not has_substantive_value(first_substantive_value(contract, aliases)))
+    if missing:
+        raise IdeationStateError(f"campaign_research_contract_missing_fields:{','.join(missing)}")
+
+
+def run_research_contract(config: dict[str, Any]) -> dict[str, Any]:
+    contract = config.get("research_contract")
     return contract if isinstance(contract, dict) else {}
+
+
+def validate_idea_fits_campaign(draft: dict[str, Any], campaign_contract: dict[str, Any]) -> None:
+    if not has_substantive_value(draft.get("fit_to_research_contract")):
+        raise IdeationStateError("idea_fit_to_research_contract_required")
+    for name, aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.items():
+        campaign_value = first_substantive_value(campaign_contract, aliases)
+        draft_value = first_substantive_value(draft, aliases)
+        if draft_value is None or campaign_value is None:
+            continue
+        if normalize_contract_value(draft_value) != normalize_contract_value(campaign_value):
+            raise IdeationStateError(f"idea_changes_campaign_{name}")
 
 
 def terminal_ideas(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -605,9 +654,6 @@ def is_researchable_idea(idea: dict[str, Any], config: dict[str, Any]) -> bool:
     if evaluation == "ACCEPTED":
         return True
     if evaluation == "ACCEPTED_WITHOUT_REFERENCE":
-        contract = idea_contract(idea)
-        if is_performance_contract(contract) and not contract_has_baseline_reference(contract):
-            return False
         return bool(mode_preset(config).get("allow_selection_without_reference"))
     return False
 
@@ -762,9 +808,6 @@ def cursor_for_state(state: dict[str, Any], config: dict[str, Any] | None = None
         return {"next_action": "start_generator_batch", "next_action_details": {"reason": "idea slots remain", "next_idea_id": next_idea_id(phase_state), "count": count, "concurrency_limit": limit}}
     if not terminal_attempts_complete(state):
         return {"next_action": "revise_or_reject_batch", "next_action_details": {"reason": "attempted ideas must reach terminal states"}}
-    ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
-    if candidates and ranking.get("status") != "final":
-        return {"next_action": "rank_candidates", "next_action_details": {"reason": "researchable candidates need ranking", "candidate_count": len(candidates)}}
     return {"next_action": "complete_or_exhaust", "next_action_details": {"reason": "slots or budget exhausted", "candidate_count": len(candidates)}}
 
 
@@ -840,11 +883,15 @@ def start_ideation(
     min_candidates_required: int | None = None,
     reflection_budget: int | None = None,
     max_subagents: int | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if load_loop_state(target_repo, run_id):
         raise IdeationStateError(f"ideation run already exists: {run_id}")
     if not prompt.strip():
         raise IdeationStateError("ideation prompt is required")
+    payload = payload or {}
+    research_contract = payload.get("research_contract")
+    validate_campaign_research_contract(research_contract)
     cfg = frozen_config(
         target_repo,
         run_id,
@@ -854,6 +901,7 @@ def start_ideation(
         reflection_budget=reflection_budget,
         max_subagents=max_subagents,
     )
+    cfg["research_contract"] = deepcopy(research_contract)
     ideation_cfg = cfg["ideation"]
     initial = {
         "prompt": prompt,
@@ -870,8 +918,9 @@ def start_ideation(
         "intents": {},
         "batches": [],
         "idea_states": {},
-        "ranking": {"status": "pending"},
-        "handoff": {"status": "pending", "candidates": [], "selected_idea_id": None},
+        "research_contract": deepcopy(research_contract),
+        "ranking": {"status": "not_required"},
+        "handoff": {"status": "pending", "candidates": []},
     }
     state = start_phase(target_repo, run_id, "ideation", initial)
     update_cursor(state, cfg)
@@ -905,6 +954,7 @@ def orchestration_prompt(state: dict[str, Any], config: dict[str, Any], cursor: 
         "Do not run a Python ideation orchestrator or nested codex exec.",
         f"Run id: {state.get('run_id')}",
         f"Mode: {config.get('strictness_mode')}",
+        f"Run-owned research contract: {json.dumps(config.get('research_contract') or {}, sort_keys=True)}",
         f"Shared contract: {ideation_contract_path(Path(str(config.get('target_repo'))), str(state.get('run_id')))}",
         f"Next action: {next_action}",
         f"Details: {json.dumps(cursor.get('next_action_details') or {}, sort_keys=True)}",
@@ -913,8 +963,6 @@ def orchestration_prompt(state: dict[str, Any], config: dict[str, Any], cursor: 
         lines.append(f"Generator prompt file: {preset['generator_prompt']}")
     elif next_action == "start_critic_batch":
         lines.append(f"Critic prompt file: {preset['critic_prompt']}")
-    elif next_action == "rank_candidates":
-        lines.append(f"Ranker prompt file: {preset['ranker_prompt']}")
     lines.append(f"Original topic: {phase_state.get('prompt')}")
     return "\n".join(lines)
 
@@ -1643,9 +1691,6 @@ def apply_finalized_idea(phase_state: dict[str, Any], idea: dict[str, Any], eval
     idea["score"] = critic["score"]
     idea["rank"] = None
     idea["manual_selection_only"] = evaluation == "ACCEPTED_WITHOUT_REFERENCE" and not preset.get("allow_selection_without_reference")
-    contract = idea_contract(idea)
-    if evaluation == "ACCEPTED_WITHOUT_REFERENCE" and is_performance_contract(contract) and not contract_has_baseline_reference(contract):
-        idea["manual_selection_only"] = True
     idea["updated_at"] = utc_now()
     remove_active_idea(phase_state, str(idea["id"]))
     key = "accepted_without_reference_count" if evaluation == "ACCEPTED_WITHOUT_REFERENCE" else "accepted_count"
@@ -1656,6 +1701,7 @@ def finalize_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None)
     cfg = current_config(target_repo, run_id)
     preset = mode_preset(cfg)
     contract = load_ideation_contract(target_repo, run_id)
+    campaign_contract = run_research_contract(cfg)
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
@@ -1668,7 +1714,7 @@ def finalize_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None)
         validate_minimum_command(draft, contract)
         validate_family_dedup(phase_state, resolved_id)
         evaluation, status = finalization_decision(idea, preset)
-        validate_research_contract(idea_contract(idea), require_performance_baseline=True)
+        validate_idea_fits_campaign(draft, campaign_contract)
         apply_finalized_idea(phase_state, idea, evaluation, status, preset)
         increment_iteration(phase_state)
         update_cursor(state, cfg)
@@ -1682,6 +1728,7 @@ def finalize_ready(target_repo: Path, run_id: str, *, idea_ids: list[str] | None
     cfg = current_config(target_repo, run_id)
     preset = mode_preset(cfg)
     contract = load_ideation_contract(target_repo, run_id)
+    campaign_contract = run_research_contract(cfg)
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
@@ -1704,7 +1751,7 @@ def finalize_ready(target_repo: Path, run_id: str, *, idea_ids: list[str] | None
                 raise IdeationStateError(f"duplicate_idea_family:{resolved_id}:{batch_keys[dedup_key]}")
             batch_keys[dedup_key] = resolved_id
             evaluation, status = finalization_decision(idea, preset)
-            validate_research_contract(idea_contract(idea), require_performance_baseline=True)
+            validate_idea_fits_campaign(draft, campaign_contract)
             decisions.append((resolved_id, evaluation, status))
         for resolved_id, evaluation, status in decisions:
             apply_finalized_idea(phase_state, ideas[resolved_id], evaluation, status, preset)
@@ -1871,6 +1918,7 @@ def final_summary(state: dict[str, Any]) -> dict[str, Any]:
 
 def complete_ideation(target_repo: Path, run_id: str, *, budget_exhausted: bool = False) -> dict[str, Any]:
     cfg = current_config(target_repo, run_id)
+    validate_campaign_research_contract(cfg.get("research_contract"))
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
@@ -1887,12 +1935,20 @@ def complete_ideation(target_repo: Path, run_id: str, *, budget_exhausted: bool 
         candidates = researchable_candidates(state, cfg)
         if len(candidates) < int(phase_state.get("min_candidates_required") or 1):
             raise IdeationStateError("not enough researchable candidates")
-        ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
-        if ranking.get("status") != "final":
-            raise IdeationStateError("ranking must be finalized before completion")
-        selected = ranking.get("selected_idea_id")
-        if not isinstance(selected, str) or selected not in {idea["id"] for idea in candidates}:
-            raise IdeationStateError("selected idea must be researchable")
+        phase_state["handoff"] = {
+            "status": "ready",
+            "idea_batch": [idea["id"] for idea in candidates],
+            "candidates": [
+                {
+                    "idea_id": idea["id"],
+                    "evaluation": idea.get("evaluation"),
+                    "score": idea.get("score"),
+                    "idea_hash": idea.get("idea_hash"),
+                }
+                for idea in candidates
+            ],
+            "research_contract_hash": data_hash(cfg.get("research_contract")),
+        }
         status = "COMPLETED_BUDGET_EXHAUSTED" if budget_exhausted else "COMPLETED"
         state["active"] = False
         state["phase_status"] = status

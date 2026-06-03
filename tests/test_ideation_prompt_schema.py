@@ -20,6 +20,11 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             "family_key",
             "unique_protocol",
             "expected_metric",
+            "mechanism",
+            "implementation_sketch",
+            "expected_metric_effect",
+            "fit_to_research_contract",
+            "novelty_angle",
             "smoke_runnable_now",
             "requires_implementation",
             "minimum_command",
@@ -28,6 +33,7 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             "risk_flags",
         }:
             self.assertIn(field, required)
+        self.assertNotIn("research_contract", required)
 
     def test_persisted_idea_schema_matches_compact_contract(self) -> None:
         schema = json.loads((PLUGIN_ROOT / "schemas" / "idea.schema.json").read_text())
@@ -95,6 +101,36 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             self.assertIn("preflight reference papers", prompt)
             self.assertIn("Heiemeier answers/insights", prompt)
             self.assertIn("not a substitute for canonical evidence", prompt)
+            self.assertIn("run-owned `research_contract`", prompt)
+            self.assertIn("fit_to_research_contract", prompt)
+            self.assertIn("Do not create or edit a per-idea `research_contract`", prompt)
+
+    def test_fixed_contract_campaign_prompt_contracts(self) -> None:
+        ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
+        self.assertIn("run-owned `research_contract`", ideation)
+        self.assertIn("accepted idea batch", ideation)
+        self.assertIn("handoff.idea_batch", ideation)
+        self.assertIn("Ranking is legacy/manual only", ideation)
+        self.assertNotIn("finalized ranking", ideation)
+
+    def test_research_prompts_use_learning_notes_and_campaign_verdicts(self) -> None:
+        skill = (PLUGIN_ROOT / "skills" / "research-loop" / "SKILL.md").read_text()
+        worker = (PLUGIN_ROOT / "prompts" / "research-loop" / "worker.md").read_text()
+        self.assertIn("idea_batch", skill)
+        self.assertIn("learning-notes.jsonl", skill)
+        self.assertIn("resource_queue", skill)
+        self.assertIn("borrowed_from_node_id", skill)
+        self.assertIn("node seed idea", worker)
+        self.assertIn("learning_notes_ref", worker)
+        for mode in ["scientist", "engineer", "custom"]:
+            critic = (PLUGIN_ROOT / "prompts" / "research-loop" / mode / "critic.md").read_text()
+            revision = (PLUGIN_ROOT / "prompts" / "research-loop" / mode / "revision-worker.md").read_text()
+            self.assertIn("PROMISING_CONTINUE", critic)
+            self.assertIn("NEEDS_SCIENTIFIC_FRAMING", critic)
+            self.assertIn("KILL", critic)
+            self.assertIn("learning notes", critic.lower())
+            self.assertIn("borrowed_from_node_id", revision)
+            self.assertIn("insight_ref", revision)
 
     def test_heiemeier_question_skill_invocation_boundary(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "heiemeier-question" / "SKILL.md").read_text()

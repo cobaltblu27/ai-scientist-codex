@@ -16,10 +16,31 @@ from test_support import read_json
 from ideation import state as ideation_state
 
 
+def campaign_contract() -> dict[str, object]:
+    return {
+        "primary_hypothesis": "The idea improves the fixed benchmark.",
+        "goal_type": "performance",
+        "success_criteria": "Improve fixed held-out score by at least 0.03.",
+        "failure_criteria": "No improvement after a complete implementation.",
+        "allowed_rescue_scope": "Same benchmark only.",
+        "kill_criteria": "Stop if the fixed benchmark must change.",
+        "non_drift_definition": "Do not change dataset, split, baseline, metric, or evaluator.",
+        "metrics_that_matter": ["score"],
+        "non_negotiable_comparisons": ["baseline"],
+        "baseline_reference": {"title": "Fixture baseline", "usability": "Defines the comparable baseline."},
+        "benchmark_plan": "Run fixed evaluator on baseline and candidate.",
+        "target_threshold": "Candidate improves by 0.03.",
+        "fixed_dataset": "fixture dataset",
+        "fixed_split": "fixture split",
+        "fixed_baseline": "fixture baseline",
+        "evaluator_command": "uv run python -m pytest",
+    }
+
+
 class IdeationStateTests(unittest.TestCase):
     def _start_run_with_drafts(self, target: Path, *, count: int = 1) -> None:
         (target / "README.md").write_text("fixture target\n")
-        ideation_state.start_ideation(target, "run-001", "fixture", mode="engineer", num_ideas_required=count)
+        ideation_state.start_ideation(target, "run-001", "fixture", mode="engineer", num_ideas_required=count, payload={"research_contract": campaign_contract()})
         for index in range(1, count + 1):
             idea_id = f"idea-{index:03d}"
             ideation_state.record_draft(
@@ -29,6 +50,7 @@ class IdeationStateTests(unittest.TestCase):
                     "id": idea_id,
                     "title": f"Fixture idea {index}",
                     "hypothesis": "Changing the update rule will improve held-out score.",
+                    "fit_to_research_contract": "Uses the fixed benchmark contract unchanged.",
                     "smoke_runnable_now": False,
                 },
                 idea_id=idea_id,

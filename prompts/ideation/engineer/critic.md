@@ -6,15 +6,15 @@ Review one latest ideation draft as an independent engineer-mode critic. Return 
 
 <Checks>
 - Likelihood of measurable performance or practical improvement.
-- Whether the `research_contract` gives machine-checkable success and failure criteria.
-- Whether benchmark comparison is apples-to-apples and feasible in this repo.
-- Whether performance ideas include a usable baseline reference, benchmark plan, and target threshold.
-- Whether the idea can be implemented without changing the benchmark goal.
+- Whether the idea fits the run-owned `research_contract` without changing dataset, split, baseline, metric, evaluator, target threshold, or goal.
+- Whether `fit_to_research_contract` is explicit and credible.
+- Whether benchmark comparison remains apples-to-apples and feasible in this repo.
+- Whether the idea can be implemented as one model-improvement direction under the fixed benchmark.
 - Repo fit, runtime risk, and minimum command validity.
 </Checks>
 
 <Verdicts>
-Use `ACCEPT`, `REVISE`, `REJECT`, or `ACCEPT_WITHOUT_REFERENCE` only when mode policy allows it. Do not accept a draft that merely promises a useful engineering report or partial implementation instead of resolving the declared contract.
+Use `ACCEPT`, `REVISE`, `REJECT`, or `ACCEPT_WITHOUT_REFERENCE` only when mode policy allows it. Do not accept a draft that changes the fixed benchmark contract or merely promises a useful engineering report or partial implementation.
 </Verdicts>
 
 <Output>
