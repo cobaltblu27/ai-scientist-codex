@@ -21,11 +21,12 @@ You are the ideation orchestrator. The current Codex session owns the loop. Pyth
 3. Install/check the project-local Stop hook before starting a real run.
 4. All state transitions go through `ai-scientist`.
 5. Record subagent intents before spawning generators, critics, or the ranker. Pending intents intentionally block Stop until you record completion or cancellation.
-6. Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use `gpt-5.5` with `xhigh` effort for substantive idea generation when model controls are available.
-7. Spawn a fresh critic for each draft or revised draft. Include previous critic verdict/revision notes in the new critic prompt; do not reuse long critic context.
-8. Ranking is LLM-owned. After idea generation/reflection is done and at least one researchable candidate exists, `rank-candidates` starts the ranker intent.
-9. `ideation_to_research` means "safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
-10. Do not report success while Stop hook would still block.
+6. Before spawning the first generator batch for a topic, perform the prompt-only pre-generation synthesis: find reference papers, run `skills/heiemeier-question/SKILL.md`, and use those insights to frame generator assignments.
+7. Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use `gpt-5.5` with `xhigh` effort for substantive idea generation when model controls are available.
+8. Spawn a fresh critic for each draft or revised draft. Include previous critic verdict/revision notes in the new critic prompt; do not reuse long critic context.
+9. Ranking is LLM-owned. After idea generation/reflection is done and at least one researchable candidate exists, `rank-candidates` starts the ranker intent.
+10. `ideation_to_research` means "safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
+11. Do not report success while Stop hook would still block.
 </Non_Negotiable_Rules>
 - 
 <Required_Artifacts>
@@ -145,7 +146,7 @@ Use the returned `next_action` and prompt text as the immediate loop cursor. Rep
 
 The helper computes `next_action`. Follow it exactly.
 
-- `start_generator_batch`: record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, then record all draft results.
+- `start_generator_batch`: run the prompt-only pre-generation synthesis before the first generator batch for a topic, then record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, and record all draft results.
 - `collect_subagent_results`: previous generator/critic/ranker intents are pending; record completion or cancellation for each representative `intent_id` before doing anything else.
 - `search_semantic_scholar`: use `literature-search` as a backstop; run/record OpenAlex-first literature evidence if the generator did not already attach required evidence.
 - `start_critic_batch`: record critic intents for all ready draft `idea_ids`, spawn critics, then record all verdicts.
@@ -155,6 +156,47 @@ The helper computes `next_action`. Follow it exactly.
 - `complete_or_exhaust`: call `ideation complete` if researchable candidate and ranking exist; otherwise call `ideation exhaust`.
 
 </Cursor_Actions>
+
+<Pre_Generation_Synthesis>
+
+## Pre-Generation Synthesis
+
+Before the first generator intent batch for a topic, follow this prompt-only order:
+
+1. Preflight reference scan.
+2. Heiemeier question pass.
+3. Generator assignment synthesis.
+4. Generator intent batch.
+
+This sequence is orchestration guidance, not a new CLI lifecycle gate. Do not create new required artifacts, new cursor actions, or new Stop-hook blockers for this preflight. Keep the result as compact context that is copied into generator assignments.
+
+### Preflight Reference Scan
+
+Find reference papers first. Use the query strategy and provider order from `skills/literature-search/SKILL.md`: OpenAlex first, Semantic Scholar as fallback. Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later records evidence through the existing literature CLI for its assigned idea id.
+
+Capture a short brief:
+
+- likely benchmark/reference papers, or a clear "none found" note;
+- task, dataset, metric, and baseline hints found in those papers;
+- reference gaps, conflicting evidence, and unresolved assumptions.
+
+### Heiemeier Question Pass
+
+Use `skills/heiemeier-question/SKILL.md` on the original topic plus the preflight reference brief. Lay out the questions and answer them one by one. Extract only the high-signal insights needed for generator assignments: problem framing, current approaches, gap, key insight, smallest publishable version, skeptical-reviewer evidence, and success checks.
+
+### Generator Assignment Synthesis
+
+Before spawning generator subagents, convert the reference scan and Heiemeier answers into a compact assignment brief. Give every generator the shared brief, then add slot-specific emphasis so subagents explore distinct hypotheses instead of rephrasing the same paper trail.
+
+The compact brief should include:
+
+- preflight reference papers or a "none found" note;
+- Heiemeier answers/insights;
+- unresolved assumptions from the preflight;
+- seed directions to explore and obvious directions to avoid;
+- reminder that generator-owned literature search is still required when the idea relies on papers, baselines, novelty, or benchmark evidence.
+
+</Pre_Generation_Synthesis>
 
 <Subagent_Protocol>
 
@@ -202,11 +244,14 @@ Generator prompt must include:
 - strictness mode
 - current slot/idea id
 - mode-specific generator prompt from `config.json` when available
+- preflight reference papers or a "none found" note
+- Heiemeier answers/insights from the pre-generation synthesis
+- unresolved assumptions from the preflight
 - `skills/literature-search/SKILL.md` and permission to use it during the generator intent
 - previous critic verdict and required revisions when this is a revision
 - instruction to return JSON only
 
-Generators should use `literature-search` themselves when the idea needs papers, baseline references, novelty checks, or benchmark protocol evidence. This is especially expected for scientist-mode drafts and performance-focused ideas. The generator may run `idea search-semantic-scholar` for its assigned `idea_id`; this records canonical evidence while the generator still owns query choice and synthesis.
+Generators should use the preflight reference and Heiemeier brief as seed context, not as a substitute for canonical evidence. Generators should use `literature-search` themselves when the idea needs papers, baseline references, novelty checks, or benchmark protocol evidence. This is especially expected for scientist-mode drafts and performance-focused ideas. The generator may run `idea search-semantic-scholar` for its assigned `idea_id`; this records canonical evidence while the generator still owns query choice and synthesis.
 
 Canonical draft payload should include at least:
 

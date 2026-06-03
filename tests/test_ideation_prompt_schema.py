@@ -69,7 +69,22 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertIn("Semantic Scholar", skill)
         self.assertIn("Generator subagents should use this skill directly", skill)
         self.assertIn("Subagents may run the `ai-scientist` CLI literature command", skill)
+        self.assertIn("Preflight references found before generator subagents exist are advisory only", skill)
         self.assertIn("skills/literature-search/SKILL.md", ideation)
+
+    def test_ideation_pre_generation_synthesis_order_is_prompt_only(self) -> None:
+        ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
+        ordered_terms = [
+            "Preflight reference scan.",
+            "Heiemeier question pass.",
+            "Generator assignment synthesis.",
+            "Generator intent batch.",
+        ]
+        positions = [ideation.index(term) for term in ordered_terms]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("skills/heiemeier-question/SKILL.md", ideation)
+        self.assertIn("This sequence is orchestration guidance, not a new CLI lifecycle gate", ideation)
+        self.assertIn("Do not create new required artifacts, new cursor actions, or new Stop-hook blockers", ideation)
 
     def test_generator_prompts_require_literature_search_skill(self) -> None:
         for mode in ["scientist", "engineer", "custom"]:
@@ -77,15 +92,18 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             self.assertIn("skills/literature-search/SKILL.md", prompt)
             self.assertIn("assigned idea id", prompt)
             self.assertIn("raw `curl`", prompt)
+            self.assertIn("preflight reference papers", prompt)
+            self.assertIn("Heiemeier answers/insights", prompt)
+            self.assertIn("not a substitute for canonical evidence", prompt)
 
-    def test_heiemeier_question_skill_is_standalone(self) -> None:
+    def test_heiemeier_question_skill_invocation_boundary(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "heiemeier-question" / "SKILL.md").read_text()
         self.assertIn("name: heiemeier-question", skill)
         self.assertIn("lay out the questions", skill.lower())
         self.assertIn("answer each question in order", skill.lower())
         self.assertIn("What are you trying to do?", skill)
         self.assertIn("What are the midterm and final exams", skill)
-        self.assertIn("not part of the ideation loop", skill.lower())
+        self.assertIn("another explicitly active skill names this skill as a required step", skill)
 
     def test_ideation_defaults_to_six_subagents(self) -> None:
         self.assertEqual(DEFAULT_IDEATION_CONFIG["concurrency"]["max_subagents"], 6)

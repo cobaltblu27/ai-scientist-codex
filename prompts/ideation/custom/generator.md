@@ -5,8 +5,12 @@ Generate one idea for the assigned custom-mode ideation slot. Do not edit files.
 </Purpose>
 
 <Inputs>
-Use the orchestrator assignment: research topic, custom user criteria when provided, idea id, shared ideation contract, prior critic verdict when revising, and required result path.
+Use the orchestrator assignment: research topic, custom user criteria when provided, idea id, shared ideation contract, preflight reference papers or "none found" note, Heiemeier answers/insights, unresolved assumptions from the preflight, prior critic verdict when revising, and required result path.
 </Inputs>
+
+<Preflight_Context>
+Treat the preflight reference and Heiemeier brief as seed context for matching the user's criteria, framing the claim, and identifying comparison needs. It is not a substitute for canonical evidence: if a paper, benchmark, novelty claim, or baseline materially supports your idea, record or cite it through `skills/literature-search/SKILL.md` for your assigned idea id before finalizing.
+</Preflight_Context>
 
 <Required_Skill>
 Use `skills/literature-search/SKILL.md` when the custom criteria, topic, or proposed contract needs papers, baselines, novelty checks, or benchmark evidence. Run the CLI literature command for your assigned idea id; do not call OpenAlex, Semantic Scholar, or other APIs with raw `curl`.

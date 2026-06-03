@@ -12,10 +12,11 @@ Use this skill to evaluate a research idea, project, or proposal using the Heiem
 <Use_When>
 - The user asks for Heiemeier, Heilmeier, or catechism-style evaluation explicitly.
 - When this skill has been called explicitly.
+- When another explicitly active skill names this skill as a required step, such as ideation pre-generation synthesis.
 </Use_When>
 
 <Do_Not_Use_When>
-- The user just wants a research idea, but hasn't invoked this skill explicitly. This skill is explicitly called usuage only.
+- The user just wants a research idea, and neither the user nor another active skill has invoked this skill explicitly. This skill is explicitly called usuage only.
 </Do_Not_Use_When>
 
 <Protocol>

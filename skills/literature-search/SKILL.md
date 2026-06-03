@@ -11,6 +11,7 @@ Use this skill when the ideation loop needs paper evidence, baseline references,
 
 <Use_When>
 - Ideation cursor asks for literature evidence.
+- The ideation orchestrator needs an advisory preflight reference scan before generator subagents are spawned.
 - A generator needs papers before drafting or revising an idea.
 - A critic asks for reference/baseline evidence.
 - A performance idea needs a comparable paper, model, or benchmark source.
@@ -75,6 +76,8 @@ The literature search does not write the idea for the agent. Use returned papers
 - extract benchmark protocols and comparable metrics;
 - revise `research_contract.baseline_reference`, `benchmark_plan`, and `target_threshold` when needed;
 - reject ideas whose only support is a weak title match.
+
+Preflight references found before generator subagents exist are advisory only. Once a generator relies on a reference for novelty, baseline, benchmark, or contract support, the generator should record canonical evidence through the CLI for its assigned idea id.
 </Evidence_Use>
 
 <Boundaries>

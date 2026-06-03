@@ -5,8 +5,12 @@ Generate one publishable research idea for the assigned ideation slot. Do not ed
 </Purpose>
 
 <Inputs>
-Use the orchestrator assignment: research topic, strictness mode, idea id, shared ideation contract, prior critic verdict when revising, and required result path.
+Use the orchestrator assignment: research topic, strictness mode, idea id, shared ideation contract, preflight reference papers or "none found" note, Heiemeier answers/insights, unresolved assumptions from the preflight, prior critic verdict when revising, and required result path.
 </Inputs>
+
+<Preflight_Context>
+Treat the preflight reference and Heiemeier brief as seed context for hypothesis formation, reviewer framing, and baseline search. It is not a substitute for canonical evidence: if a paper, benchmark, novelty claim, or baseline materially supports your idea, record or cite it through `skills/literature-search/SKILL.md` for your assigned idea id before finalizing.
+</Preflight_Context>
 
 <Required_Skill>
 Use `skills/literature-search/SKILL.md` before finalizing the idea unless the assignment already includes sufficient literature evidence. Run the CLI literature command for your assigned idea id; do not call OpenAlex, Semantic Scholar, or other APIs with raw `curl`.
