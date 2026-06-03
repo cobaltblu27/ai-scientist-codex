@@ -1,6 +1,6 @@
 # AI Scientist Plugin Guidelines
 
-These guidelines define how to maintain and use this plugin safely. They apply to changes under `plugins/ai-scientist/` and to any target repository artifacts created by the plugin.
+These guidelines define how to maintain and use this plugin safely. They apply to plugin files in this repository and to any target repository artifacts created by the plugin.
 
 ## Product boundaries
 
@@ -15,7 +15,7 @@ These guidelines define how to maintain and use this plugin safely. They apply t
    - `review`
    - `writeup`
 7. Store run state in target repositories under `.ai-scientist/`.
-8. Treat `plugins/ai-scientist/scripts/validate_run.py` as the fail-closed validation spine for phase gates.
+8. Treat `ai-scientist validate run` as the fail-closed validation spine for phase gates.
 
 ## Scientific integrity rules
 
@@ -53,10 +53,10 @@ A valid run should include:
 
 If the artifact contract changes, update all of these together:
 
-1. `plugins/ai-scientist/references/artifact-contract.md`
-2. Relevant schema files in `plugins/ai-scientist/schemas/`
-3. `plugins/ai-scientist/scripts/validate_run.py`
-4. Positive and negative fixtures in `plugins/ai-scientist/tests/fixtures/`
+1. `references/artifact-contract.md`
+2. Relevant schema files in `schemas/`
+3. `src/validation/run.py`
+4. Positive and negative fixtures in `tests/fixtures/`
 5. Skill instructions that mention the changed contract
 
 ## Dependency and API policy
@@ -73,9 +73,9 @@ If the artifact contract changes, update all of these together:
 Before claiming a change is complete, run at minimum:
 
 ```bash
-python3 -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python3 -m json.tool plugins/ai-scientist/hooks.json >/dev/null
-python3 -m unittest discover -s plugins/ai-scientist/tests -p 'test_*.py'
+python3 -m json.tool .codex-plugin/plugin.json >/dev/null
+python3 -m json.tool hooks.json >/dev/null
+python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 For gate changes, also run the relevant positive and negative fixtures. Negative fixtures must fail for the intended reason class.

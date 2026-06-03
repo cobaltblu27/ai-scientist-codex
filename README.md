@@ -42,7 +42,7 @@ absolute interpreter path. Do not assume a specific environment manager.
 
 ## Overview
 
-This repository packages a Codex plugin under `plugins/ai-scientist/`. The plugin gives Codex a structured workflow for research-style experimentation inside a target repository.
+This repository is a Codex plugin root. It gives Codex a structured workflow for research-style experimentation inside a target repository.
 
 Instead of operating as a black-box paper generator, the plugin requires explicit artifacts for each stage:
 
@@ -90,15 +90,12 @@ Use this when you want Codex to run bounded experiments for a selected idea whil
 
 It manages:
 
-- dependency planning before execution
-- approval state for dependencies
-- API budgeting and `journal.jsonl` API-call records
-- baseline evidence
-- experiment node evidence
-- leakage checks
-- split integrity checks
-- result summaries
-- mode-specific deliverables
+- an orchestrator cursor kept alive by the Stop hook
+- checkpointed worker, critic, revision-worker, and revision-critic work records
+- mode-specific prompt paths under `prompts/research-loop/`
+- explicit resource leases for experiment commands
+- command, metric, and result evidence in `journal.jsonl`
+- final selection and completion audit evidence
 - phase-gate validation
 
 No research mode permits leakage, split manipulation, or deceptive scoring.
@@ -146,55 +143,60 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 
 ```text
 .
+├── .codex-plugin/plugin.json
 ├── README.md
 ├── GUIDELINES.md
-└── plugins/
-    └── ai-scientist/
-        ├── .codex-plugin/plugin.json
-        ├── README.md
-        ├── references/
-        │   └── artifact-contract.md
-        ├── schemas/
-        │   ├── config.schema.json
-        │   ├── idea.schema.json
-        │   ├── journal.schema.json
-        │   ├── active-run.schema.json
-        │   ├── loop-state.schema.json
-        │   ├── principles.schema.json
-        │   ├── run-status.schema.json
-        │   └── verifier-decision.schema.json
-        ├── scripts/
-        │   ├── ai_scientist_state.py
-        │   ├── ai_scientist_stop_hook.py
-        │   ├── ideation_orchestrator.py
-        │   ├── install_codex_hooks.py
-        │   └── validate_run.py
-        ├── skills/
-        │   ├── ideation/SKILL.md
-        │   ├── research-loop/SKILL.md
-        │   ├── review/SKILL.md
-        │   └── writeup/SKILL.md
-        └── tests/
-            └── fixtures/
+├── hooks.json
+├── pyproject.toml
+├── config/
+├── references/
+│   └── artifact-contract.md
+├── schemas/
+│   ├── config.schema.json
+│   ├── idea.schema.json
+│   ├── journal.schema.json
+│   ├── active-run.schema.json
+│   ├── loop-state.schema.json
+│   ├── principles.schema.json
+│   ├── run-status.schema.json
+│   └── verifier-decision.schema.json
+├── prompts/
+│   └── research-loop/
+├── skills/
+│   ├── ideation/SKILL.md
+│   ├── research-loop-legacy/SKILL.md
+│   ├── research-loop/SKILL.md
+│   ├── review/SKILL.md
+│   └── writeup/SKILL.md
+├── src/
+│   ├── cli/
+│   ├── core/
+│   ├── hooks/
+│   ├── ideation/
+│   ├── research/
+│   ├── validation/
+│   └── writeup/
+└── tests/
+    └── fixtures/
 ```
 
 ## Install or use locally
 
-Use `plugins/ai-scientist/` as the plugin root.
+Use this repository root as the plugin root.
 
 The plugin manifest is:
 
 ```bash
-plugins/ai-scientist/.codex-plugin/plugin.json
+.codex-plugin/plugin.json
 ```
 
-For local development, point your Codex/plugin tooling at `plugins/ai-scientist` or copy that directory into your local plugin workspace.
+For local development, point your Codex/plugin tooling at this checkout or copy this checkout into your local plugin workspace.
 
 For hard continuation, install the project-local Codex Stop hook in the target repository:
 
 ```bash
-python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo>
-python plugins/ai-scientist/scripts/install_codex_hooks.py --project-root <target-repo> --check
+uv run ai-scientist hooks install --project-root <target-repo>
+uv run ai-scientist hooks check --project-root <target-repo>
 ```
 
 The hook is standalone and reads `.ai-scientist/active-run.json` plus
@@ -206,9 +208,9 @@ while a run is active or lacks passing completion audit evidence.
 From this repository root, verify the plugin manifest and the valid minimal fixture:
 
 ```bash
-python -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python plugins/ai-scientist/scripts/validate_run.py \
-  plugins/ai-scientist/tests/fixtures/valid-minimal \
+python -m json.tool .codex-plugin/plugin.json >/dev/null
+uv run ai-scientist validate run \
+  tests/fixtures/valid-minimal \
   --gate all
 ```
 
@@ -217,8 +219,8 @@ A successful run prints a `PASS` message.
 You can also confirm that negative fixtures fail closed. For example, this should fail because leakage evidence is missing:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py \
-  plugins/ai-scientist/tests/fixtures/missing-leakage-evidence \
+uv run ai-scientist validate run \
+  tests/fixtures/missing-leakage-evidence \
   --gate research_to_review
 ```
 
@@ -227,7 +229,7 @@ python plugins/ai-scientist/scripts/validate_run.py \
 The `ideation` skill is backed by an agent-driven loop:
 
 ```text
-plugins/ai-scientist/scripts/ai_scientist_state_cli.py
+uv run ai-scientist
 ```
 
 The current Codex session is the orchestrator. Python only manages deterministic
@@ -239,7 +241,9 @@ state, Semantic Scholar recording, validation, and handoff artifacts:
    orchestrator.
 3. Native Codex subagents generate ideas, critique drafts, and rank candidates.
 4. Helper commands record drafts, Semantic Scholar evidence, critic verdicts,
-   final idea decisions, ranking, and terminal run state.
+   final idea decisions, ranking, and terminal run state. Accepted ideas include
+   a `research_contract` that freezes the hypothesis, success/failure criteria,
+   non-drift rule, metrics, and comparisons for the later research loop.
 5. The project-local Stop hook blocks ending until ideation reaches
    `COMPLETED`, `COMPLETED_BUDGET_EXHAUSTED`, `EXHAUSTED_NO_CANDIDATE`, or
    `CANCELLED`.
@@ -250,7 +254,7 @@ Default loop settings are `--num-ideas 10`, `--reflection-budget 10`, and
 Example start:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+uv run ai-scientist \
   --target-repo . \
   ideation start \
   --run-id ideation-001 \
@@ -261,7 +265,7 @@ python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
 Then continue from the cursor:
 
 ```bash
-python plugins/ai-scientist/scripts/ai_scientist_state_cli.py \
+uv run ai-scientist \
   --target-repo . \
   ideation resume --run-id ideation-001 --prompt
 ```
@@ -291,7 +295,7 @@ Expected artifacts:
 Validate the transition into research when the run artifacts are prepared:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate ideation_to_research
+uv run ai-scientist validate run <target-repo> --gate ideation_to_research
 ```
 
 ### Step 2: Plan and run research
@@ -302,7 +306,7 @@ Example prompt:
 
 ```text
 Run research-loop for idea-001 on this repository.
-Preserve the benchmark split, plan dependencies first, and use balanced mode.
+Preserve the benchmark split, use scientist mode, and run experiments through resource leases.
 ```
 
 Expected artifacts include:
@@ -310,16 +314,15 @@ Expected artifacts include:
 ```text
 .ai-scientist/runs/<run-id>/config.json
 .ai-scientist/runs/<run-id>/journal.jsonl
-.ai-scientist/runs/<run-id>/baseline/
-.ai-scientist/runs/<run-id>/nodes/
 .ai-scientist/runs/<run-id>/loop-state.json
-.ai-scientist/runs/<run-id>/run-status.json
+.ai-scientist/runs/<run-id>/selection.json
+.ai-scientist/runs/<run-id>/logs/resources/
 ```
 
 Before moving to review, validate:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate research_to_review
+uv run ai-scientist validate run <target-repo> --gate research_to_review
 ```
 
 ### Step 3: Review the run
@@ -343,7 +346,7 @@ Expected artifact:
 Validate the transition into writeup:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate review_to_writeup
+uv run ai-scientist validate run <target-repo> --gate review_to_writeup
 ```
 
 ### Step 4: Write the final report
@@ -360,7 +363,7 @@ Include disclosure, strictness mode, benchmark split, limitations, and reproduci
 Before publication or final launch, validate:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
+uv run ai-scientist validate run <target-repo> --gate launch
 ```
 
 ## Artifact contract
@@ -378,19 +381,11 @@ A typical run looks like this:
     <run-id>/
       config.json
       journal.jsonl
-      run-status.json
-      verifier-decision.json
-      principles.json
-      baseline/
-        metrics.json
-        command.log
-      nodes/
-        <node-id>/
-          metrics.json
-          command.log
-          split-integrity.json
-          leakage-check.json
-          result-summary.json
+      loop-state.json
+      selection.json
+      logs/
+        resources/
+        tasks/
       review/
         structured-review.json
 ```
@@ -398,20 +393,18 @@ A typical run looks like this:
 See the detailed contract in:
 
 ```text
-plugins/ai-scientist/references/artifact-contract.md
+references/artifact-contract.md
 ```
 
 ## Strictness modes
 
-The research loop supports five strictness modes:
+The canonical research loop supports three modes:
 
 | Mode | Purpose | Acceptance meaning |
 | --- | --- | --- |
 | `scientist` | Strongest evidence standard: multi-seed reproducibility, strict ablation, hypothesis-causality evidence, leakage/split checks. | Credible research claim. |
-| `researcher` | Paper-oriented evidence with some pragmatic tuning after hypothesis validation. | Research-style evidence with disclosed pragmatism. |
-| `balanced` | Baseline beat with leakage/split checks and lightweight ablation or sensitivity evidence. | Honest useful finding. |
-| `builder` | Practical held-out improvement with baseline comparison and leakage/split checks. | Strong practical candidate. |
 | `engineer` | Aggressive tuning and selection allowed with fixed benchmark/split and tuning log. | Strong usable model, not a paper claim. |
+| `custom` | User-provided `custom_criteria` define the acceptance bar. | Accepted only against those criteria and universal integrity rules. |
 
 No mode permits leakage, split manipulation, or deceptive metrics.
 
@@ -424,6 +417,9 @@ Every transition is intended to fail closed if required evidence is missing or i
 Requires:
 
 - at least one researchable candidate in `runs/<run-id>/ideas.json`
+- accepted candidates include a `research_contract`; performance-focused
+  candidates include a usable baseline reference, benchmark plan, and target
+  threshold
 - `config.json` with strictness mode, target repo, and API budgets
 - `config.json` with dependency plan entries marked as one of:
   - `approved`
@@ -436,29 +432,25 @@ Requires:
 Validation command:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate ideation_to_research
+uv run ai-scientist validate run <target-repo> --gate ideation_to_research
 ```
 
 ### Research to review
 
 Requires:
 
-- baseline metrics and command log
-- at least one experiment node
-- node command logs
-- node metrics
-- split integrity evidence
-- leakage evidence
-- result summary
-- mode-specific deliverables
-- best node beats baseline under the declared benchmark
+- completed research loop state
+- no unresolved checkpointed work
+- no active resource leases
+- final selection pointing at an accepted node/outcome
+- completion audit evidence
 - approved `journal.jsonl` handoff record
 - passing validator result
 
 Validation command:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate research_to_review
+uv run ai-scientist validate run <target-repo> --gate research_to_review
 ```
 
 ### Review to writeup
@@ -477,7 +469,7 @@ Requires:
 Validation command:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate review_to_writeup
+uv run ai-scientist validate run <target-repo> --gate review_to_writeup
 ```
 
 ### Launch or final approval
@@ -500,7 +492,7 @@ Example:
 Validation command:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
+uv run ai-scientist validate run <target-repo> --gate launch
 ```
 
 ## Validator usage
@@ -508,18 +500,18 @@ python plugins/ai-scientist/scripts/validate_run.py <target-repo> --gate launch
 Main validator:
 
 ```text
-plugins/ai-scientist/scripts/validate_run.py
+uv run ai-scientist validate run
 ```
 
 Supported gates:
 
 ```bash
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate ideation_to_research
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate research_to_review
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate review_to_writeup
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate launch
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate principles
-python plugins/ai-scientist/scripts/validate_run.py <target> --gate all
+uv run ai-scientist validate run <target> --gate ideation_to_research
+uv run ai-scientist validate run <target> --gate research_to_review
+uv run ai-scientist validate run <target> --gate review_to_writeup
+uv run ai-scientist validate run <target> --gate launch
+uv run ai-scientist validate run <target> --gate principles
+uv run ai-scientist validate run <target> --gate all
 ```
 
 `<target>` can be a target repository, a fixture root, or an `.ai-scientist/` directory.
@@ -576,17 +568,17 @@ See [`GUIDELINES.md`](GUIDELINES.md) for detailed maintainer guidance.
 
 When changing the artifact contract, update these together:
 
-1. `plugins/ai-scientist/references/artifact-contract.md`
-2. schemas in `plugins/ai-scientist/schemas/`
-3. `plugins/ai-scientist/scripts/validate_run.py`
-4. positive and negative fixtures in `plugins/ai-scientist/tests/fixtures/`
+1. `references/artifact-contract.md`
+2. schemas in `schemas/`
+3. `uv run ai-scientist validate run`
+4. positive and negative fixtures in `tests/fixtures/`
 5. skill instructions that mention the changed contract
 
 Before claiming a change is complete, run at least:
 
 ```bash
-python -m json.tool plugins/ai-scientist/.codex-plugin/plugin.json >/dev/null
-python plugins/ai-scientist/scripts/validate_run.py plugins/ai-scientist/tests/fixtures/valid-minimal --gate all
+python -m json.tool .codex-plugin/plugin.json >/dev/null
+uv run ai-scientist validate run tests/fixtures/valid-minimal --gate all
 ```
 
 ## Status

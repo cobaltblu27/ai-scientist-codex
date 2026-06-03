@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "run_id",
+    "phase",
+    "status",
+    "strictness_mode"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "strictness_mode": {
+      "enum": [
+        "scientist",
+        "engineer",
+        "custom"
+      ]
+    },
+    "selected_node": {
+      "type": "string"
+    },
+    "artifact_snapshot": {
+      "type": [
+        "string",
+        "object",
+        "null"
+      ]
+    },
+    "last_validation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/validation"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "last_validations": {
+      "type": "object",
+      "description": "Authoritative plural per-gate validation map. last_validation is a legacy fallback.",
+      "additionalProperties": {
+        "$ref": "#/$defs/validation"
+      },
+      "properties": {
+        "ideation_to_research": {
+          "$ref": "#/$defs/validation"
+        },
+        "research_to_review": {
+          "$ref": "#/$defs/validation"
+        },
+        "review_to_writeup": {
+          "$ref": "#/$defs/validation"
+        }
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "last_validations"
+      ]
+    },
+    {
+      "required": [
+        "last_validation"
+      ]
+    }
+  ],
+  "$defs": {
+    "validation": {
+      "type": "object",
+      "required": [
+        "gate"
+      ],
+      "properties": {
+        "gate": {
+          "type": "string"
+        },
+        "validation_mode": {
+          "enum": [
+            "evidence",
+            "final"
+          ]
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "validator_exit_code": {
+          "type": "integer"
+        },
+        "validated_at": {
+          "type": "string"
+        },
+        "selected_node": {
+          "type": "string"
+        },
+        "metric_key": {
+          "type": "string"
+        },
+        "metric_direction": {
+          "enum": [
+            "maximize",
+            "minimize"
+          ]
+        },
+        "artifact_snapshot": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "artifact_hash": {
+          "type": "string"
+        },
+        "artifact_timestamp": {
+          "type": "string"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "exit_code"
+          ]
+        },
+        {
+          "required": [
+            "validator_exit_code"
+          ]
+        }
+      ]
+    }
+  }
+}
