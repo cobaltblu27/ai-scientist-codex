@@ -37,8 +37,9 @@ from core.state import (
     utc_now,
 )
 
-MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
+MODES = {"scientist", "engineer", "custom"}
 INTENT_ROLES = {"generator", "critic", "ranker"}
+PROMPT_ROLES = ("generator", "critic", "ranker")
 TERMINAL_IDEA_STATUSES = {"accepted", "accepted_without_reference", "rejected", "error", "exhausted"}
 TERMINAL_IDEATION_STATUSES = {"COMPLETED", "COMPLETED_BUDGET_EXHAUSTED", "EXHAUSTED_NO_CANDIDATE", "CANCELLED"}
 SUCCESS_TERMINAL_STATUSES = {"COMPLETED", "COMPLETED_BUDGET_EXHAUSTED"}
@@ -73,21 +74,16 @@ RESEARCH_CONTRACT_REQUIRED_FIELDS = {
 PERFORMANCE_GOAL_TERMS = {"performance", "model_performance", "enhanced_model_performance", "benchmarking"}
 
 
-DEFAULT_PROMPTS = {
-    "idea_generation_prompt_template": (
-        "You are an AI Scientist idea-generation subagent running in {mode} mode.\n"
-        "Topic: {prompt}\n"
-        "Produce one canonical research idea for slot {idea_id}. Include research_contract with primary_hypothesis, goal_type, success_criteria, failure_criteria, allowed_rescue_scope, kill_criteria, non_drift_definition, metrics_that_matter, and non_negotiable_comparisons. Performance goals also need baseline_reference, benchmark_plan, and target_threshold. Return structured JSON only."
-    ),
-    "critic_prompt_template": (
-        "You are a short-lived critic for {mode} mode. Review idea {idea_id} draft {draft_version}.\n"
-        "Previous verdict: {previous_verdict}\n"
-        "Reject or revise drafts whose research_contract permits claim drift, substitutes a valid report for the original goal, or lacks hard success/failure criteria. Return JSON only with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags."
-    ),
-    "ranking_prompt_template": (
-        "Rank terminal ideation candidates for {mode} mode. Return JSON only when agent ranking is explicitly requested; default ranking is deterministic."
-    ),
-}
+def prompt_path_for(mode: str, role: str) -> str:
+    if mode not in MODES:
+        raise IdeationStateError(f"invalid ideation mode: {mode}")
+    if role not in PROMPT_ROLES:
+        raise IdeationStateError(f"invalid ideation prompt role: {role}")
+    return f"prompts/ideation/{mode}/{role}.md"
+
+
+def default_prompt_refs(mode: str) -> dict[str, str]:
+    return {f"{role}_prompt": prompt_path_for(mode, role) for role in PROMPT_ROLES}
 
 
 DEFAULT_MODE_PRESETS: dict[str, dict[str, Any]] = {
@@ -97,23 +93,7 @@ DEFAULT_MODE_PRESETS: dict[str, dict[str, Any]] = {
         "allow_selection_without_reference": False,
         "candidate_evaluations": ["ACCEPTED"],
         "scoring_weights": {"novelty": 0.35, "evidence": 0.25, "feasibility": 0.20, "repo_fit": 0.20},
-        **DEFAULT_PROMPTS,
-    },
-    "researcher": {
-        "s2_required": True,
-        "allow_accepted_without_reference": False,
-        "allow_selection_without_reference": False,
-        "candidate_evaluations": ["ACCEPTED"],
-        "scoring_weights": {"novelty": 0.30, "evidence": 0.30, "feasibility": 0.20, "repo_fit": 0.20},
-        **DEFAULT_PROMPTS,
-    },
-    "balanced": {
-        "s2_required": True,
-        "allow_accepted_without_reference": True,
-        "allow_selection_without_reference": True,
-        "candidate_evaluations": ["ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"],
-        "scoring_weights": {"novelty": 0.25, "evidence": 0.20, "feasibility": 0.30, "repo_fit": 0.25},
-        **DEFAULT_PROMPTS,
+        **default_prompt_refs("scientist"),
     },
     "engineer": {
         "s2_required": False,
@@ -121,15 +101,15 @@ DEFAULT_MODE_PRESETS: dict[str, dict[str, Any]] = {
         "allow_selection_without_reference": True,
         "candidate_evaluations": ["ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"],
         "scoring_weights": {"performance": 0.45, "feasibility": 0.30, "repo_fit": 0.20, "novelty": 0.05},
-        **DEFAULT_PROMPTS,
+        **default_prompt_refs("engineer"),
     },
-    "builder": {
+    "custom": {
         "s2_required": False,
         "allow_accepted_without_reference": True,
         "allow_selection_without_reference": True,
         "candidate_evaluations": ["ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"],
-        "scoring_weights": {"performance": 0.40, "feasibility": 0.35, "repo_fit": 0.20, "novelty": 0.05},
-        **DEFAULT_PROMPTS,
+        "scoring_weights": {"custom_fit": 0.40, "feasibility": 0.30, "repo_fit": 0.20, "evidence": 0.10},
+        **default_prompt_refs("custom"),
     },
 }
 
@@ -140,6 +120,7 @@ DEFAULT_IDEATION_CONFIG: dict[str, Any] = {
     "min_candidates_required": 1,
     "reflection_budget": 120,
     "early_stop_allowed": False,
+    "prompt_root": "prompts/ideation",
     "concurrency": {"max_subagents": 6},
     "modes": DEFAULT_MODE_PRESETS,
 }
@@ -195,7 +176,7 @@ def normalize_literature_provider(provider: str | None) -> str:
 def evidence_cache_dir(target_repo: Path, provider: str = "semantic_scholar") -> Path:
     normalized = normalize_literature_provider(provider)
     if normalized == "auto":
-        normalized = "semantic_scholar"
+        normalized = "openalex"
     return ai_root(target_repo) / "evidence-cache" / LITERATURE_PROVIDER_CACHE_DIRS[normalized]
 
 
@@ -282,10 +263,22 @@ def validate_mode_preset(config: dict[str, Any], mode: str) -> dict[str, Any]:
     preset = modes.get(mode)
     if not isinstance(preset, dict):
         raise IdeationStateError(f"missing ideation preset for mode: {mode}")
-    for key in ("idea_generation_prompt_template", "critic_prompt_template", "ranking_prompt_template"):
+    for key in ("generator_prompt", "critic_prompt", "ranker_prompt"):
         if not isinstance(preset.get(key), str) or not preset[key].strip():
             raise IdeationStateError(f"ideation preset {mode} missing {key}")
     return preset
+
+
+def validate_ideation_prompt_files(config: dict[str, Any], mode: str) -> None:
+    preset = validate_mode_preset(config, mode)
+    root = plugin_root()
+    for key in ("generator_prompt", "critic_prompt", "ranker_prompt"):
+        value = str(preset[key])
+        path = root / value
+        if not path.exists():
+            raise IdeationStateError(f"missing ideation prompt file for {mode} {key}: {value}")
+        if not path.is_file() or not path.read_text().strip():
+            raise IdeationStateError(f"empty ideation prompt file for {mode} {key}: {value}")
 
 
 def frozen_config(
@@ -328,7 +321,7 @@ def frozen_config(
         ideation_cfg["min_candidates_required"] = min_candidates_required
     if reflection_budget is not None:
         ideation_cfg["reflection_budget"] = reflection_budget
-    validate_mode_preset(merged, mode)
+    validate_ideation_prompt_files(merged, mode)
     merged.update(
         {
             "schema_version": 1,
@@ -597,26 +590,6 @@ def idea_contract(idea: dict[str, Any]) -> dict[str, Any]:
     draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
     contract = draft.get("research_contract")
     return contract if isinstance(contract, dict) else {}
-
-
-def contract_quality_penalty(idea: dict[str, Any]) -> int:
-    contract = idea_contract(idea)
-    if not contract:
-        return 25
-    try:
-        validate_research_contract(contract, require_performance_baseline=False)
-    except IdeationStateError:
-        return 20
-    success = contract.get("success_criteria")
-    non_drift = contract.get("non_drift_definition")
-    penalty = 0
-    if isinstance(success, str) and len(success.strip()) < 40:
-        penalty += 5
-    if isinstance(non_drift, str) and len(non_drift.strip()) < 40:
-        penalty += 5
-    if is_performance_contract(contract) and not contract_has_baseline_reference(contract):
-        penalty += 20
-    return penalty
 
 
 def terminal_ideas(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -937,11 +910,11 @@ def orchestration_prompt(state: dict[str, Any], config: dict[str, Any], cursor: 
         f"Details: {json.dumps(cursor.get('next_action_details') or {}, sort_keys=True)}",
     ]
     if next_action == "start_generator_batch":
-        lines.append(preset["idea_generation_prompt_template"])
+        lines.append(f"Generator prompt file: {preset['generator_prompt']}")
     elif next_action == "start_critic_batch":
-        lines.append(preset["critic_prompt_template"])
+        lines.append(f"Critic prompt file: {preset['critic_prompt']}")
     elif next_action == "rank_candidates":
-        lines.append(preset["ranking_prompt_template"])
+        lines.append(f"Ranker prompt file: {preset['ranker_prompt']}")
     lines.append(f"Original topic: {phase_state.get('prompt')}")
     return "\n".join(lines)
 
@@ -1480,19 +1453,19 @@ def literature_evidence(target_repo: Path, query: str | None, limit: int, eviden
     if not clean_query and evidence_payload is None:
         raise IdeationStateError("literature query is required without evidence payload")
     if evidence_payload is not None:
-        concrete_provider = "semantic_scholar" if selected_provider == "auto" else selected_provider
+        concrete_provider = "openalex" if selected_provider == "auto" else selected_provider
         return provider_evidence(target_repo, clean_query, limit, concrete_provider, evidence_payload)
     if selected_provider != "auto":
         return provider_evidence(target_repo, clean_query, limit, selected_provider)
     try:
-        return provider_evidence(target_repo, clean_query, limit, "semantic_scholar")
-    except Exception as s2_exc:
-        fallback_reason = literature_failure_reason(s2_exc)
+        return provider_evidence(target_repo, clean_query, limit, "openalex")
+    except Exception as openalex_exc:
+        fallback_reason = literature_failure_reason(openalex_exc)
         try:
-            result = provider_evidence(target_repo, clean_query, limit, "openalex")
-        except Exception as openalex_exc:
-            raise IdeationStateError(f"literature search failed for semantic_scholar ({fallback_reason}) and openalex ({literature_failure_reason(openalex_exc)})") from openalex_exc
-        result["fallback_from"] = "semantic_scholar"
+            result = provider_evidence(target_repo, clean_query, limit, "semantic_scholar")
+        except Exception as s2_exc:
+            raise IdeationStateError(f"literature search failed for openalex ({fallback_reason}) and semantic_scholar ({literature_failure_reason(s2_exc)})") from s2_exc
+        result["fallback_from"] = "openalex"
         result["fallback_reason"] = fallback_reason
         return result
 
@@ -1792,70 +1765,8 @@ def ranking_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
-def deterministic_ranking_payload(state: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
-    candidates = researchable_candidates(state, cfg)
-    if not candidates:
-        raise IdeationStateError("deterministic ranking requires at least one researchable candidate")
-    weights = mode_preset(cfg).get("scoring_weights")
-    if not isinstance(weights, dict):
-        weights = {}
-    family_counts: dict[str, int] = {}
-    scored: list[dict[str, Any]] = []
-    for idea in candidates:
-        draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-        family = str(draft.get("family_key") or idea.get("id"))
-        family_counts[family] = family_counts.get(family, 0) + 1
-        rubric = draft.get("rubric_scores") if isinstance(draft.get("rubric_scores"), dict) else {}
-        weighted = 0.0
-        weight_total = 0.0
-        for key, weight in weights.items():
-            value = rubric.get(key)
-            if isinstance(value, (int, float)):
-                weighted += float(value) * float(weight)
-                weight_total += float(weight)
-        base_score = weighted / weight_total if weight_total > 0 else float(idea.get("score") or 0)
-        penalties = 0.0
-        if draft.get("smoke_runnable_now") is not True:
-            penalties += 10.0
-        penalties += min(20.0, 5.0 * len(as_string_list(draft.get("requires_implementation"))))
-        if not has_literature_evidence(idea):
-            penalties += 8.0
-        contract_penalty = contract_quality_penalty(idea)
-        penalties += float(contract_penalty)
-        score = max(0, min(100, round(base_score - penalties)))
-        scored.append(
-            {
-                "idea_id": idea["id"],
-                "score": int(score),
-                "score_components": {"base": round(base_score, 2), "penalties": round(penalties, 2), "contract_penalty": contract_penalty, "rubric_scores": rubric},
-                "rationale": "Deterministic weighted rubric ranking with runnable, implementation, duplicate, and evidence penalties.",
-                "risk_flags": draft.get("risk_flags", []),
-                "family_key": family,
-            }
-        )
-    seen_family: dict[str, int] = {}
-    for item in scored:
-        family = item["family_key"]
-        seen_family[family] = seen_family.get(family, 0) + 1
-        if family_counts.get(family, 0) > 1 and seen_family[family] > 1:
-            item["score"] = max(0, int(item["score"]) - 15)
-            item["score_components"]["duplicate_family_penalty"] = 15
-    scored.sort(key=lambda item: (-int(item["score"]), str(item["idea_id"])))
-    for index, item in enumerate(scored, start=1):
-        item["rank"] = index
-    return {"selected_idea_id": scored[0]["idea_id"], "ranked_ideas": scored, "rationale": "deterministic_default"}
-
-
-def rank_candidates(target_repo: Path, run_id: str, *, mode: str = "deterministic") -> dict[str, Any] | dict[str, Any]:
-    if mode == "agent":
-        return {"intent": start_intent(target_repo, run_id, "ranker")}
-    if mode != "deterministic":
-        raise IdeationStateError("rank-candidates mode must be deterministic or agent")
-    state = ensure_active_ideation_state(target_repo, run_id)
-    cfg = current_config(target_repo, run_id)
-    payload = deterministic_ranking_payload(state, cfg)
-    finalize_ranking(target_repo, run_id, payload)
-    return {"ranking": payload}
+def rank_candidates(target_repo: Path, run_id: str) -> dict[str, Any]:
+    return {"intent": start_intent(target_repo, run_id, "ranker")}
 
 
 def finalize_ranking(target_repo: Path, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:

@@ -2907,7 +2907,7 @@ def cmd_ideation_rank_finalize(args: argparse.Namespace) -> int:
 
 def cmd_ideation_rank_candidates(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
-    result = rank_candidates(target, run_id, mode=args.mode)
+    result = rank_candidates(target, run_id)
     return ideation_response(target, run_id, **result)
 
 
@@ -3326,7 +3326,6 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_rank.set_defaults(func=cmd_ideation_rank_finalize)
     ideation_rank_candidates = ideation_sub.add_parser("rank-candidates")
     ideation_rank_candidates.add_argument("--run-id")
-    ideation_rank_candidates.add_argument("--mode", choices=["deterministic", "agent"], default="deterministic")
     ideation_rank_candidates.set_defaults(func=cmd_ideation_rank_candidates)
     ideation_finalize_ready = ideation_sub.add_parser("finalize-ready")
     ideation_finalize_ready.add_argument("--run-id")

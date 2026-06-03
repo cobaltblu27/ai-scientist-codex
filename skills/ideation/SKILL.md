@@ -23,7 +23,7 @@ You are the ideation orchestrator. The current Codex session owns the loop. Pyth
 5. Record subagent intents before spawning generators, critics, or the ranker. Pending intents intentionally block Stop until you record completion or cancellation.
 6. Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use `gpt-5.5` with `xhigh` effort for substantive idea generation when model controls are available.
 7. Spawn a fresh critic for each draft or revised draft. Include previous critic verdict/revision notes in the new critic prompt; do not reuse long critic context.
-8. Use deterministic ranking by default. Spawn the ranker only with an explicit `rank-candidates --mode agent` override after idea generation/reflection is done and at least one researchable candidate exists.
+8. Ranking is LLM-owned. After idea generation/reflection is done and at least one researchable candidate exists, `rank-candidates` starts the ranker intent.
 9. `ideation_to_research` means "safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
 10. Do not report success while Stop hook would still block.
 </Non_Negotiable_Rules>
@@ -34,19 +34,19 @@ You are the ideation orchestrator. The current Codex session owns the loop. Pyth
 
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
-- `config.json`: frozen ideation config, mode preset, prompt templates, and scoring policy.
+- `config.json`: frozen ideation config, mode preset, prompt paths, and scoring policy.
 - `loop-state.json`: active cursor, active idea ids, pending intents, terminal status, candidate/ranking state.
 - `ideas.json`: canonical terminal idea archive.
 - `journal.jsonl`: append-only audit stream.
 - `logs/drafts/*.json`: versioned draft payloads.
 - `logs/critics/*.json`: critic verdict payloads.
-- `logs/semantic-scholar/*.json`: Semantic Scholar response payloads when used.
+- `logs/openalex/*.json` and `logs/semantic-scholar/*.json`: literature response payloads when used.
 - `logs/pending/<intent-id>.json`: assigned path where each subagent writes JSON only.
 - `logs/ideation-contract.json`: shared run context, repo entrypoints, split policy, hardware limits, forbidden workflows, reusable baselines, metric names, and strictness mode.
 - `logs/ranking/ranking-final.json`: final ranking payload.
 
 Root `.ai-scientist/active-run.json` points the Stop hook to the active run.
-Shared Semantic Scholar cache lives under `.ai-scientist/evidence-cache/semantic-scholar/`.
+Shared literature caches live under `.ai-scientist/evidence-cache/openalex/` and `.ai-scientist/evidence-cache/semantic-scholar/`.
 
 </Required_Artifacts>
 
@@ -80,26 +80,24 @@ These are common rules for ideation. You MUST consider this for idea generation 
 <Modes>
 
 - These are ideation policy "modes". You MUST consider the policy of given mode into consideration on idea generation and reflection.
-- Default mode is `researcher`. Mode is frozen once `ideation start` runs.
-- Mode presets live in frozen `config.json`. Read them instead of hardcoding prompts if the config provides a template.
+- Default mode is `scientist`. Mode is frozen once `ideation start` runs.
+- Mode presets live in frozen `config.json`. Read prompt paths from the preset instead of hardcoding subagent prompts.
 
 ### `scientist`:
 - centered on scientific/engineering finding or novel methodology for enhanced performance.
 - when suggesting a methodology for performance boost, refrain from mere incremental changes.
 - requires literature evidence for plain `ACCEPTED`; critic prioritizes novelty, publication claim, leakage/split risk, and evidence quality.
-### `researcher`: 
-- entered on scientific/engineering finding or novel methodology for enhanced performance. 
-- requires literature evidence for plain `ACCEPTED`; critic prioritizes research usefulness, evidence, ablation, and feasibility.
-### `balanced`: 
-- literature search is expected, but `ACCEPTED_WITHOUT_REFERENCE` can be researchable if config allows it; critic balances research value and practical performance.
 ### `engineer`: 
 - Search for papers, that can guarantee a performance boost.
 - Semantic Scholar is advisory only; critic prioritizes likely performance, implementation feasibility, and repo fit. Novelty is optional.
-### `hacker`: 
-- Eagerly search for any source that can worth a shot for a performance boost. This includes papers, blogposts, your own intuition, etc.
-- Semantic Scholar is advisory only; critic prioritizes pragmatic usefulness, buildability, expected performance, and risk. Novelty is optional.
 ### `custom`:
-- _tbd_ 
+- Follow the user's custom criteria and make the success rule explicit enough for handoff.
+
+Subagent prompt files are mode-specific:
+
+- Generator: `prompts/ideation/<mode>/generator.md`
+- Critic: `prompts/ideation/<mode>/critic.md`
+- Ranker: `prompts/ideation/<mode>/ranker.md`
 
 
 </Modes>
@@ -149,11 +147,11 @@ The helper computes `next_action`. Follow it exactly.
 
 - `start_generator_batch`: record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, then record all draft results.
 - `collect_subagent_results`: previous generator/critic/ranker intents are pending; record completion or cancellation for each representative `intent_id` before doing anything else.
-- `search_semantic_scholar`: run/record Semantic Scholar evidence for the active idea.
+- `search_semantic_scholar`: use `literature-search` as a backstop; run/record OpenAlex-first literature evidence if the generator did not already attach required evidence.
 - `start_critic_batch`: record critic intents for all ready draft `idea_ids`, spawn critics, then record all verdicts.
 - `revise_or_reject_batch`: one or more critics returned `REVISE` or `REJECT`; revise same idea thread(s) or explicitly reject them.
 - `finalize_ready_ideas`: call `ideation finalize-ready`; the transition is atomic and refuses stale critics, duplicate families without a meaningful protocol/metric delta, invalid commands, or missing evidence.
-- `rank_candidates`: call `ideation rank-candidates`; deterministic ranking is default. Use `--mode agent` only when an agent override is needed.
+- `rank_candidates`: call `ideation rank-candidates`; this starts the ranker intent and blocks Stop until the result is recorded or cancelled.
 - `complete_or_exhaust`: call `ideation complete` if researchable candidate and ranking exist; otherwise call `ideation exhaust`.
 
 </Cursor_Actions>
@@ -170,7 +168,7 @@ ai-scientist \
   ideation intent start-batch --run-id <run-id> --role generator --count <n>
 ```
 
-Use `--role critic --idea-ids <idea-id> ...` for critic batches. Ranking remains single-agent only when explicitly requested: `ideation rank-candidates --mode agent`.
+Use `--role critic --idea-ids <idea-id> ...` for critic batches. Ranking remains single-agent and is started with `ideation rank-candidates`.
 
 Each returned intent includes `result_path`. Give that path to the subagent and require it to overwrite the file with JSON only. `intent complete --intent-id <id>` reads `result_path` by default. Use `--json` or `--path` only as explicit overrides.
 
@@ -204,8 +202,11 @@ Generator prompt must include:
 - strictness mode
 - current slot/idea id
 - mode-specific generator prompt from `config.json` when available
+- `skills/literature-search/SKILL.md` and permission to use it during the generator intent
 - previous critic verdict and required revisions when this is a revision
 - instruction to return JSON only
+
+Generators should use `literature-search` themselves when the idea needs papers, baseline references, novelty checks, or benchmark protocol evidence. This is especially expected for scientist-mode drafts and performance-focused ideas. The generator may run `idea search-semantic-scholar` for its assigned `idea_id`; this records canonical evidence while the generator still owns query choice and synthesis.
 
 Canonical draft payload should include at least:
 
@@ -259,11 +260,13 @@ ai-scientist \
 
 </Direct_Draft_Recording>
 
-<Semantic_Scholar>
+<Literature_Search>
 
-## Semantic Scholar
+## Literature Search
 
-Use Semantic Scholar only when the cursor requests it or when the mode/prompt makes it useful. Scientist/researcher require literature evidence before plain `ACCEPTED`. Builder/engineer treat S2 as inspiration, not a gate.
+Generator subagents should use `skills/literature-search/SKILL.md` when the mode/prompt makes it useful. The orchestrator should use the same skill when the cursor requests literature evidence because a generator returned without required evidence. Scientist requires literature evidence before plain `ACCEPTED`. Engineer and custom treat literature search as advisory unless the frozen config or custom criteria require it.
+
+Provider policy: use OpenAlex first. Semantic Scholar is fallback when OpenAlex fails or when explicitly requested. The command name is historical; `--provider auto` is OpenAlex-first.
 
 Live query:
 
@@ -271,6 +274,20 @@ Live query:
 ai-scientist \
   --target-repo <target-repo> \
   idea search-semantic-scholar --run-id <run-id> --idea-id <idea-id> --query "<query>"
+```
+
+Explicit provider examples:
+
+```bash
+ai-scientist \
+  --target-repo <target-repo> \
+  idea search-semantic-scholar --run-id <run-id> --idea-id <idea-id> --query "<query>" --provider openalex
+```
+
+```bash
+ai-scientist \
+  --target-repo <target-repo> \
+  idea search-semantic-scholar --run-id <run-id> --idea-id <idea-id> --query "<query>" --provider semantic_scholar
 ```
 
 Precomputed evidence payload:
@@ -289,9 +306,9 @@ ai-scientist \
   idea record-evidence-batch --run-id <run-id> --idea-ids idea-001 idea-002 --queries "query 1" "query 2"
 ```
 
-All API evidence is logged to `journal.jsonl` as `api_call` with provenance `live`, `cache`, or `precomputed`. Batch evidence writes are atomic: one invalid idea id blocks the whole state update.
+All API evidence is logged to `journal.jsonl` as `api_call` with provider, fallback source/reason when applicable, and provenance `live`, `cache`, or `precomputed`. Batch evidence writes are atomic: one invalid idea id blocks the whole state update.
 
-</Semantic_Scholar>
+</Literature_Search>
 
 <Critic_Agent>
 
@@ -302,7 +319,7 @@ Spawn a fresh critic for every draft version. The critic should not edit files. 
 Critic prompt must include:
 
 - current canonical idea draft
-- strictness mode and mode-specific critic prompt from frozen `config.json`
+- strictness mode and mode-specific critic prompt path from frozen `config.json`
 - evidence/search results if available
 - previous critic verdict and required revisions if this is a revised draft
 - instruction to return JSON only
@@ -324,8 +341,8 @@ Critic payload schema:
 
 Allowed verdicts:
 
-- `ACCEPT`: candidate may become plain `ACCEPTED` if deterministic gates pass.
-- `ACCEPT_WITHOUT_REFERENCE`: allowed only by mode config; useful for builder/engineer or S2 failure cases.
+- `ACCEPT`: candidate may become plain `ACCEPTED` if CLI hard gates pass.
+- `ACCEPT_WITHOUT_REFERENCE`: allowed only by mode config; useful for engineer/custom or S2 failure cases.
 - `REVISE`: do not finalize; either revise same idea thread or reject explicitly.
 - `REJECT`: reject explicitly or revise if the orchestrator has a clear reason.
 
@@ -385,7 +402,7 @@ ai-scientist \
   ideation finalize-ready --run-id <run-id>
 ```
 
-Use `idea finalize --idea-id <idea-id>` only for a targeted single-idea transition. If finalization fails, do not bypass it by editing JSON. Resume and follow the returned error. Common blockers are stale critic, missing S2 evidence for scientist/researcher, duplicate family/protocol/metric overlap, invalid `minimum_command`, placeholder commands without `requires_implementation`, or mode disallowing `ACCEPTED_WITHOUT_REFERENCE`.
+Use `idea finalize --idea-id <idea-id>` only for a targeted single-idea transition. If finalization fails, do not bypass it by editing JSON. Resume and follow the returned error. Common blockers are stale critic, missing S2 evidence for scientist, duplicate family/protocol/metric overlap, invalid `minimum_command`, placeholder commands without `requires_implementation`, or mode disallowing `ACCEPTED_WITHOUT_REFERENCE`.
 
 </Finalizing_Ideas>
 
@@ -395,7 +412,7 @@ Use `idea finalize --idea-id <idea-id>` only for a targeted single-idea transiti
 
 After all requested slots are attempted, or after budget forces stopping, rank candidates if at least one researchable candidate exists.
 
-Default deterministic ranking:
+Start the ranker:
 
 ```bash
 ai-scientist \
@@ -403,18 +420,10 @@ ai-scientist \
   ideation rank-candidates --run-id <run-id>
 ```
 
-Optional agent override:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation rank-candidates --run-id <run-id> --mode agent
-```
-
-If using the agent override, the ranker prompt must include:
+The ranker prompt must include:
 
 - all terminal ideas from `.ai-scientist/runs/<run-id>/ideas.json`
-- frozen mode config and ranking prompt
+- frozen mode config and ranker prompt path
 - evidence summaries and critic verdicts
 - instruction to score every terminal non-malformed idea
 - instruction that dense `rank` applies only to plain `ACCEPTED`
@@ -448,8 +457,10 @@ Record ranking:
 ```bash
 ai-scientist \
   --target-repo <target-repo> \
-  ideation rank-finalize --run-id <run-id> --json '<ranking JSON>'
+  ideation intent complete --run-id <run-id> --intent-id <ranker-intent-id>
 ```
+
+For manual/direct payload recording, `ideation rank-finalize --run-id <run-id> --json '<ranking JSON>'` remains available.
 
 </Ranking>
 

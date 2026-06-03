@@ -35,23 +35,57 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         for field in IDEA_OUTPUT_SCHEMA["required"]:
             self.assertIn(field, item_schema["required"])
 
-    def test_prompts_request_json_only_compact_payloads(self) -> None:
+    def test_ideation_mode_prompt_files_exist(self) -> None:
         modes = DEFAULT_IDEATION_CONFIG["modes"]
-        combined = "\n".join(
-            [
-                modes["scientist"]["idea_generation_prompt_template"],
-                modes["scientist"]["critic_prompt_template"],
-                modes["scientist"]["ranking_prompt_template"],
-            ]
-        ).lower()
-        for phrase in [
-            "json",
-            "research idea",
-            "critic",
-            "rank",
-            "verdict",
-        ]:
-            self.assertIn(phrase, combined)
+        self.assertEqual(set(modes), {"scientist", "engineer", "custom"})
+        for mode, preset in modes.items():
+            for key, role in {
+                "generator_prompt": "generator",
+                "critic_prompt": "critic",
+                "ranker_prompt": "ranker",
+            }.items():
+                prompt_path = preset[key]
+                self.assertEqual(prompt_path, f"prompts/ideation/{mode}/{role}.md")
+                prompt_text = (PLUGIN_ROOT / prompt_path).read_text().lower()
+                self.assertIn("json", prompt_text)
+                self.assertIn(role, prompt_text)
+
+    def test_shipped_config_uses_prompt_paths_not_inline_templates(self) -> None:
+        config = json.loads((PLUGIN_ROOT / "config" / "config.json").read_text())
+        modes = config["ideation"]["modes"]
+        self.assertEqual(set(modes), {"scientist", "engineer", "custom"})
+        for preset in modes.values():
+            self.assertIn("generator_prompt", preset)
+            self.assertIn("critic_prompt", preset)
+            self.assertIn("ranker_prompt", preset)
+            self.assertNotIn("idea_generation_prompt_template", preset)
+            self.assertNotIn("critic_prompt_template", preset)
+            self.assertNotIn("ranking_prompt_template", preset)
+
+    def test_literature_search_skill_is_referenced_by_ideation(self) -> None:
+        skill = (PLUGIN_ROOT / "skills" / "literature-search" / "SKILL.md").read_text()
+        ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
+        self.assertIn("OpenAlex first", skill)
+        self.assertIn("Semantic Scholar", skill)
+        self.assertIn("Generator subagents should use this skill directly", skill)
+        self.assertIn("Subagents may run the `ai-scientist` CLI literature command", skill)
+        self.assertIn("skills/literature-search/SKILL.md", ideation)
+
+    def test_generator_prompts_require_literature_search_skill(self) -> None:
+        for mode in ["scientist", "engineer", "custom"]:
+            prompt = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "generator.md").read_text()
+            self.assertIn("skills/literature-search/SKILL.md", prompt)
+            self.assertIn("assigned idea id", prompt)
+            self.assertIn("raw `curl`", prompt)
+
+    def test_heiemeier_question_skill_is_standalone(self) -> None:
+        skill = (PLUGIN_ROOT / "skills" / "heiemeier-question" / "SKILL.md").read_text()
+        self.assertIn("name: heiemeier-question", skill)
+        self.assertIn("lay out the questions", skill.lower())
+        self.assertIn("answer each question in order", skill.lower())
+        self.assertIn("What are you trying to do?", skill)
+        self.assertIn("What are the midterm and final exams", skill)
+        self.assertIn("not part of the ideation loop", skill.lower())
 
     def test_ideation_defaults_to_six_subagents(self) -> None:
         self.assertEqual(DEFAULT_IDEATION_CONFIG["concurrency"]["max_subagents"], 6)

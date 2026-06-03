@@ -126,7 +126,7 @@ class IdeationStateTests(unittest.TestCase):
             record = read_json(action_path)
             self.assertEqual(record["parsed_action"]["action"], "SearchSemanticScholar")
 
-    def test_s2_live_failures_fallback_to_openalex(self) -> None:
+    def test_openalex_live_failures_fallback_to_s2(self) -> None:
         failures = [
             ("403", urllib.error.HTTPError("https://example.test", 403, "Forbidden", None, None)),
             ("429", urllib.error.HTTPError("https://example.test", 429, "Too Many Requests", None, None)),
@@ -143,17 +143,17 @@ class IdeationStateTests(unittest.TestCase):
                 self._start_run_with_drafts(target)
                 calls = {"s2": 0, "openalex": 0}
 
-                def failing_s2(query: str, limit: int, failure: BaseException = exc) -> dict:
-                    calls["s2"] += 1
-                    raise failure
-
-                def successful_openalex(query: str, limit: int) -> dict:
+                def failing_openalex(query: str, limit: int, failure: BaseException = exc) -> dict:
                     calls["openalex"] += 1
                     self.assertEqual(query, "fallback query")
-                    return self._openalex_evidence(f"OpenAlex {label}")
+                    raise failure
 
-                ideation_state.semantic_scholar_request = failing_s2
-                ideation_state.openalex_request = successful_openalex
+                def successful_s2(query: str, limit: int) -> dict:
+                    calls["s2"] += 1
+                    return {"data": [{"title": f"S2 {label}", "citationCount": 1}]}
+
+                ideation_state.semantic_scholar_request = successful_s2
+                ideation_state.openalex_request = failing_openalex
                 try:
                     ideation_state.record_semantic_scholar_search(target, "run-001", idea_id="idea-001", query="fallback query")
                 finally:
@@ -161,30 +161,30 @@ class IdeationStateTests(unittest.TestCase):
                     ideation_state.openalex_request = original_openalex
 
                 evidence = self._loop_state(target)["state"]["idea_states"]["idea-001"]["literature_evidence"][-1]
-                self.assertEqual(evidence["provider"], "openalex")
-                self.assertEqual(evidence["fallback_from"], "semantic_scholar")
+                self.assertEqual(evidence["provider"], "semantic_scholar")
+                self.assertEqual(evidence["fallback_from"], "openalex")
                 self.assertTrue(evidence["fallback_reason"])
                 self.assertEqual(evidence["result_count"], 1)
                 self.assertEqual(calls, {"s2": 1, "openalex": 1})
-                self.assertTrue(any((target / ".ai-scientist" / "evidence-cache" / "openalex").glob("*.json")))
+                self.assertTrue(any((target / ".ai-scientist" / "evidence-cache" / "semantic-scholar").glob("*.json")))
 
-    def test_s2_zero_results_is_success_without_openalex_fallback(self) -> None:
+    def test_openalex_zero_results_is_success_without_s2_fallback(self) -> None:
         with TemporaryDirectory() as td:
             target = Path(td)
             self._start_run_with_drafts(target)
             original_s2 = ideation_state.semantic_scholar_request
             original_openalex = ideation_state.openalex_request
-            calls = {"openalex": 0}
+            calls = {"s2": 0}
 
-            def empty_s2(query: str, limit: int) -> dict:
+            def empty_openalex(query: str, limit: int) -> dict:
                 return {"data": []}
 
-            def unexpected_openalex(query: str, limit: int) -> dict:
-                calls["openalex"] += 1
+            def unexpected_s2(query: str, limit: int) -> dict:
+                calls["s2"] += 1
                 return self._openalex_evidence()
 
-            ideation_state.semantic_scholar_request = empty_s2
-            ideation_state.openalex_request = unexpected_openalex
+            ideation_state.semantic_scholar_request = unexpected_s2
+            ideation_state.openalex_request = empty_openalex
             try:
                 ideation_state.record_semantic_scholar_search(target, "run-001", idea_id="idea-001", query="empty query")
             finally:
@@ -192,12 +192,12 @@ class IdeationStateTests(unittest.TestCase):
                 ideation_state.openalex_request = original_openalex
 
             evidence = self._loop_state(target)["state"]["idea_states"]["idea-001"]["literature_evidence"][-1]
-            self.assertEqual(evidence["provider"], "semantic_scholar")
+            self.assertEqual(evidence["provider"], "openalex")
             self.assertEqual(evidence["result_count"], 0)
             self.assertIsNone(evidence["fallback_from"])
-            self.assertEqual(calls["openalex"], 0)
+            self.assertEqual(calls["s2"], 0)
 
-    def test_s2_cache_hit_does_not_call_openalex(self) -> None:
+    def test_openalex_cache_hit_does_not_call_live_providers(self) -> None:
         with TemporaryDirectory() as td:
             target = Path(td)
             self._start_run_with_drafts(target)
@@ -209,11 +209,11 @@ class IdeationStateTests(unittest.TestCase):
 
             def unexpected_s2(query: str, limit: int) -> dict:
                 calls["s2"] += 1
-                raise AssertionError("S2 live request should not run on cache hit")
+                raise AssertionError("S2 live request should not run on OpenAlex cache hit")
 
             def unexpected_openalex(query: str, limit: int) -> dict:
                 calls["openalex"] += 1
-                raise AssertionError("OpenAlex should not run on S2 cache hit")
+                raise AssertionError("OpenAlex live request should not run on cache hit")
 
             ideation_state.semantic_scholar_request = unexpected_s2
             ideation_state.openalex_request = unexpected_openalex
@@ -301,7 +301,7 @@ class IdeationStateTests(unittest.TestCase):
             ideation_state.semantic_scholar_request = lambda query, limit: (_ for _ in ()).throw(urllib.error.URLError("S2 unavailable"))
             ideation_state.openalex_request = lambda query, limit: (_ for _ in ()).throw(TimeoutError("OpenAlex timeout"))
             try:
-                with self.assertRaisesRegex(ideation_state.IdeationStateError, "semantic_scholar .* openalex"):
+                with self.assertRaisesRegex(ideation_state.IdeationStateError, "openalex .* semantic_scholar"):
                     ideation_state.record_semantic_scholar_search(target, "run-001", idea_id="idea-001", query="doomed query")
             finally:
                 ideation_state.semantic_scholar_request = original_s2

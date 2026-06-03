@@ -18,6 +18,7 @@
     "min_candidates_required": 1,
     "reflection_budget": 120,
     "early_stop_allowed": false,
+    "prompt_root": "prompts/ideation",
     "concurrency": {
       "max_subagents": 6
     },
@@ -35,44 +36,9 @@
           "feasibility": 0.2,
           "repo_fit": 0.2
         },
-        "idea_generation_prompt_template": "You are an AI Scientist idea-generation subagent in scientist mode. Generate one publishable, evidence-aware research idea for {prompt}. Return structured JSON only.",
-        "critic_prompt_template": "You are a fresh critic in scientist mode. Check novelty, evidence, ablation value, leakage risk, and feasibility for idea {idea_id} draft {draft_version}. Return verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags.",
-        "ranking_prompt_template": "Rank terminal scientist-mode ideas by publishability, novelty, evidence quality, feasibility, and repo fit. Score every terminal idea and select one default research candidate."
-      },
-      "researcher": {
-        "s2_required": true,
-        "allow_accepted_without_reference": false,
-        "allow_selection_without_reference": false,
-        "candidate_evaluations": [
-          "ACCEPTED"
-        ],
-        "scoring_weights": {
-          "novelty": 0.3,
-          "evidence": 0.3,
-          "feasibility": 0.2,
-          "repo_fit": 0.2
-        },
-        "idea_generation_prompt_template": "You are an AI Scientist idea-generation subagent in researcher mode. Generate one research direction with clear hypothesis, evidence plan, and evaluation path for {prompt}. Return structured JSON only.",
-        "critic_prompt_template": "You are a fresh critic in researcher mode. Check relation to prior work, evidence needs, ablation value, and feasibility for idea {idea_id} draft {draft_version}. Return verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags.",
-        "ranking_prompt_template": "Rank terminal researcher-mode ideas by evidence quality, novelty, feasibility, and repo fit. Score every terminal idea and select one default research candidate."
-      },
-      "balanced": {
-        "s2_required": true,
-        "allow_accepted_without_reference": true,
-        "allow_selection_without_reference": true,
-        "candidate_evaluations": [
-          "ACCEPTED",
-          "ACCEPTED_WITHOUT_REFERENCE"
-        ],
-        "scoring_weights": {
-          "novelty": 0.25,
-          "evidence": 0.2,
-          "feasibility": 0.3,
-          "repo_fit": 0.25
-        },
-        "idea_generation_prompt_template": "You are an AI Scientist idea-generation subagent in balanced mode. Generate one idea that balances research value and practical performance for {prompt}. Return structured JSON only.",
-        "critic_prompt_template": "You are a fresh critic in balanced mode. Check whether idea {idea_id} draft {draft_version} is useful, feasible, sufficiently grounded, and likely to improve results. Return verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags.",
-        "ranking_prompt_template": "Rank terminal balanced-mode ideas by practical value, evidence, novelty, feasibility, and repo fit. Score every terminal idea and select one default research candidate."
+        "generator_prompt": "prompts/ideation/scientist/generator.md",
+        "critic_prompt": "prompts/ideation/scientist/critic.md",
+        "ranker_prompt": "prompts/ideation/scientist/ranker.md"
       },
       "engineer": {
         "s2_required": false,
@@ -88,11 +54,11 @@
           "repo_fit": 0.2,
           "novelty": 0.05
         },
-        "idea_generation_prompt_template": "You are an AI Scientist idea-generation subagent in engineer mode. Generate one high-performance, implementation-ready improvement idea for {prompt}. Novelty is optional. Return structured JSON only.",
-        "critic_prompt_template": "You are a fresh critic in engineer mode. Check whether idea {idea_id} draft {draft_version} is likely to work, improve performance, and be practical in the repo. Return verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags.",
-        "ranking_prompt_template": "Rank terminal engineer-mode ideas by expected performance, feasibility, repo fit, and risk. Score every terminal idea and select one default research candidate."
+        "generator_prompt": "prompts/ideation/engineer/generator.md",
+        "critic_prompt": "prompts/ideation/engineer/critic.md",
+        "ranker_prompt": "prompts/ideation/engineer/ranker.md"
       },
-      "builder": {
+      "custom": {
         "s2_required": false,
         "allow_accepted_without_reference": true,
         "allow_selection_without_reference": true,
@@ -101,14 +67,14 @@
           "ACCEPTED_WITHOUT_REFERENCE"
         ],
         "scoring_weights": {
-          "performance": 0.4,
-          "feasibility": 0.35,
+          "custom_fit": 0.4,
+          "feasibility": 0.3,
           "repo_fit": 0.2,
-          "novelty": 0.05
+          "evidence": 0.1
         },
-        "idea_generation_prompt_template": "You are an AI Scientist idea-generation subagent in builder mode. Generate one pragmatic build plan or model-improvement idea for {prompt}. Novelty is optional. Return structured JSON only.",
-        "critic_prompt_template": "You are a fresh critic in builder mode. Check whether idea {idea_id} draft {draft_version} is buildable, likely to improve output, and worth trying. Return verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags.",
-        "ranking_prompt_template": "Rank terminal builder-mode ideas by usefulness, feasibility, expected performance, repo fit, and risk. Score every terminal idea and select one default research candidate."
+        "generator_prompt": "prompts/ideation/custom/generator.md",
+        "critic_prompt": "prompts/ideation/custom/critic.md",
+        "ranker_prompt": "prompts/ideation/custom/ranker.md"
       }
     }
   },

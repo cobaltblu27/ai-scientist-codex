@@ -123,12 +123,17 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(json.loads(started.stdout)["next_action"], "start_generator_batch")
             config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
             self.assertEqual(config["ideation"]["concurrency"]["max_subagents"], 6)
+            scientist = config["ideation"]["modes"]["scientist"]
+            self.assertEqual(scientist["generator_prompt"], "prompts/ideation/scientist/generator.md")
+            self.assertEqual(scientist["critic_prompt"], "prompts/ideation/scientist/critic.md")
+            self.assertEqual(scientist["ranker_prompt"], "prompts/ideation/scientist/ranker.md")
 
             resumed = run_cli(target, "ideation", "resume", "--run-id", "run-001", "--prompt")
             self.assertEqual(resumed.returncode, 0, resumed.stderr)
             payload = json.loads(resumed.stdout)
             self.assertEqual(payload["next_action"], "start_generator_batch")
             self.assertIn("main Codex ideation orchestrator", payload["prompt"])
+            self.assertIn("prompts/ideation/scientist/generator.md", payload["prompt"])
             self.assertTrue((target / ".ai-scientist" / "active-run.json").exists())
             self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "config.json").exists())
             self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "ideas.json").exists())
@@ -145,6 +150,46 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(decision.decision, "block")
             self.assertIn("collect_subagent_results", decision.system_message)
             self.assertIn("Pending intents: 1", decision.system_message)
+
+    def test_ideation_rejects_removed_modes_and_missing_prompt_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            removed = run_cli(target, "ideation", "start", "--run-id", "run-removed", "--prompt", "fixture", "--strictness-mode", "balanced")
+            self.assertNotEqual(removed.returncode, 0)
+            self.assertIn("invalid ideation mode", removed.stdout)
+
+            (target / ".ai-scientist").mkdir()
+            (target / ".ai-scientist" / "config.json").write_text(
+                json.dumps(
+                    {
+                        "ideation": {
+                            "modes": {
+                                "custom": {
+                                    "generator_prompt": "prompts/ideation/custom/missing.md",
+                                    "critic_prompt": "prompts/ideation/custom/critic.md",
+                                    "ranker_prompt": "prompts/ideation/custom/ranker.md",
+                                }
+                            }
+                        }
+                    }
+                )
+                + "\n"
+            )
+            missing = run_cli(target, "ideation", "start", "--run-id", "run-missing", "--prompt", "fixture", "--strictness-mode", "custom")
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("missing ideation prompt file", missing.stdout)
+
+    def test_ideation_start_freezes_prompt_paths_for_all_modes(self) -> None:
+        for mode in ["scientist", "engineer", "custom"]:
+            with tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp)
+                started = run_cli(target, "ideation", "start", "--run-id", f"run-{mode}", "--prompt", "fixture", "--strictness-mode", mode)
+                self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
+                config = json.loads((target / ".ai-scientist" / "runs" / f"run-{mode}" / "config.json").read_text())
+                preset = config["ideation"]["modes"][mode]
+                self.assertEqual(preset["generator_prompt"], f"prompts/ideation/{mode}/generator.md")
+                self.assertEqual(preset["critic_prompt"], f"prompts/ideation/{mode}/critic.md")
+                self.assertEqual(preset["ranker_prompt"], f"prompts/ideation/{mode}/ranker.md")
 
     def test_max_subagents_caps_generator_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -387,7 +432,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(validator.returncode, 0, validator.stderr)
             self.assertEqual(evaluate_stop_decision(target).decision, "allow")
 
-    def test_compact_finalize_ready_and_deterministic_ranking(self) -> None:
+    def test_compact_finalize_ready_and_ranker_intent_ranking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             (target / "pyproject.toml").write_text("[project]\nname='fixture'\nversion='0.1.0'\n")
@@ -398,12 +443,41 @@ class AgentDrivenIdeationTests(unittest.TestCase):
                 run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("ACCEPT", 86))),
                 run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-002", "--json", json.dumps(critic_payload("ACCEPT", 84))),
                 run_cli(target, "ideation", "finalize-ready", "--run-id", "run-001"),
-                run_cli(target, "ideation", "rank-candidates", "--run-id", "run-001"),
-                run_cli(target, "ideation", "complete", "--run-id", "run-001"),
             ]
             for step in steps:
                 self.assertEqual(step.returncode, 0, step.stderr + step.stdout)
 
+            ranked = run_cli(target, "ideation", "rank-candidates", "--run-id", "run-001")
+            self.assertEqual(ranked.returncode, 0, ranked.stderr + ranked.stdout)
+            ranked_payload = json.loads(ranked.stdout)
+            intent = ranked_payload["intent"]
+            self.assertEqual(intent["role"], "ranker")
+            self.assertEqual(ranked_payload["next_action"], "collect_subagent_results")
+            self.assertEqual(evaluate_stop_decision(target).decision, "block")
+
+            completed_ranker = run_cli(
+                target,
+                "ideation",
+                "intent",
+                "complete",
+                "--run-id",
+                "run-001",
+                "--intent-id",
+                intent["intent_id"],
+                "--json",
+                json.dumps(
+                    {
+                        "selected_idea_id": "idea-001",
+                        "rationale": "Better ranker-selected idea.",
+                        "ranked_ideas": [
+                            {"idea_id": "idea-001", "score": 91, "score_components": {"ranker": 91}, "rationale": "Best contract.", "risk_flags": []},
+                            {"idea_id": "idea-002", "score": 70, "score_components": {"ranker": 70}, "rationale": "Weaker expected result.", "risk_flags": []},
+                        ],
+                    }
+                ),
+            )
+            self.assertEqual(completed_ranker.returncode, 0, completed_ranker.stderr + completed_ranker.stdout)
+            self.assertEqual(run_cli(target, "ideation", "complete", "--run-id", "run-001").returncode, 0)
             ideas = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "ideas.json").read_text())["ideas"]
             self.assertEqual(ideas[0]["id"], "idea-001")
             self.assertEqual(ideas[0]["rank"], 1)
@@ -438,7 +512,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
             evidence_records = state["state"]["idea_states"]["idea-001"]["literature_evidence"]
             self.assertEqual([item["provenance"] for item in evidence_records], ["precomputed", "cache"])
-            self.assertTrue(any((target / ".ai-scientist" / "evidence-cache" / "semantic-scholar").glob("*.json")))
+            self.assertTrue(any((target / ".ai-scientist" / "evidence-cache" / "openalex").glob("*.json")))
 
             before_count = int(state["state"]["idea_states"]["idea-002"].get("literature_search_count") or 0)
             failed_batch = run_cli(
