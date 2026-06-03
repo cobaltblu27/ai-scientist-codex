@@ -95,7 +95,7 @@ def active_run(target: Path, run_id: str | None = None) -> tuple[str, dict[str, 
 
 def prompt_path_for(mode: str, kind: str) -> str | None:
     if kind == "orchestrator":
-        return "prompts/research-loop/orchestrator.md"
+        return "skills/research-loop/SKILL.md"
     if kind == "worker":
         return "prompts/research-loop/worker.md"
     if kind == "baseline-worker":

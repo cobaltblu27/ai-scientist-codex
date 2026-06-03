@@ -1,0 +1,7 @@
+cli
+core
+hooks
+ideation
+research
+validation
+writeup

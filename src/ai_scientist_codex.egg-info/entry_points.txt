@@ -1,0 +1,2 @@
+[console_scripts]
+ai-scientist = cli.main:main

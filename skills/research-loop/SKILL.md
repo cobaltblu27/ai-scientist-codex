@@ -70,6 +70,14 @@ One worker is dedicated to one node. Keep using that same worker/thread for that
 Revision workers use the shared `revision-brainstorm` skill before proposing the next move. Worker, critic, and revision work is tracked by orchestrator checkpoints, node summaries, logs, and resource records. The CLI records state, evidence, prompt paths, resource leases, and completion gates. The orchestrator owns scientific judgment and must keep the loop moving until the selected outcome satisfies the frozen idea contract.
 </Subagents>
 
+<Orchestrator_Instructions>
+This `SKILL.md` is the orchestrator instruction source for the main Codex session. Do not load or rely on a separate orchestrator prompt file.
+
+Operate through the `ai-scientist` CLI. Use checkpoints for baseline worker, node worker, critic, revision-worker, and revision-critic assignments. Record prompt paths, result paths, worker/thread ids, node summaries, resource evidence, and the next action in checkpoints.
+
+Do not hardcode resource capacity. Read it from run config and fail fast when it is missing. Do not start editing the target implementation yourself just because the next step looks obvious; if implementation is needed, assign it to a worker.
+</Orchestrator_Instructions>
+
 <Baseline_Unit>
 The baseline unit is a shared node-like setup workspace for fixed data splits and apples-to-apples baseline score calculation. It is separate from normal research nodes and is shared by all nodes in the run.
 
@@ -112,7 +120,6 @@ Before any node work begins, freeze the exact `research_contract` from the selec
 <Prompt_Files>
 Use the prompt files under `prompts/research-loop/`:
 
-- Orchestrator: `prompts/research-loop/orchestrator.md`
 - Baseline worker: `prompts/research-loop/baseline-worker.md`
 - General worker: `prompts/research-loop/worker.md`
 - Critic: `prompts/research-loop/<mode>/critic.md`
@@ -120,7 +127,7 @@ Use the prompt files under `prompts/research-loop/`:
 - Shared revision skill: `skills/revision-brainstorm/SKILL.md`
 
 The CLI records prompt paths through checkpoints and run config. It does not enforce prompt contents.
-The prompt for orchestrator (you) is in `prompts/research-loop/orchestrator.md`. Read it and follow the rules.
+The prompt for orchestrator (you) is this `skills/research-loop/SKILL.md`. Subagent prompt files remain separate.
 </Prompt_Files>
 
 <CLI_Command_Map>
@@ -259,6 +266,7 @@ The orchestrator MUST:
 
 - create a node id and checkpoint a `worker` assignment for the selected idea;
 - spawn a dedicated Codex worker for that node and keep the worker/thread id in checkpoints;
+- Checkpoint the worker assignment before or immediately after spawning the worker so a resumed orchestrator can find the node, worker/thread id, prompt path, assignment ref, result ref, status, and next action.
 - give the worker the selected idea, frozen `research_contract` when required or present, `custom_criteria` for custom mode, mode, resource policy, node workspace path, expected result path, baseline split refs when present, and `prompts/research-loop/worker.md`;
 - poll/resume state while the worker is active;
 - review each worker return before assigning the next piece;
