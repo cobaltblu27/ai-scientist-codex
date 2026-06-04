@@ -42,7 +42,7 @@ Examples:
 - A branch or revision plan is high-potential and benchmark-preserving, but needs one more bounded experiment to prove it.
 
 ## `NEEDS_SCIENTIFIC_FRAMING`:
-Use `NEEDS_SCIENTIFIC_FRAMING` when the engineering result is practically promising, but it would need a clearer novelty, mechanism, ablation, or claim story before being treated as a research contribution. Do not use this for weak practical results; use `REVISE` or `REJECT` instead.
+Use `NEEDS_SCIENTIFIC_FRAMING` when the engineering result is practically promising, but it would need a clearer novelty, mechanism, ablation, or claim story before being treated as a research contribution. Do not use this for weak practical results; use `REVISE` or `KILL` instead.
 
 Examples:
 - The model clearly improves the benchmark, but the evidence does not explain why the method works.
@@ -70,8 +70,8 @@ Examples:
 - The critic evidence fingerprint is stale because the implementation or results changed after the reviewed evidence was produced.
 - The node cherry-picks a single successful run while hiding failed trials that materially change the conclusion.
 
-## `REJECT`:
-Use `REJECT` only when the direction is not worth continuing under the frozen benchmark and resource policy. Reject after distinguishing it from incomplete implementation: if a credible bounded path remains, return `REVISE`, not `REJECT`.
+## `KILL`:
+Use `KILL` only when the direction is not worth continuing under the frozen benchmark and resource policy. Reject after distinguishing it from incomplete implementation: if a credible bounded path remains, return `REVISE`, not `KILL`.
 
 Examples:
 - The implementation is complete, split/leakage evidence is valid, reasonable debugging and tuning have plateaued, and the node still cannot approach the baseline or target.
@@ -81,5 +81,5 @@ Examples:
 - A proposed branch is mostly a renamed version of the failed direction and does not introduce a credible mechanism for improvement.
 
 <Output>
-Return `ACCEPT_FINAL`, `PROMISING_CONTINUE`, `NEEDS_SCIENTIFIC_FRAMING`, `REVISE`, `REJECT`, or `INVALID` with evidence and the next concrete action if not accepted. Use `PROMISING_CONTINUE` for strong performance evidence that deserves more depth. Use `NEEDS_SCIENTIFIC_FRAMING` when scientist-mode framing would be needed for publication but the practical result is promising. Use `REJECT` only for weak, exhausted, or contract-violating directions that have no credible bounded path left. For a revision plan, an accepting verdict means the plan is safe to implement or branch from; it does not accept the node.
+Return `ACCEPT_FINAL`, `PROMISING_CONTINUE`, `NEEDS_SCIENTIFIC_FRAMING`, `REVISE`, `KILL`, or `INVALID` with evidence and the next concrete action if not accepted. Use `PROMISING_CONTINUE` for strong performance evidence that deserves more depth. Use `NEEDS_SCIENTIFIC_FRAMING` when scientist-mode framing would be needed for publication but the practical result is promising. Use `KILL` only for weak, exhausted, or contract-violating directions that have no credible bounded path left. For a revision plan, an accepting verdict means the plan is safe to implement or branch from; it does not accept the node.
 </Output>

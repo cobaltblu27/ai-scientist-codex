@@ -48,7 +48,6 @@ IDEA_TERMINAL_STATUSES = {
     "exhausted",
     "failed",
     "finalized",
-    "rejected",
     "skipped",
 }
 NODE_RESOLVED_STATUSES = {"accepted", "invalid", "rejected"}
@@ -756,7 +755,7 @@ def evaluate_ideation_state(state: dict[str, Any]) -> CompletionResult:
     if active_idea_ids or phase_state.get("active_idea_id"):
         return CompletionResult(False, "ideation_active_idea_unresolved", state)
     budget_terminal = phase_status == "completed_budget_exhausted"
-    if phase_status not in {"exhausted_no_candidate", "completed_budget_exhausted"} and not phase_state.get("early_stop_allowed") and attempted < required:
+    if phase_status != "exhausted_no_candidate" and not phase_state.get("early_stop_allowed") and attempted < required:
         return CompletionResult(False, "ideation_not_all_ideas_attempted", state)
     researchable = []
     for idea_id, idea in idea_states.items():
@@ -775,7 +774,7 @@ def evaluate_ideation_state(state: dict[str, Any]) -> CompletionResult:
             return CompletionResult(False, f"ideation_accepted_missing_rank:{idea_id}", state)
         if ranking.get("status") == "final" and evaluation in {"REJECTED", "ACCEPTED_WITHOUT_REFERENCE"} and not has_int_score(idea.get("score")):
             return CompletionResult(False, f"ideation_scored_terminal_missing_score:{idea_id}", state)
-        if status in {"skipped", "failed", "rejected", "error"} and not has_substantive_value(idea.get("skip_reason") or idea.get("reason") or idea.get("error") or idea.get("rejection_reason")):
+        if status in {"skipped", "failed", "error", "exhausted"} and not has_substantive_value(idea.get("skip_reason") or idea.get("reason") or idea.get("error") or idea.get("exhaustion_reason")):
             return CompletionResult(False, f"ideation_skipped_missing_reason:{idea_id}", state)
         if idea.get("researchable") is True or evaluation == "ACCEPTED":
             researchable.append(idea)

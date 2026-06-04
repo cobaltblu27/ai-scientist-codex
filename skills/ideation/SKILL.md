@@ -127,7 +127,7 @@ ai-scientist \
   --num-ideas 10
 ```
 
-The JSON payload must include a top-level run-owned `research_contract` for a fixed performance campaign: dataset, split/protocol, baseline, metric(s), evaluator command, success criteria, target threshold, and non-drift definition. If `--strictness-mode` is omitted, default is `scientist`. If `--num-ideas` is omitted, default is 10 attempted slots. This is slot-based, not "10 accepted ideas."
+The JSON payload must include a top-level run-owned `research_contract` for a fixed performance campaign: dataset, split/protocol, baseline, metric(s), evaluator command, success criteria, target threshold, and non-drift definition. If `--strictness-mode` is omitted, default is `scientist`. If `--num-ideas` is omitted, default is 10 attempted slots. If `--reflection-budget` is omitted, default is 10 generator draft attempts per fresh idea attempt. Each slot may respawn up to `ideation.max_attempts_per_slot` fresh attempts, default 3. This is slot-based, not "10 accepted ideas."
 
 Resume from state:
 
@@ -147,11 +147,11 @@ Use the returned `next_action` and prompt text as the immediate loop cursor. Rep
 
 The helper computes `next_action`. Follow it exactly.
 
-- `start_generator_batch`: run the prompt-only pre-generation synthesis before the first generator batch for a topic, then record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, and record all draft results.
+- `start_generator_batch`: run the prompt-only pre-generation synthesis before the first generator batch for a topic, then record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, and record all draft results. When `next_action_details.idea_ids` is present, start generators for those exact same idea ids instead of allocating new slots.
 - `collect_subagent_results`: previous generator/critic intents are pending; record completion or cancellation for each representative `intent_id` before doing anything else.
 - `search_semantic_scholar`: use `literature-search` as a backstop; run/record OpenAlex-first literature evidence if the generator did not already attach required evidence.
 - `start_critic_batch`: record critic intents for all ready draft `idea_ids`, spawn critics, then record all verdicts.
-- `revise_or_reject_batch`: one or more critics returned `REVISE` or `REJECT`; revise same idea thread(s) or explicitly reject them.
+- `revise_or_reject_batch`: one or more slots need a decision. `REVISE` means improve the current attempt if its per-attempt reflection budget remains. `REJECT` means kill the current attempt and respawn a fully fresh generator for the same slot. If details say the reflection budget or fresh-attempt cap is exhausted, call `idea exhaust`.
 - `finalize_ready_ideas`: call `ideation finalize-ready`; the transition is atomic and refuses stale critics, duplicate families without a meaningful protocol/metric delta, invalid commands, or missing evidence.
 - `complete_or_exhaust`: call `ideation complete` if the accepted idea batch satisfies `min_candidates`; otherwise call `ideation exhaust`.
 
@@ -228,7 +228,7 @@ ai-scientist \
   ideation intent cancel --run-id <run-id> --intent-id <intent-id> --reason "malformed generator output"
 ```
 
-Failed/cancelled attempts consume loop budget. Do not leave pending intents unresolved.
+Generator drafts consume only the current idea attempt's per-attempt reflection budget. Failed/cancelled generator intents end the slot as `error`; critic calls, literature search, finalization, and rejection bookkeeping do not consume reflection budget. Do not leave pending intents unresolved.
 
 </Subagent_Protocol>
 
@@ -249,7 +249,8 @@ Generator prompt must include:
 - Heiemeier answers/insights from the pre-generation synthesis
 - unresolved assumptions from the preflight
 - `skills/literature-search/SKILL.md` and permission to use it during the generator intent
-- previous critic verdict and required revisions when this is a revision
+- previous critic verdict and required revisions only when this is a `REVISE` revision of the same attempt
+- no rejected draft details when this is a fresh replacement after `REJECT`
 - instruction to return JSON only
 
 Generators should use the preflight reference and Heiemeier brief as seed context, not as a substitute for canonical evidence. Generators must not create per-idea research contracts or change the fixed dataset, split, baseline, metric, evaluator, or target threshold. Generators should use `literature-search` themselves when the idea needs papers, novelty checks, or mechanism evidence. The generator may run `idea search-semantic-scholar` for its assigned `idea_id`; this records canonical evidence while the generator still owns query choice and synthesis.
@@ -377,8 +378,8 @@ Allowed verdicts:
 
 - `ACCEPT`: candidate may become plain `ACCEPTED` if CLI hard gates pass.
 - `ACCEPT_WITHOUT_REFERENCE`: allowed only by mode config; useful for engineer/custom or S2 failure cases.
-- `REVISE`: do not finalize; either revise same idea thread or reject explicitly.
-- `REJECT`: reject explicitly or revise if the orchestrator has a clear reason.
+- `REVISE`: do not finalize; revise the same idea attempt if budget remains, otherwise exhaust the slot.
+- `REJECT`: do not finalize; kill the current attempt and let the CLI respawn a fully fresh generator for the same slot when attempts remain.
 
 Record verdict:
 
@@ -402,15 +403,17 @@ ai-scientist \
   idea revise-start --run-id <run-id> --idea-id <idea-id> --reason "<revision reason>"
 ```
 
-Then spawn a new generator for the revised draft.
+Then spawn a new generator for the revised draft. This keeps the same attempt alive and consumes another reflection from that attempt's per-attempt budget.
 
-Or abandon it explicitly:
+If the critic verdict is `REJECT`, or if you decide the current attempt is structurally weak, drifty, redundant, or not worth repairing, reject the current attempt into a fresh replacement for the same slot:
 
 ```bash
 ai-scientist \
   --target-repo <target-repo> \
-  idea reject --run-id <run-id> --idea-id <idea-id> --reason "abandoned_after_revise"
+  idea reject --run-id <run-id> --idea-id <idea-id> --reason "current_attempt_not_worth_repairing"
 ```
+
+After `idea reject`, resume. If fresh attempts remain, the cursor returns `start_generator_batch` with the same `idea_id`; start that generator from the original topic, frozen contract, mode prompt, and preflight/Heiemeier brief only. Do not pass the rejected draft, critic payload, or rejection reason to the replacement generator.
 
 For budget exhaustion on an active idea:
 
@@ -420,7 +423,7 @@ ai-scientist \
   idea exhaust --run-id <run-id> --idea-id <idea-id> --reason "reflection_budget_exhausted"
 ```
 
-Rejected/exhausted ideas stay in the audit trail and final `ideas.json` with `evaluation: "REJECTED"`.
+Rejected attempts stay in hidden attempt history. They do not count as terminal slot completion and are not research handoff candidates. Exhausted slots stay in the final `ideas.json` with `evaluation: "REJECTED"`.
 
 </Revision_And_Rejection>
 
@@ -444,7 +447,7 @@ Use `idea finalize --idea-id <idea-id>` only for a targeted single-idea transiti
 
 ## Ranking
 
-Ranking is legacy/manual only. Do not run it in the normal fixed-contract performance campaign flow. After all requested slots are attempted, or after budget forces stopping, complete the accepted idea batch instead of selecting one default idea.
+Ranking is legacy/manual only. Do not run it in the normal fixed-contract performance campaign flow. After all requested slots are accepted, exhausted, or error, complete the accepted idea batch instead of selecting one default idea.
 
 If the user explicitly asks for legacy/manual ranking, start the ranker:
 
@@ -520,7 +523,7 @@ ai-scientist \
   ideation complete --run-id <run-id>
 ```
 
-If budget was exhausted but at least one researchable candidate exists:
+If one or more slots were exhausted but at least one researchable candidate exists:
 
 ```bash
 ai-scientist \

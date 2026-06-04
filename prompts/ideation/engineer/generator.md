@@ -5,7 +5,7 @@ Generate one implementation-ready model-improvement idea for the assigned ideati
 </Purpose>
 
 <Inputs>
-Use the orchestrator assignment: research topic, strictness mode, idea id, run-owned `research_contract`, shared ideation contract, preflight reference papers or "none found" note, Heiemeier answers/insights, unresolved assumptions from the preflight, prior critic verdict when revising, and required result path.
+Use the orchestrator assignment: research topic, strictness mode, idea id, run-owned `research_contract`, shared ideation contract, preflight reference papers or "none found" note, Heiemeier answers/insights, unresolved assumptions from the preflight, prior critic verdict only when this is a same-attempt `REVISE`, and required result path. If this is a fresh replacement after `REJECT`, do not use rejected draft details, critic payloads, or rejection reasons as context.
 </Inputs>
 
 <Preflight_Context>

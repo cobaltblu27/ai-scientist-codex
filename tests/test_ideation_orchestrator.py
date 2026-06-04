@@ -140,11 +140,17 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(json.loads(started.stdout)["next_action"], "start_generator_batch")
             config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
             self.assertEqual(config["research_contract"]["fixed_dataset"]["name"], "Fixture dataset")
+            self.assertEqual(config["ideation"]["reflection_budget_per_idea"], 5)
+            self.assertNotIn("reflection_budget", config["ideation"])
+            self.assertEqual(config["ideation"]["max_attempts_per_slot"], 3)
             self.assertEqual(config["ideation"]["concurrency"]["max_subagents"], 6)
             scientist = config["ideation"]["modes"]["scientist"]
             self.assertEqual(scientist["generator_prompt"], "prompts/ideation/scientist/generator.md")
             self.assertEqual(scientist["critic_prompt"], "prompts/ideation/scientist/critic.md")
             self.assertEqual(scientist["ranker_prompt"], "prompts/ideation/scientist/ranker.md")
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["reflection_budget_per_idea"], 5)
+            self.assertEqual(state["state"]["max_attempts_per_slot"], 3)
 
             resumed = run_cli(target, "ideation", "resume", "--run-id", "run-001", "--prompt")
             self.assertEqual(resumed.returncode, 0, resumed.stderr)
@@ -361,6 +367,90 @@ class AgentDrivenIdeationTests(unittest.TestCase):
 
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("critic_stale_for_current_idea", completed.stdout)
+
+    def test_per_attempt_budget_blocks_revision_but_not_new_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "2", "--reflection-budget", "1").returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001"))).returncode, 0)
+            revised = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REVISE", 62)))
+            self.assertEqual(revised.returncode, 0, revised.stderr + revised.stdout)
+            self.assertEqual(json.loads(revised.stdout)["next_action"], "revise_or_reject_batch")
+            self.assertEqual(json.loads(revised.stdout)["next_action_details"]["required_action"], "idea exhaust")
+
+            blocked = run_cli(target, "idea", "revise-start", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "try again")
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("idea_reflection_budget_exhausted:idea-001", blocked.stdout)
+
+            self.assertEqual(run_cli(target, "idea", "exhaust", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "reflection_budget_exhausted").returncode, 0)
+            resumed = run_cli(target, "ideation", "resume", "--run-id", "run-001")
+            self.assertEqual(json.loads(resumed.stdout)["next_action"], "start_generator_batch")
+            self.assertEqual(json.loads(resumed.stdout)["next_action_details"]["next_idea_id"], "idea-002")
+
+            premature = run_cli(target, "ideation", "complete", "--run-id", "run-001", "--budget-exhausted")
+            self.assertNotEqual(premature.returncode, 0)
+            self.assertIn("not all requested idea slots", premature.stdout)
+
+    def test_reject_respawns_fresh_attempt_same_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1").returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001", "Rejected draft"))).returncode, 0)
+            rejected = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REJECT", 25)))
+            self.assertEqual(rejected.returncode, 0, rejected.stderr + rejected.stdout)
+            payload = json.loads(rejected.stdout)
+            self.assertEqual(payload["next_action"], "start_generator_batch")
+            self.assertEqual(payload["next_action_details"]["idea_ids"], ["idea-001"])
+
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            idea = state["state"]["idea_states"]["idea-001"]
+            self.assertEqual(idea["status"], "fresh_attempt_requested")
+            self.assertEqual(idea["attempt_index"], 2)
+            self.assertEqual(idea["attempts_used"], 2)
+            self.assertEqual(idea["reflection_count"], 0)
+            self.assertEqual(len(idea["attempt_history"]), 1)
+            self.assertNotIn("latest_draft", idea)
+            self.assertNotIn("latest_critic", idea)
+
+            batch = run_cli(target, "ideation", "intent", "start-batch", "--run-id", "run-001", "--role", "generator", "--idea-ids", "idea-001")
+            self.assertEqual(batch.returncode, 0, batch.stderr + batch.stdout)
+            intent = json.loads(batch.stdout)["intents"][0]
+            fresh_payload = idea_payload("idea-001", "Fresh replacement")
+            completed = run_cli(target, "ideation", "intent", "complete", "--run-id", "run-001", "--intent-id", intent["intent_id"], "--json", json.dumps(fresh_payload))
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            idea = state["state"]["idea_states"]["idea-001"]
+            self.assertEqual(idea["latest_draft"]["title"], "Fresh replacement")
+            self.assertEqual(idea["attempt_index"], 2)
+            self.assertEqual(idea["reflection_count"], 1)
+
+    def test_reject_attempt_cap_requires_exhaustion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1", "--max-attempts-per-slot", "3").returncode, 0)
+            for attempt in range(1, 4):
+                self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001", f"Rejected draft {attempt}"))).returncode, 0)
+                rejected = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REJECT", 20 + attempt)))
+                self.assertEqual(rejected.returncode, 0, rejected.stderr + rejected.stdout)
+
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            idea = state["state"]["idea_states"]["idea-001"]
+            self.assertEqual(idea["status"], "fresh_attempt_requested")
+            self.assertEqual(idea["budget_status"], "attempt_cap_reached")
+            self.assertEqual(idea["attempts_used"], 3)
+            self.assertEqual(len(idea["attempt_history"]), 3)
+            cursor = json.loads(run_cli(target, "ideation", "resume", "--run-id", "run-001").stdout)
+            self.assertEqual(cursor["next_action"], "revise_or_reject_batch")
+            self.assertEqual(cursor["next_action_details"]["required_action"], "idea exhaust")
+
+            blocked = run_cli(target, "ideation", "intent", "start-batch", "--run-id", "run-001", "--role", "generator", "--idea-ids", "idea-001")
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("idea_attempt_cap_reached:idea-001", blocked.stdout)
+
+            exhausted = run_cli(target, "idea", "exhaust", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "fresh_attempt_cap_reached")
+            self.assertEqual(exhausted.returncode, 0, exhausted.stderr + exhausted.stdout)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["idea_states"]["idea-001"]["status"], "exhausted")
 
     def test_legacy_contract_fields_are_not_persisted_on_idea(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -580,7 +670,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1").returncode, 0)
             self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(idea_payload("idea-001"))).returncode, 0)
             self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("REJECT", 20))).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "reject", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "critic rejected").returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "exhaust", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "critic rejected").returncode, 0)
             exhausted = run_cli(target, "ideation", "exhaust", "--run-id", "run-001")
             self.assertEqual(exhausted.returncode, 0, exhausted.stderr + exhausted.stdout)
 

@@ -143,6 +143,49 @@ class IdeationPromptSchemaTests(unittest.TestCase):
 
     def test_ideation_defaults_to_six_subagents(self) -> None:
         self.assertEqual(DEFAULT_IDEATION_CONFIG["concurrency"]["max_subagents"], 6)
+        self.assertEqual(DEFAULT_IDEATION_CONFIG["reflection_budget_per_idea"], 10)
+        self.assertEqual(DEFAULT_IDEATION_CONFIG["max_attempts_per_slot"], 3)
+
+    def test_ideation_prompts_define_reject_as_fresh_respawn(self) -> None:
+        skill = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
+        self.assertIn("`REJECT` means kill the current attempt and respawn a fully fresh generator for the same slot", skill)
+        for mode in ["scientist", "engineer", "custom"]:
+            critic = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "critic.md").read_text()
+            generator = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "generator.md").read_text()
+            self.assertIn("respawn a fully fresh generator for the same slot", critic)
+            self.assertIn("do not use rejected draft details", generator)
+            for verdict in ["ACCEPT", "ACCEPT_WITHOUT_REFERENCE", "REVISE", "REJECT"]:
+                self.assertIn(f"## `{verdict}`:", critic)
+            self.assertGreaterEqual(critic.count("Examples:"), 4)
+
+    def test_ideation_acceptance_requires_mechanistic_reason_to_work(self) -> None:
+        required_terms = [
+            "Acceptance_Mechanism_Bar",
+            "Acceptance_Probe_Filters",
+            "credible mechanism",
+            "Information-use probe",
+            "Measurement probe",
+            "Data-quirk probe",
+            "Mechanism probe",
+            "Transfer probe",
+            "Non-drift probe",
+            "overfitting",
+            "underfitting",
+            "transfer-learning",
+            "inductive bias",
+            "optimization",
+            "calibration",
+            "representation",
+            "Which dimension should improve",
+            "apples-to-apples",
+            "leakage risk",
+        ]
+        for mode in ["scientist", "engineer", "custom"]:
+            critic = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "critic.md").read_text()
+            for term in required_terms:
+                self.assertIn(term, critic)
+            self.assertIn("gives a strong", critic)
+            self.assertIn("reason it should work", critic)
 
 
 if __name__ == "__main__":

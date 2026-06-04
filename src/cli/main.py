@@ -2868,6 +2868,7 @@ def cmd_ideation_start(args: argparse.Namespace) -> int:
         num_ideas_required=args.num_ideas,
         min_candidates_required=args.min_candidates,
         reflection_budget=args.reflection_budget,
+        max_attempts_per_slot=args.max_attempts_per_slot,
         max_subagents=args.max_subagents,
         payload=payload,
     )
@@ -3305,6 +3306,7 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_start.add_argument("--num-ideas", type=int)
     ideation_start.add_argument("--min-candidates", type=int)
     ideation_start.add_argument("--reflection-budget", type=int)
+    ideation_start.add_argument("--max-attempts-per-slot", type=int)
     ideation_start.add_argument("--max-subagents", type=int)
     add_json_args(ideation_start)
     ideation_start.set_defaults(func=cmd_ideation_start)

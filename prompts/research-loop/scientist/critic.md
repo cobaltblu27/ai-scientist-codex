@@ -70,8 +70,8 @@ Examples:
 - The node quietly narrows the claim and presents a weaker finding as if it resolved the original hypothesis.
 - The evidence hides failed trials, omits required comparisons, or uses stale results after code or data changed.
 
-## `REJECT`:
-Use `REJECT` only when the direction is scientifically exhausted or below the target venue/contract bar with no credible bounded path remaining. Do not reject merely because the current score is low; reject only when low performance plus the evidence trail shows that further implementation is unlikely to resolve the hypothesis under the frozen contract.
+## `KILL`:
+Use `KILL` only when the direction is scientifically exhausted or below the target venue/contract bar with no credible bounded path remaining. Do not reject merely because the current score is low; reject only when low performance plus the evidence trail shows that further implementation is unlikely to resolve the hypothesis under the frozen contract.
 
 Examples:
 - The implementation and required comparisons are complete, reasonable same-node fixes have been tried, and evidence consistently contradicts the proposed mechanism without yielding a publishable negative result.
@@ -81,5 +81,5 @@ Examples:
 - A proposed branch is not scientifically distinct, not paper-worthy under the venue bar, or cannot test the original hypothesis or an allowed rescue.
 
 <Output>
-Return `ACCEPT_FINAL`, `PROMISING_CONTINUE`, `NEEDS_SCIENTIFIC_FRAMING`, `REVISE`, `REJECT`, or `INVALID` with concrete evidence, required revisions, and any unresolved risks. Use `PROMISING_CONTINUE` for strong performance evidence that deserves more depth. Use `NEEDS_SCIENTIFIC_FRAMING` when performance is promising but the scientific finding is still weak. Use `REJECT` only for weak, exhausted, or contract-violating directions that have no credible bounded path left. For a revision plan, an accepting verdict means the plan is safe to implement or branch from; it does not accept the node.
+Return `ACCEPT_FINAL`, `PROMISING_CONTINUE`, `NEEDS_SCIENTIFIC_FRAMING`, `REVISE`, `KILL`, or `INVALID` with concrete evidence, required revisions, and any unresolved risks. Use `PROMISING_CONTINUE` for strong performance evidence that deserves more depth. Use `NEEDS_SCIENTIFIC_FRAMING` when performance is promising but the scientific finding is still weak. Use `KILL` only for weak, exhausted, or contract-violating directions that have no credible bounded path left. For a revision plan, an accepting verdict means the plan is safe to implement or branch from; it does not accept the node.
 </Output>

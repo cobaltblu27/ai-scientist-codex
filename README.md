@@ -248,8 +248,9 @@ state, Semantic Scholar recording, validation, and handoff artifacts:
    `COMPLETED`, `COMPLETED_BUDGET_EXHAUSTED`, `EXHAUSTED_NO_CANDIDATE`, or
    `CANCELLED`.
 
-Default loop settings are `--num-ideas 10`, `--reflection-budget 10`, and
-`--strictness-mode scientist`.
+Default loop settings are `--num-ideas 10`, `--reflection-budget 10` per fresh
+idea attempt, `ideation.max_attempts_per_slot` 3, and `--strictness-mode
+scientist`.
 
 Example start:
 
