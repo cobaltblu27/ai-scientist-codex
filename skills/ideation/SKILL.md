@@ -1,6 +1,6 @@
 ---
 name: ideation
-description: Generate structured research ideas from an inline prompt by running a Codex-native, Stop-hook-enforced ideation loop.
+description: Generate structured research ideas from an inline prompt by running a Codex-native, Stop-hook-enforced ideation loop. DO NOT USE; this skill is explicit-usuage ONLY.
 ---
 
 # Ideation

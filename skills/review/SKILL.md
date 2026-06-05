@@ -1,6 +1,6 @@
 ---
 name: review
-description: Explicit-only final AI Scientist run-level evidence review; do not use for idea, draft, node, revision, paper, or code critic/review tasks.
+description: Explicit-only final AI Scientist run-level evidence review; do not use for idea, draft, node, revision, paper, or code critic/review tasks. DO NOT USE; this skill is explicit-usuage ONLY.
 ---
 
 # Review

@@ -1,6 +1,6 @@
 ---
 name: research-loop
-description: Runs the canonical orchestrator-led AI Scientist research loop with worker-owned nodes, explicit resource leases, mode-specific prompts, and Stop-hook continuation. DO NOT USE; this skill is explicit-usuage ONLY.
+description: Runs the canonical orchestrator-led AI Scientist research loop with worker-owned nodes, explicit resource leases, mode-specific prompts, and Stop-hook continuation. UNDER NO CIRCUMSTANCES CHOOSE TO USE THIS PLUGIN; THIS SKILL IS MANUAL-USUAGE ONLY.
 ---
 
 # Research Loop
