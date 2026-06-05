@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -40,7 +41,7 @@ def selected_idea_payload(resources: dict[str, object] | None = None) -> dict[st
     return payload
 
 
-def run_cli(target: Path, *args: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+def run_cli(target: Path, *args: str, input_text: str | None = None, extra_path: Path | None = None) -> subprocess.CompletedProcess[str]:
     command_args = list(args)
     if len(command_args) >= 2 and command_args[0] == "research" and command_args[1] == "start":
         if "--json" in command_args:
@@ -59,12 +60,16 @@ def run_cli(target: Path, *args: str, input_text: str | None = None) -> subproce
             command_args[index] = json.dumps(payload)
         elif "--json-file" not in command_args:
             command_args.extend(["--json", json.dumps(selected_idea_payload())])
+    env = os.environ.copy()
+    if extra_path is not None:
+        env["PATH"] = os.pathsep.join([str(extra_path), env.get("PATH", "")])
     return subprocess.run(
         [*AI_SCIENTIST_CMD, "--target-repo", str(target), *command_args],
         input=input_text,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
         check=False,
     )
 
@@ -86,6 +91,8 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("The orchestrator must not implement the node directly", skill_text)
         self.assertIn("first return must be a plan", skill_text)
         self.assertIn("Resource-Heavy Runs", skill_text)
+        self.assertIn("default scheduler is local", skill_text)
+        self.assertIn("--scheduler slurm", skill_text)
         self.assertIn("Orchestrator_Instructions", skill_text)
         self.assertIn("This `SKILL.md` is the orchestrator instruction source", skill_text)
         self.assertIn("Do not load or rely on a separate orchestrator prompt file", skill_text)
@@ -760,6 +767,193 @@ class ResearchWorkflowTests(unittest.TestCase):
             self.assertIn("logs/resources/baseline-score-001", str(command_ref))
             command = read_json(command_ref)
             self.assertEqual(command["exit_code"], 0)
+            self.assertEqual(command["scheduler"], "local")
+
+    def test_resource_run_slurm_backend_records_scheduler_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            fake_sbatch = fake_bin / "sbatch"
+            fake_sbatch.write_text(
+                f"""#!{sys.executable}
+import subprocess
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+stdout_path = None
+stderr_path = None
+script = args[-1]
+i = 0
+while i < len(args):
+    arg = args[i]
+    if arg == "--output":
+        stdout_path = args[i + 1]
+        i += 2
+    elif arg.startswith("--output="):
+        stdout_path = arg.split("=", 1)[1]
+        i += 1
+    elif arg == "--error":
+        stderr_path = args[i + 1]
+        i += 2
+    elif arg.startswith("--error="):
+        stderr_path = arg.split("=", 1)[1]
+        i += 1
+    else:
+        i += 1
+
+print("12345")
+stdout_handle = Path(stdout_path).open("w") if stdout_path else subprocess.DEVNULL
+stderr_handle = Path(stderr_path).open("w") if stderr_path else subprocess.DEVNULL
+try:
+    proc = subprocess.run(["bash", script], stdout=stdout_handle, stderr=stderr_handle, check=False)
+finally:
+    if hasattr(stdout_handle, "close"):
+        stdout_handle.close()
+    if hasattr(stderr_handle, "close"):
+        stderr_handle.close()
+raise SystemExit(proc.returncode)
+"""
+            )
+            fake_sbatch.chmod(0o755)
+
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "engineer",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps(
+                    {
+                        "resources": {
+                            "max_parallel": 1,
+                            "gpus": 1,
+                            "cpu_cores": 8,
+                            "memory_mb": 32768,
+                            "scheduler": {
+                                "type": "slurm",
+                                "partition": "gpu",
+                                "time": "00:10:00",
+                                "gres": "gpu:1",
+                                "cpus_per_task": 2,
+                                "mem": "4G",
+                            },
+                        }
+                    }
+                ),
+                extra_path=fake_bin,
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+
+            run = run_cli(
+                target,
+                "resource",
+                "run",
+                "--run-id",
+                "run-001",
+                "--task-id",
+                "baseline-score-001",
+                "--gpus",
+                "1",
+                "--cpu-cores",
+                "2",
+                "--memory-mb",
+                "4096",
+                "--metrics-json",
+                json.dumps({"score": 0.9}),
+                "--",
+                sys.executable,
+                "-c",
+                "print('slurm resource ok')",
+                extra_path=fake_bin,
+            )
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            payload = json_out(run)
+            self.assertTrue(payload["lease_id"].startswith("lease-"))
+            command = read_json(Path(payload["command_ref"]))
+            self.assertEqual(command["scheduler"], "slurm")
+            self.assertEqual(command["slurm_job_id"], "12345")
+            self.assertEqual(command["exit_code"], 0)
+            self.assertEqual(command["scheduler_exit_code"], 0)
+            self.assertEqual(command["resource_lease_id"], payload["lease_id"])
+            self.assertEqual(command["metrics"]["score"], 0.9)
+            self.assertIn("--wait", command["sbatch_argv"])
+            self.assertIn("--gres=gpu:1", command["sbatch_argv"])
+            self.assertEqual(command["slurm"]["partition"], "gpu")
+            self.assertIn("slurm resource ok", Path(command["stdout"]).read_text())
+
+            state = read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
+            resources = state["state"]["resources"]
+            self.assertNotIn(payload["lease_id"], resources["leases"])
+            self.assertEqual(resources["completed_leases"][payload["lease_id"]]["status"], "completed")
+            self.assertEqual(resources["completed_leases"][payload["lease_id"]]["details"]["slurm_job_id"], "12345")
+
+    def test_resource_run_slurm_submission_failure_releases_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            fake_sbatch = fake_bin / "sbatch"
+            fake_sbatch.write_text(
+                f"""#!{sys.executable}
+import sys
+
+print("submission failed", file=sys.stderr)
+raise SystemExit(7)
+"""
+            )
+            fake_sbatch.chmod(0o755)
+
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "engineer",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps({"resources": {"max_parallel": 1, "gpus": 1, "scheduler": {"type": "slurm", "partition": "gpu"}}}),
+                extra_path=fake_bin,
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            run = run_cli(
+                target,
+                "resource",
+                "run",
+                "--run-id",
+                "run-001",
+                "--task-id",
+                "baseline-score-001",
+                "--gpus",
+                "1",
+                "--",
+                sys.executable,
+                "-c",
+                "print('should not run')",
+                extra_path=fake_bin,
+            )
+            self.assertNotEqual(run.returncode, 0)
+            payload = json_out(run)
+            command = read_json(Path(payload["command_ref"]))
+            self.assertEqual(command["scheduler"], "slurm")
+            self.assertEqual(command["scheduler_exit_code"], 7)
+            self.assertEqual(command["exit_code"], 7)
+            self.assertIn("submission failed", command["sbatch_stderr"])
+            state = read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
+            resources = state["state"]["resources"]
+            self.assertNotIn(payload["lease_id"], resources["leases"])
+            self.assertEqual(resources["completed_leases"][payload["lease_id"]]["status"], "failed")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,23 @@
 ---
 name: review
-description: Review AI Scientist run evidence for leakage, split integrity, baseline comparison, strictness-mode criteria, and a structured verdict.
+description: Explicit-only final AI Scientist run-level evidence review; do not use for idea, draft, node, revision, paper, or code critic/review tasks.
 ---
 
 # Review
 
+<Use_When>
+Use this skill ONLY when the user explicitly triggers the AI Scientist review skill for a final run-level review. This skill audits completed AI Scientist artifacts after the research loop, and after writeup when a writeup exists, to decide whether the run evidence supports the claimed outcome.
+</Use_When>
+
+<Do_Not_Use_When>
+- Do not use this skill just because an agent is told to review, critique, score, or evaluate an idea.
+- Do not use this skill for ideation critic subagents, research-loop node critics, revision critics, paper reviewers, or generic code review.
+- Do not use this skill before the run-level artifacts needed for final evidence review exist; use the mode-specific critic prompt or active phase skill instead.
+</Do_Not_Use_When>
+
 <Purpose>
 
-Use this skill after research-loop artifacts are complete and before writeup.
+Use this skill for the explicit run-level review phase after research-loop artifacts are complete. In the normal pipeline this gates writeup; if a writeup already exists, use it only as additional evidence for final run-level review.
 
 </Purpose>
 

@@ -10,6 +10,8 @@ This agent orchestration framework will be mostly AI-focused researches. Behavio
 - AI-Scientist-V2 is a repository of automated research harness using llm. this plugin is inspired from it; and design for each step, ideation, research loop and so on are influenced from it.
 - Oh-My-Codex is a codex all-in-one toolkit. We'll adapt its methodology for consistent state managment, agent orchestration, and keeping the loop ongoing until a criteria is met.
 
+## Agent Prompting
+Many specs to add will require change of CLI or prompt. Same feature can be implemented as both, where addition to prompts such as SKILL.md is soft enforcement and change to CLI is a deterministic hard-rule. Sometimes you will need to determine where to change. Good rule of thumb to decide is: If it's related with loop state criteria, such as STOP hook, budget, etc, it belongs in CLI. If its not, it can be either, but prioritize prompt editing first. CLI-based hard rule enforcement is revered when real-world testing proves it is needed.
 
 ## Criteria
 - Each step is a loop that must continue until the criteria is met.

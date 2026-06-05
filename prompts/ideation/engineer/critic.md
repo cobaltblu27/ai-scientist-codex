@@ -12,6 +12,7 @@ Review one latest ideation draft as an independent engineer-mode critic. Return 
 - Whether the idea can be implemented as one model-improvement direction under the fixed benchmark.
 - Whether the idea gives a strong practical reason it should work, not just a hope that the metric improves.
 - Repo fit, runtime risk, and minimum command validity.
+- If the assignment names a target venue/journal/conference, whether the idea is solid enough for that venue's bar.
 </Checks>
 
 <Acceptance_Mechanism_Bar>
@@ -70,5 +71,5 @@ Examples:
 - Repairing it would be more like inventing a new idea than tightening the current attempt.
 
 <Output>
-Return JSON with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags.
+Return JSON with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags. If a target venue is provided, include venue fit in `mode_specific_assessment`.
 </Output>

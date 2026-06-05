@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent-facing helper CLI for AI Scientist research-loop state."""
+"""Agent-facing helper CLI for AI Scientist workflow state."""
 from __future__ import annotations
 
 import argparse
@@ -87,6 +87,7 @@ from research.usage_cap import (
     read_codex_rate_limits,
     utc_now as usage_utc_now,
 )
+from research import workflow as research_workflow
 
 MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
 PAPER_MODES = {"scientist", "researcher"}
@@ -99,10 +100,12 @@ CRITIC_ROLES = {"evidence_auditor", "claim_critic", "performance_auditor"}
 DEFAULT_CRITIC_AGENT = {"model": "gpt-5.5", "reasoning_effort": "xhigh", "required": True}
 REQUIRED_CONTRACT_KEYS = {
     "primary_hypothesis",
+    "goal_type",
     "success_criteria",
     "failure_criteria",
     "allowed_rescue_scope",
     "kill_criteria",
+    "non_drift_definition",
     "metrics_that_matter",
     "non_negotiable_comparisons",
 }
@@ -300,21 +303,39 @@ def default_research_contract(payload: dict[str, Any]) -> dict[str, Any] | None:
     for key in ("research_contract", "contract"):
         value = payload.get(key)
         if isinstance(value, dict):
-            return value
+            return deepcopy(value)
     idea = payload.get("selected_idea") or payload.get("idea")
+    if isinstance(idea, dict):
+        for key in ("research_contract", "contract"):
+            value = idea.get(key)
+            if isinstance(value, dict):
+                return deepcopy(value)
     if isinstance(idea, dict) and idea.get("hypothesis"):
         hypothesis = str(idea["hypothesis"])
         metric = idea.get("expected_metric") or payload.get("metric_key") or "declared benchmark metric"
         return {
             "primary_hypothesis": hypothesis,
+            "goal_type": "performance",
             "success_criteria": f"Evidence supports the hypothesis under the declared benchmark and {metric}.",
             "failure_criteria": f"Evidence shows the hypothesis is false or unsupported under the declared benchmark and {metric}.",
             "allowed_rescue_scope": "Allowed only when the original hypothesis verdict is explicitly failed and the narrower claim is disclosed.",
             "kill_criteria": "Stop or mark failed when required evidence cannot be produced without changing the frozen benchmark, split, or environment.",
+            "non_drift_definition": "A useful report, partial implementation, or narrowed claim is drift unless it explicitly resolves the primary hypothesis or an allowed rescue.",
             "metrics_that_matter": [metric],
             "non_negotiable_comparisons": ["baseline", "declared split", "leakage/split integrity checks"],
         }
     return None
+
+
+def selected_idea_snapshot(payload: dict[str, Any]) -> dict[str, Any] | None:
+    idea = payload.get("selected_idea") or payload.get("idea")
+    if not isinstance(idea, dict):
+        return None
+    snapshot = deepcopy(idea)
+    if "research_contract" not in snapshot and isinstance(snapshot.get("contract"), dict):
+        snapshot["research_contract"] = deepcopy(snapshot["contract"])
+    snapshot.pop("contract", None)
+    return snapshot
 
 
 def default_selection_config(payload: dict[str, Any]) -> dict[str, Any]:
@@ -766,7 +787,7 @@ def default_config(
         raise CliError(f"invalid strictness mode: {strictness_mode}")
     resolved_max, concurrency_source = resolve_research_max_subagents(target, payload, max_subagents)
     contract = default_research_contract(payload)
-    return {
+    cfg = {
         "schema_version": 1,
         "run_id": run_id,
         "target_repo": str(target),
@@ -790,6 +811,10 @@ def default_config(
         "selection": default_selection_config(payload),
         "created_at": utc_now(),
     }
+    idea_snapshot = selected_idea_snapshot(payload)
+    if idea_snapshot is not None:
+        cfg["selected_idea"] = idea_snapshot
+    return cfg
 
 
 def cmd_research_start(args: argparse.Namespace) -> int:
@@ -833,6 +858,14 @@ def cmd_research_start(args: argparse.Namespace) -> int:
     }
     initial_state.update(payload.get("state", {}))
     state = start_phase(target, run_id, "research", initial_state)
+    set_active_run(
+        target,
+        run_id,
+        "research",
+        "active",
+        codex_session_id=args.codex_session_id or os.environ.get("CODEX_SESSION_ID"),
+        codex_thread_id=args.codex_thread_id or os.environ.get("CODEX_THREAD_ID"),
+    )
     atomic_write_json(config_path(target, run_id), cfg)
     append_journal_event(target, run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
     usage = refresh_usage_cap(target, run_id, cfg, force=True, command="research start usage-check")
@@ -2826,6 +2859,7 @@ def ideation_response(target: Path, run_id: str, **extra: Any) -> int:
 
 def cmd_ideation_start(args: argparse.Namespace) -> int:
     target = target_repo(args)
+    payload = load_payload(args)
     state = start_ideation(
         target,
         args.run_id,
@@ -2834,7 +2868,9 @@ def cmd_ideation_start(args: argparse.Namespace) -> int:
         num_ideas_required=args.num_ideas,
         min_candidates_required=args.min_candidates,
         reflection_budget=args.reflection_budget,
+        max_attempts_per_slot=args.max_attempts_per_slot,
         max_subagents=args.max_subagents,
+        payload=payload,
     )
     cfg = current_config(target, args.run_id)
     cursor = cursor_for_state(state, cfg)
@@ -2874,7 +2910,7 @@ def cmd_ideation_rank_finalize(args: argparse.Namespace) -> int:
 
 def cmd_ideation_rank_candidates(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
-    result = rank_candidates(target, run_id, mode=args.mode)
+    result = rank_candidates(target, run_id)
     return ideation_response(target, run_id, **result)
 
 
@@ -3179,12 +3215,6 @@ def cmd_evidence_semantic_scholar(args: argparse.Namespace) -> int:
     return evidence_main(argv)
 
 
-def cmd_research_loop_run(args: argparse.Namespace) -> int:
-    from research.loop.orchestrator import main as research_loop_main
-
-    return research_loop_main(args.args)
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-repo", type=Path, help="Target repository. Defaults to current working directory.")
@@ -3232,52 +3262,40 @@ def build_parser() -> argparse.ArgumentParser:
     s2.add_argument("--fixture", type=Path)
     s2.set_defaults(func=cmd_evidence_semantic_scholar)
 
-    research_loop = sub.add_parser("research-loop")
-    research_loop_sub = research_loop.add_subparsers(dest="command", required=True)
-    research_loop_run = research_loop_sub.add_parser("run")
-    research_loop_run.add_argument("args", nargs=argparse.REMAINDER)
-    research_loop_run.set_defaults(func=cmd_research_loop_run)
-
     research = sub.add_parser("research")
     research_sub = research.add_subparsers(dest="command", required=True)
     start = research_sub.add_parser("start")
     start.add_argument("--run-id", required=True)
-    start.add_argument("--strictness-mode")
+    start.add_argument("--strictness-mode", required=True, choices=sorted(research_workflow.ACTIVE_MODES))
     start.add_argument("--selected-idea-id")
-    start.add_argument("--target-venue-preset")
-    start.add_argument("--target-venue-name")
-    start.add_argument("--target-venue-notes")
-    start.add_argument("--token-budget-percent")
-    start.add_argument("--max-subagents", type=int)
-    start.add_argument("--no-limit-host-cap", action="store_true")
+    start.add_argument("--resource-config", type=Path)
+    start.add_argument("--codex-session-id")
+    start.add_argument("--codex-thread-id")
     add_json_args(start)
-    start.set_defaults(func=cmd_research_start)
+    start.set_defaults(func=research_workflow.cmd_research_start)
     resume = research_sub.add_parser("resume")
     resume.add_argument("--run-id")
-    resume.set_defaults(func=cmd_research_resume)
-    usage_check = research_sub.add_parser("usage-check")
-    usage_check.add_argument("--run-id", required=True)
-    usage_check.add_argument("--force", action="store_true")
-    usage_check.set_defaults(func=cmd_research_usage_check)
+    resume.set_defaults(func=research_workflow.cmd_research_resume)
     checkpoint = research_sub.add_parser("checkpoint")
     checkpoint.add_argument("--run-id")
     add_json_args(checkpoint)
-    checkpoint.set_defaults(func=cmd_research_checkpoint)
-    next_action = research_sub.add_parser("set-next-action")
-    next_action.add_argument("--run-id")
-    next_action.add_argument("--lane", required=True)
-    next_action.add_argument("--reason")
-    next_action.add_argument("--node-id")
-    add_json_args(next_action)
-    next_action.set_defaults(func=cmd_research_set_next_action)
+    checkpoint.set_defaults(func=research_workflow.cmd_research_checkpoint)
+    select = research_sub.add_parser("select")
+    select.add_argument("--run-id")
+    select.add_argument("--node-id", required=True)
+    select.add_argument("--summary")
+    select.add_argument("--evidence-ref", action="append")
+    select.add_argument("--acceptance-rationale")
+    add_json_args(select)
+    select.set_defaults(func=research_workflow.cmd_research_select)
     complete = research_sub.add_parser("complete")
     complete.add_argument("--run-id")
     add_json_args(complete)
-    complete.set_defaults(func=cmd_research_complete)
+    complete.set_defaults(func=research_workflow.cmd_research_complete)
     cancel = research_sub.add_parser("cancel")
     cancel.add_argument("--run-id")
     cancel.add_argument("--reason", required=True)
-    cancel.set_defaults(func=cmd_research_cancel)
+    cancel.set_defaults(func=research_workflow.cmd_research_cancel)
 
     ideation = sub.add_parser("ideation")
     ideation_sub = ideation.add_subparsers(dest="command", required=True)
@@ -3288,7 +3306,9 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_start.add_argument("--num-ideas", type=int)
     ideation_start.add_argument("--min-candidates", type=int)
     ideation_start.add_argument("--reflection-budget", type=int)
+    ideation_start.add_argument("--max-attempts-per-slot", type=int)
     ideation_start.add_argument("--max-subagents", type=int)
+    add_json_args(ideation_start)
     ideation_start.set_defaults(func=cmd_ideation_start)
     ideation_resume = ideation_sub.add_parser("resume")
     ideation_resume.add_argument("--run-id")
@@ -3311,7 +3331,6 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_rank.set_defaults(func=cmd_ideation_rank_finalize)
     ideation_rank_candidates = ideation_sub.add_parser("rank-candidates")
     ideation_rank_candidates.add_argument("--run-id")
-    ideation_rank_candidates.add_argument("--mode", choices=["deterministic", "agent"], default="deterministic")
     ideation_rank_candidates.set_defaults(func=cmd_ideation_rank_candidates)
     ideation_finalize_ready = ideation_sub.add_parser("finalize-ready")
     ideation_finalize_ready.add_argument("--run-id")
@@ -3431,134 +3450,6 @@ def build_parser() -> argparse.ArgumentParser:
     idea_exhaust.add_argument("--reason", default="reflection_budget_exhausted")
     idea_exhaust.set_defaults(func=cmd_idea_exhaust)
 
-    node = sub.add_parser("node")
-    node_sub = node.add_subparsers(dest="command", required=True)
-    transition = node_sub.add_parser("transition")
-    transition.add_argument("--run-id")
-    transition.add_argument("--node-id", required=True)
-    transition.add_argument("--status", required=True)
-    transition.add_argument("--reason")
-    add_json_args(transition)
-    transition.set_defaults(func=cmd_node_transition)
-
-    plan_start = node_sub.add_parser("plan-start")
-    plan_start.add_argument("--run-id")
-    plan_start.add_argument("--node-id", required=True)
-    plan_start.add_argument("--plan-id")
-    add_json_args(plan_start)
-    plan_start.set_defaults(func=cmd_node_plan_start)
-    plan_complete = node_sub.add_parser("plan-complete")
-    plan_complete.add_argument("--run-id")
-    plan_complete.add_argument("--plan-id", required=True)
-    add_json_args(plan_complete)
-    plan_complete.set_defaults(func=cmd_node_plan_complete)
-    step_start = node_sub.add_parser("step-start")
-    step_start.add_argument("--run-id")
-    step_start.add_argument("--node-id", required=True)
-    step_start.add_argument("--step-id")
-    step_start.add_argument("--step-index", type=int)
-    step_start.set_defaults(func=cmd_node_step_start)
-    step_complete = node_sub.add_parser("step-complete")
-    step_complete.add_argument("--run-id")
-    step_complete.add_argument("--step-id", required=True)
-    step_complete.add_argument("--reason")
-    add_json_args(step_complete)
-    step_complete.set_defaults(func=cmd_node_step_complete)
-    revision_start = node_sub.add_parser("revision-start")
-    revision_start.add_argument("--run-id")
-    revision_start.add_argument("--node-id", required=True)
-    revision_start.add_argument("--revision-id")
-    add_json_args(revision_start)
-    revision_start.set_defaults(func=cmd_node_revision_start)
-    revision_complete = node_sub.add_parser("revision-complete")
-    revision_complete.add_argument("--run-id")
-    revision_complete.add_argument("--revision-id", required=True)
-    add_json_args(revision_complete)
-    revision_complete.set_defaults(func=cmd_node_revision_complete)
-    revision_critic_start = node_sub.add_parser("revision-critic-start")
-    revision_critic_start.add_argument("--run-id")
-    revision_critic_start.add_argument("--revision-id", required=True)
-    revision_critic_start.add_argument("--critic-id")
-    revision_critic_start.set_defaults(func=cmd_node_revision_critic_start)
-    revision_critic_complete = node_sub.add_parser("revision-critic-complete")
-    revision_critic_complete.add_argument("--run-id")
-    revision_critic_complete.add_argument("--critic-id", required=True)
-    add_json_args(revision_critic_complete)
-    revision_critic_complete.set_defaults(func=cmd_node_revision_critic_complete)
-    branch = node_sub.add_parser("branch")
-    branch.add_argument("--run-id")
-    branch.add_argument("--node-id", required=True)
-    branch.add_argument("--from-node")
-    branch.add_argument("--revision-id")
-    branch.add_argument("--alternative-id")
-    branch.add_argument("--reason")
-    add_json_args(branch)
-    branch.set_defaults(func=cmd_node_branch)
-    critic_start = node_sub.add_parser("critic-start")
-    critic_start.add_argument("--run-id")
-    critic_start.add_argument("--node-id", required=True)
-    critic_start.add_argument("--critic-id")
-    critic_start.add_argument("--role", choices=sorted(CRITIC_ROLES))
-    critic_start.set_defaults(func=cmd_node_critic_start)
-    critic_spawn = node_sub.add_parser("critic-spawn-record")
-    critic_spawn.add_argument("--run-id")
-    critic_spawn.add_argument("--critic-id", required=True)
-    critic_spawn.add_argument("--agent-id", required=True)
-    critic_spawn.add_argument("--model", required=True)
-    critic_spawn.add_argument("--reasoning-effort", required=True)
-    critic_spawn.set_defaults(func=cmd_node_critic_spawn_record)
-    critic_complete = node_sub.add_parser("critic-complete")
-    critic_complete.add_argument("--run-id")
-    critic_complete.add_argument("--critic-id", required=True)
-    add_json_args(critic_complete)
-    critic_complete.set_defaults(func=cmd_node_critic_complete)
-    create_workspace = node_sub.add_parser("create-workspace")
-    create_workspace.add_argument("--run-id")
-    create_workspace.add_argument("--node-id", required=True)
-    create_workspace.add_argument("--reason")
-    create_workspace.set_defaults(func=cmd_node_create_workspace)
-    repair_start = node_sub.add_parser("repair-start")
-    repair_start.add_argument("--run-id")
-    repair_start.add_argument("--node-id", required=True)
-    repair_start.add_argument("--reason")
-    repair_start.add_argument("--required-revision", action="append")
-    repair_start.set_defaults(func=cmd_node_repair_start)
-    repair_complete = node_sub.add_parser("repair-complete")
-    repair_complete.add_argument("--run-id")
-    repair_complete.add_argument("--repair-id", required=True)
-    add_json_args(repair_complete)
-    repair_complete.set_defaults(func=cmd_node_repair_complete)
-
-    subagent = sub.add_parser("subagent")
-    subagent_sub = subagent.add_subparsers(dest="command", required=True)
-    update = subagent_sub.add_parser("update")
-    update.add_argument("--run-id")
-    update.add_argument("--subagent-id", required=True)
-    update.add_argument("--status", required=True)
-    update.add_argument("--node-id")
-    add_json_args(update)
-    update.set_defaults(func=cmd_subagent_update)
-
-    selection = sub.add_parser("selection")
-    selection_sub = selection.add_subparsers(dest="command", required=True)
-    finalize = selection_sub.add_parser("finalize")
-    finalize.add_argument("--run-id")
-    finalize.add_argument("--selected-node")
-    add_json_args(finalize)
-    finalize.set_defaults(func=cmd_selection_finalize)
-
-    finding = sub.add_parser("finding")
-    finding_sub = finding.add_subparsers(dest="command", required=True)
-    finding_record = finding_sub.add_parser("record")
-    finding_record.add_argument("--run-id")
-    finding_record.add_argument("--node-id")
-    finding_record.add_argument("--kind", choices=sorted(FINDING_KINDS))
-    finding_record.add_argument("--summary")
-    finding_record.add_argument("--source-ref")
-    finding_record.add_argument("--transferable", action="store_true")
-    add_json_args(finding_record)
-    finding_record.set_defaults(func=cmd_finding_record)
-
     validation = sub.add_parser("validation")
     validation_sub = validation.add_subparsers(dest="command", required=True)
     validation_record = validation_sub.add_parser("record")
@@ -3578,39 +3469,53 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_record.add_argument("--reason")
     handoff_record.set_defaults(func=cmd_handoff_record)
 
-    workspace = sub.add_parser("workspace")
-    workspace_sub = workspace.add_subparsers(dest="command", required=True)
-    workspace_init = workspace_sub.add_parser("init")
-    workspace_init.add_argument("--run-id")
-    workspace_init.add_argument("--source", default=".")
-    workspace_init.set_defaults(func=cmd_workspace_init)
-
     resource = sub.add_parser("resource")
     resource_sub = resource.add_subparsers(dest="command", required=True)
+    resource_status = resource_sub.add_parser("status")
+    resource_status.add_argument("--run-id")
+    resource_status.set_defaults(func=research_workflow.cmd_resource_status)
+    resource_acquire = resource_sub.add_parser("acquire")
+    resource_acquire.add_argument("--run-id")
+    resource_acquire.add_argument("--task-id", required=True)
+    resource_acquire.add_argument("--gpus", type=int, default=0)
+    resource_acquire.add_argument("--cpu-cores", type=int, default=0)
+    resource_acquire.add_argument("--memory-mb", type=int, default=0)
+    resource_acquire.add_argument("--timeout-sec", type=float, default=0.0)
+    resource_acquire.add_argument("--poll-sec", type=float, default=5.0)
+    resource_acquire.set_defaults(func=research_workflow.cmd_resource_acquire)
+    resource_release = resource_sub.add_parser("release")
+    resource_release.add_argument("--run-id")
+    resource_release.add_argument("--lease-id", required=True)
+    resource_release.set_defaults(func=research_workflow.cmd_resource_release)
     resource_run = resource_sub.add_parser("run")
     resource_run.add_argument("--run-id")
-    resource_run.add_argument("--node-id", required=True)
-    resource_run.add_argument("--trial-id", required=True)
+    resource_run.add_argument("--task-id", required=True)
     resource_run.add_argument("--purpose", default="benchmark")
     resource_run.add_argument("--cwd")
     resource_run.add_argument("--env-json")
     resource_run.add_argument("--metrics-path")
     resource_run.add_argument("--metrics-json")
-    resource_run.add_argument("--seed")
-    resource_run.add_argument("--benchmark-contract-version", default="v1")
     resource_run.add_argument("--notes", default="")
-    resource_run.add_argument("--gpu", action="store_true")
+    resource_run.add_argument("--gpus", type=int, default=0)
+    resource_run.add_argument("--cpu-cores", type=int, default=0)
+    resource_run.add_argument("--memory-mb", type=int, default=0)
+    resource_run.add_argument("--timeout-sec", type=float, default=0.0)
+    resource_run.add_argument("--poll-sec", type=float, default=5.0)
+    resource_run.add_argument("--scheduler", choices=["local", "slurm"])
+    resource_run.add_argument("--partition")
+    resource_run.add_argument("--time", dest="time_limit")
+    resource_run.add_argument("--gres")
+    resource_run.add_argument("--cpus-per-task")
+    resource_run.add_argument("--mem")
+    resource_run.add_argument("--job-name")
+    resource_run.add_argument("--sbatch-arg", action="append", help="Additional raw sbatch argument. Repeat for multiple arguments.")
     resource_run.add_argument("command", nargs=argparse.REMAINDER)
-    resource_run.set_defaults(func=cmd_resource_run)
+    resource_run.set_defaults(func=research_workflow.cmd_resource_run)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    if raw_argv[:2] == ["research-loop", "run"]:
-        from research.loop.orchestrator import main as research_loop_main
-
-        return research_loop_main(raw_argv[2:])
     parser = build_parser()
     args = parser.parse_args(raw_argv)
     try:

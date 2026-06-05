@@ -11,6 +11,7 @@ Review one latest ideation draft as an independent custom-mode critic. Return JS
 - Whether required comparisons, metrics, and evidence remain inside the fixed campaign contract.
 - Whether the idea gives a strong reason it should work under the custom goal and fixed benchmark.
 - Feasibility and repo fit.
+- If the assignment names a target venue/journal/conference, whether the idea is solid enough for that venue's bar.
 </Checks>
 
 <Acceptance_Mechanism_Bar>
@@ -69,5 +70,5 @@ Examples:
 - Repairing it would require discarding the core direction rather than revising it.
 
 <Output>
-Return JSON with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags.
+Return JSON with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags. If a target venue is provided, include venue fit in `mode_specific_assessment`.
 </Output>

@@ -68,6 +68,8 @@ Predifined Codex subagents:
 One worker is dedicated to one node. Keep using that same worker/thread for that node's plan, implementation pieces, debugging, and benchmark runs whenever possible. A node represents one research direction, not one CLI state or one short task. Critic and revision-worker subagents may be short-lived.
 
 Revision workers use the shared `revision-brainstorm` skill before proposing the next move. Worker, critic, and revision work is tracked by orchestrator checkpoints, node summaries, logs, and resource records. The CLI records state, evidence, prompt paths, resource leases, and completion gates. The orchestrator owns scientific judgment and must keep the loop moving until the selected outcome satisfies the frozen idea contract.
+
+Before spawning any baseline worker, node worker, critic, revision worker, or revision critic, resolve every role/mode prompt path under `prompts/`, read the Markdown file, and inject the full contents into the spawned subagent prompt with the source path clearly labeled. Prompt paths remain checkpoint/config metadata; they are not a substitute for prompt text. If a required prompt file is missing or unreadable, fail fast before spawning the subagent.
 </Subagents>
 
 <Orchestrator_Instructions>
@@ -127,7 +129,7 @@ Use the prompt files under `prompts/research-loop/`:
 - Shared revision skill: `skills/revision-brainstorm/SKILL.md`
 
 The CLI records prompt paths through checkpoints and run config. It does not enforce prompt contents.
-The prompt for orchestrator (you) is this `skills/research-loop/SKILL.md`. Subagent prompt files remain separate.
+Because the CLI does not enforce prompt contents, the orchestrator MUST read the selected `prompts/research-loop/*.md` file and include its Markdown contents in the actual spawned subagent prompt. The prompt for orchestrator (you) is this `skills/research-loop/SKILL.md`. Subagent prompt files remain separate, but their contents must be injected when subagents are spawned.
 </Prompt_Files>
 
 <CLI_Command_Map>
@@ -144,7 +146,7 @@ The orchestrator should know what each active research-loop command changes:
 - `ai-scientist --target-repo <target-repo> resource status --run-id <run-id>`: reads config/state and reports caps, active leases, available capacity, and stale warnings. It should not mutate research artifacts.
 - `ai-scientist --target-repo <target-repo> resource acquire --run-id <run-id> --task-id <work-id> --gpus <n> --cpu-cores <n> --memory-mb <n>`: adds a lease to `state.resources.leases` in `loop-state.json`, may attach the lease id to a matching work record, and journals a resource event. Here `--task-id` is a resource/log label; use the worker, node, or benchmark work id.
 - `ai-scientist --target-repo <target-repo> resource release --run-id <run-id> --lease-id <lease-id>`: moves a lease from `state.resources.leases` to `state.resources.completed_leases` in `loop-state.json` and journals the release.
-- `ai-scientist --target-repo <target-repo> resource run --run-id <run-id> --task-id <work-id> --cwd <node-workspace> --purpose benchmark --gpus <n> --cpu-cores <n> --memory-mb <n> --timeout-sec <seconds> --poll-sec <seconds> -- <command ...>`: acquires a lease for the requested resources, creates `logs/resources/<work-id>/<lease-id>/command.json`, `stdout.log`, and `stderr.log`, optionally records metrics, then releases the lease in `finally`.
+- `ai-scientist --target-repo <target-repo> resource run --run-id <run-id> --task-id <work-id> --cwd <node-workspace> --purpose benchmark --gpus <n> --cpu-cores <n> --memory-mb <n> --timeout-sec <seconds> --poll-sec <seconds> -- <command ...>`: acquires a lease for the requested resources, creates `logs/resources/<work-id>/<lease-id>/command.json`, `stdout.log`, and `stderr.log`, optionally records metrics, executes through the configured scheduler backend, then releases the lease in `finally`. The default scheduler is local. HPC runs may set `resources.scheduler.type` to `slurm` or pass `--scheduler slurm`.
 </CLI_Command_Map>
 
 <Checkpoint_Guide>
@@ -267,7 +269,7 @@ The orchestrator MUST:
 - create one node id and checkpoint one `worker` assignment for each initial idea seed in campaign mode;
 - spawn a dedicated Codex worker for that node and keep the worker/thread id in checkpoints;
 - Checkpoint the worker assignment before or immediately after spawning the worker so a resumed orchestrator can find the node, worker/thread id, prompt path, assignment ref, result ref, status, and next action.
-- give the worker the node seed idea, frozen run-owned `research_contract` when required or present, `custom_criteria` for custom mode, mode, resource policy, learning notes ref, node workspace path, expected result path, baseline split refs when present, and `prompts/research-loop/worker.md`;
+- give the worker the node seed idea, frozen run-owned `research_contract` when required or present, `custom_criteria` for custom mode, mode, resource policy, learning notes ref, node workspace path, expected result path, baseline split refs when present, and the full Markdown contents of `prompts/research-loop/worker.md` labeled with its source path;
 - poll/resume state while the worker is active;
 - review each worker return before assigning the next piece;
 - prompt the same node worker, or a follow-up worker for that node, until implementation is complete or the node is rejected/abandoned with evidence.
@@ -302,10 +304,12 @@ Finished implementation requires:
 
 <Critic_Revision_Flow>
 Run a mode-specific critic before accepting a final outcome or assigning implementation from a revision plan. Critics review node outcomes and revision plans; they must receive the frozen contract, node evidence, resource evidence, baseline/fixed split refs when present, and the exact question being asked.
+Critics must also receive the full Markdown contents of `prompts/research-loop/<mode>/critic.md`, labeled with its source path.
 
 When a critic reviews a final node outcome, checkpoint the verdict on the node with `critic_ref`, `critic_verdict`, `critic_completed_at`, `critic_result_path`, and the evidence refs. `ACCEPT_FINAL` on a final node means the node is safe to select/complete if all other gates pass. `PROMISING_CONTINUE` means performance evidence is worth more depth. `NEEDS_SCIENTIFIC_FRAMING` means performance is promising but the node needs a better novelty/mechanism story. `REVISE` means bounded fixes are needed. `KILL` means the node should stop because evidence is weak, exhausted, or violates the contract. `INVALID` means benchmark drift, leakage, wrong split, or unusable evidence. Completion requires the selected accepted node to have a fresh accepting critic verdict. If node evidence changes after the critic, run another critic.
 
 When a critic requests revision or the orchestrator sees a promising rescue path, spawn a revision worker with `prompts/research-loop/<mode>/revision-worker.md`. The revision worker must use `revision-brainstorm` and first return a plan unless implementation was explicitly assigned. The plan must choose one action: revise the same node, branch from a node, abandon/reject, or escalate.
+Revision workers must receive the full Markdown contents of `prompts/research-loop/<mode>/revision-worker.md`, labeled with its source path.
 
 A revision plan must pass critic review before the orchestrator assigns implementation or creates a branch from it. `ACCEPT` on a revision-plan critic means the plan is safe to implement or branch from; it does not mean the node itself is accepted.
 
@@ -334,11 +338,14 @@ After implementation is ready, the orchestrator prompts the node worker to run t
 Resource policy:
 
 - Read resource caps from run config. Do not infer hardware.
+- Scheduler policy is separate from resource caps. Normal servers use the default local scheduler. HPC runs should freeze `resources.scheduler.type: "slurm"` and explicit Slurm options in run config, or pass the matching `resource run` flags.
 - Use `resource status` to inspect active leases and available capacity.
 - A Codex worker may invoke `resource run` directly when assigned to run an experiment; the orchestrator must still checkpoint the command refs, resource outcome, and next action after the worker reports back.
 - If another node owns the needed resources, the orchestrator may wait and poll, or assign non-heavy work while waiting. Keep pending runnable benchmark/experiment work in `state.resource_queue`; the queue manages capacity and runnable order, while the orchestrator owns scientific priority and tells node workers when they are released to run.
 - If enough resources are available, the worker should start immediately through `resource run` or acquire a lease first.
 - Example: `ai-scientist --target-repo <target-repo> resource run --run-id <run-id> --task-id <work-id> --cwd .ai-scientist/runs/<run-id>/nodes/<node-id>/workspace --purpose benchmark --gpus 1 --cpu-cores 4 --memory-mb 8192 --timeout-sec 3600 --poll-sec 30 -- <command ...>`.
+- Slurm example: `ai-scientist --target-repo <target-repo> resource run --run-id <run-id> --task-id <work-id> --cwd .ai-scientist/runs/<run-id>/nodes/<node-id>/workspace --purpose benchmark --gpus 1 --cpu-cores 8 --memory-mb 32768 --scheduler slurm --partition gpu --time 7-00:00:00 --gres gpu:1 --cpus-per-task 8 --mem 32G -- <command ...>`.
+- On HPC clusters, official GPU benchmark/final-validation commands must still go through `resource run`; do not run raw `python`, `uv run`, `conda run`, or ad hoc `sbatch --wrap` for official evidence. The Slurm backend writes a generated job script under the resource log directory and records the `sbatch` argv, Slurm job id, stdout/stderr paths, and exit code in `command.json`.
 - If the heavy run fails with OOM/resource exhaustion while resources were busy or uncertain, wait for resources to free and retry once when justified.
 - If OOM/resource exhaustion persists when resources are free and the request fits configured caps, prompt the worker to edit the implementation, reduce memory pressure, batch work, checkpoint, or otherwise fix the code.
 - If the request cannot ever fit configured caps, record a blocker or revise the implementation plan; do not spin.

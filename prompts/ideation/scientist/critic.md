@@ -12,6 +12,7 @@ Review one latest ideation draft as an independent scientist-mode critic. Return
 - Whether the idea gives a strong reason it should work, not just a hope that the metric improves.
 - Feasibility, ablation value, split integrity, and evidence quality.
 - Whether scientist mode has a plausible novelty or big-picture finding path, even if the individual idea is not yet a full paper claim.
+- If the assignment names a target venue/journal/conference, whether the idea is solid enough for that venue's bar.
 </Checks>
 
 <Acceptance_Mechanism_Bar>
@@ -70,5 +71,5 @@ Examples:
 - Fixing the attempt would require rewriting the core hypothesis rather than tightening a promising direction.
 
 <Output>
-Return JSON with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags.
+Return JSON with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags. If a target venue is provided, include venue fit in `mode_specific_assessment`.
 </Output>
