@@ -10,9 +10,57 @@ from pathlib import Path
 from test_support import AI_SCIENTIST_CMD, REPO_ROOT, read_json
 
 
+def research_contract() -> dict[str, object]:
+    return {
+        "primary_hypothesis": "The intervention improves held-out score on the declared benchmark.",
+        "goal_type": "performance",
+        "success_criteria": {"metric": "score", "min": 0.75},
+        "failure_criteria": {"max_score": 0.5},
+        "allowed_rescue_scope": "same benchmark only",
+        "kill_criteria": "leakage or missing baseline",
+        "non_drift_definition": "do not change the benchmark",
+        "metrics_that_matter": ["score"],
+        "non_negotiable_comparisons": ["baseline"],
+        "baseline_reference": {"title": "Fixture baseline", "usability": "Defines the comparable score."},
+        "benchmark_plan": {"command": "run benchmark"},
+        "target_threshold": {"score": 0.75},
+        "fixed_dataset": "fixture dataset",
+        "fixed_split": "fixture split",
+        "fixed_baseline": "fixture baseline",
+        "evaluator_command": "run benchmark",
+    }
+
+
+def selected_idea_payload(resources: dict[str, object] | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "selected_idea": {"id": "idea-001", "title": "Fixture", "research_contract": research_contract()},
+    }
+    if resources is not None:
+        payload["resources"] = resources
+    return payload
+
+
 def run_cli(target: Path, *args: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    command_args = list(args)
+    if len(command_args) >= 2 and command_args[0] == "research" and command_args[1] == "start":
+        if "--json" in command_args:
+            index = command_args.index("--json") + 1
+            payload = json.loads(command_args[index])
+            if not isinstance(payload, dict):
+                raise AssertionError("test research start payload must be object")
+            if "idea_batch" not in payload:
+                selected = payload.get("selected_idea")
+                if isinstance(selected, dict):
+                    selected.setdefault("id", "idea-001")
+                    selected.setdefault("title", "Fixture")
+                    selected.setdefault("research_contract", research_contract())
+                else:
+                    payload.setdefault("selected_idea", {"id": "idea-001", "title": "Fixture", "research_contract": research_contract()})
+            command_args[index] = json.dumps(payload)
+        elif "--json-file" not in command_args:
+            command_args.extend(["--json", json.dumps(selected_idea_payload())])
     return subprocess.run(
-        [*AI_SCIENTIST_CMD, "--target-repo", str(target), *args],
+        [*AI_SCIENTIST_CMD, "--target-repo", str(target), *command_args],
         input=input_text,
         text=True,
         stdout=subprocess.PIPE,
@@ -86,7 +134,7 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("Do not start editing", orchestrator)
         self.assertIn("Checkpoint the worker assignment", orchestrator)
         self.assertIn("parent_node_id", orchestrator)
-        self.assertIn("fresh `ACCEPT` critic verdict", orchestrator)
+        self.assertIn("fresh accepting critic verdict", orchestrator)
         self.assertIn("Research completion is two-stage", orchestrator)
         self.assertIn("custom criteria remain the acceptance standard", orchestrator)
         self.assertIn("revision_critic_ref", orchestrator)
@@ -183,7 +231,7 @@ class ResearchWorkflowTests(unittest.TestCase):
                                 "summary": "accepted fixture",
                                 "evidence_refs": ["journal"],
                                 "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
-                                "critic_verdict": "ACCEPT",
+                                "critic_verdict": "ACCEPT_FINAL",
                                 "critic_completed_at": "2026-01-01T00:00:00Z",
                             }
                         },
@@ -216,6 +264,78 @@ class ResearchWorkflowTests(unittest.TestCase):
 
             validate = subprocess.run(
                 [*AI_SCIENTIST_CMD, "validate", "run", str(target), "--gate", "research_to_review", "--run-id", "run-001"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(validate.returncode, 0, validate.stdout + validate.stderr)
+
+    def test_campaign_start_freezes_idea_batch_and_learning_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            payload = {
+                "resources": {"max_parallel": 1},
+                "research_contract": research_contract(),
+                "idea_batch": [
+                    {"id": "idea-001", "title": "First idea", "fit_to_research_contract": "fixed benchmark"},
+                    {"id": "idea-002", "title": "Second idea", "fit_to_research_contract": "fixed benchmark"},
+                ],
+                "arguments": {"python_environment": "uv"},
+            }
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-campaign",
+                "--strictness-mode",
+                "engineer",
+                "--json",
+                json.dumps(payload),
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            cfg = read_json(target / ".ai-scientist" / "runs" / "run-campaign" / "config.json")
+            self.assertTrue(cfg["campaign_mode"])
+            self.assertIsNone(cfg["selected_idea_id"])
+            self.assertEqual([idea["id"] for idea in cfg["idea_batch"]], ["idea-001", "idea-002"])
+            self.assertEqual(cfg["research_contract"], payload["research_contract"])
+            state = read_json(target / ".ai-scientist" / "runs" / "run-campaign" / "loop-state.json")
+            self.assertEqual([idea["id"] for idea in state["state"]["idea_batch"]], ["idea-001", "idea-002"])
+            self.assertEqual(state["state"]["resource_queue"], {"pending": [], "released": [], "completed": []})
+            notes_ref = Path(cfg["learning_notes_ref"])
+            self.assertTrue(notes_ref.exists())
+            checkpoint = run_cli(
+                target,
+                "research",
+                "checkpoint",
+                "--run-id",
+                "run-campaign",
+                "--json",
+                json.dumps(
+                    {
+                        "nodes": {
+                            "node-001": {
+                                "node_id": "node-001",
+                                "seed_idea_id": "idea-001",
+                                "status": "accepted",
+                                "summary": "accepted campaign node",
+                                "critic_ref": ".ai-scientist/runs/run-campaign/logs/critics/node-001/critic-001/verdict.json",
+                                "critic_verdict": "ACCEPT_FINAL",
+                                "critic_completed_at": "2026-01-01T00:00:00Z",
+                            }
+                        }
+                    }
+                ),
+            )
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stdout + checkpoint.stderr)
+            select = run_cli(target, "research", "select", "--run-id", "run-campaign", "--node-id", "node-001", "--summary", "accepted campaign node")
+            self.assertEqual(select.returncode, 0, select.stdout + select.stderr)
+            audit = {"passed": True, "prompt_to_artifact_checklist": ["selected accepted node"], "verification_evidence": ["unit fixture"]}
+            done = run_cli(target, "research", "complete", "--run-id", "run-campaign", "--json", json.dumps(audit))
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            validate = subprocess.run(
+                [*AI_SCIENTIST_CMD, "validate", "run", str(target), "--gate", "research_to_review", "--run-id", "run-campaign"],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

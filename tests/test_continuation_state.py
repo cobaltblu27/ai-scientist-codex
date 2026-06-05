@@ -74,8 +74,8 @@ class ContinuationStateTests(unittest.TestCase):
                     "min_candidates_required": 1,
                     "active_idea_id": None,
                     "pending_intent": None,
-                    "ranking": {"status": "final", "selected_idea_id": "idea-001"},
-                    "handoff": {"status": "ready", "selected_idea_id": "idea-001"},
+                    "ranking": {"status": "not_required"},
+                    "handoff": {"status": "ready", "idea_batch": ["idea-001"]},
                     "idea_states": {
                         "idea-001": {
                             "id": "idea-001",

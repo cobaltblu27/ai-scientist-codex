@@ -48,12 +48,12 @@ IDEA_TERMINAL_STATUSES = {
     "exhausted",
     "failed",
     "finalized",
-    "rejected",
     "skipped",
 }
 NODE_RESOLVED_STATUSES = {"accepted", "invalid", "rejected"}
 NODE_UNRESOLVED_STATUSES = {"planning", "planned", "implementing", "running", "validating", "buggy", "repairing", "candidate"}
-NODE_TERMINAL_CRITIC_VERDICTS = {"accepted": "ACCEPT", "invalid": "INVALID", "rejected": "REJECT"}
+NODE_TERMINAL_CRITIC_VERDICTS = {"accepted": "ACCEPT_FINAL", "invalid": "INVALID", "rejected": "KILL"}
+NODE_ACCEPTING_CRITIC_VERDICTS = {"ACCEPT_FINAL", "ACCEPT"}
 NODE_EVIDENCE_ADMIN_KEYS = {
     "status",
     "updated_at",
@@ -206,11 +206,13 @@ def node_evidence_fingerprint(node: dict[str, Any]) -> str:
     return data_hash(node_evidence_payload(node))
 
 
-def node_fresh_critic_reason(node_id: str, node: dict[str, Any], *, required_verdict: str | None = None) -> str | None:
+def node_fresh_critic_reason(node_id: str, node: dict[str, Any], *, required_verdict: str | None = None, allowed_verdicts: set[str] | None = None) -> str | None:
     critic_ref = node.get("critic_ref")
     if not isinstance(critic_ref, str) or not critic_ref.strip():
         return f"research_node_missing_critic_ref:{node_id}"
     verdict = node.get("critic_verdict")
+    if allowed_verdicts is not None and verdict not in allowed_verdicts:
+        return f"research_node_critic_verdict_invalid:{node_id}:{verdict}"
     if required_verdict is not None and verdict != required_verdict:
         return f"research_node_critic_verdict_invalid:{node_id}:{verdict}"
     fingerprint = node.get("critic_evidence_fingerprint")
@@ -753,9 +755,8 @@ def evaluate_ideation_state(state: dict[str, Any]) -> CompletionResult:
     if active_idea_ids or phase_state.get("active_idea_id"):
         return CompletionResult(False, "ideation_active_idea_unresolved", state)
     budget_terminal = phase_status == "completed_budget_exhausted"
-    if phase_status not in {"exhausted_no_candidate", "completed_budget_exhausted"} and not phase_state.get("early_stop_allowed") and attempted < required:
+    if phase_status != "exhausted_no_candidate" and not phase_state.get("early_stop_allowed") and attempted < required:
         return CompletionResult(False, "ideation_not_all_ideas_attempted", state)
-    ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
     researchable = []
     for idea_id, idea in idea_states.items():
         if not isinstance(idea, dict):
@@ -768,11 +769,12 @@ def evaluate_ideation_state(state: dict[str, Any]) -> CompletionResult:
             return CompletionResult(False, f"ideation_accepted_missing_reflection_count:{idea_id}", state)
         if status == "accepted" and not has_int_score(idea.get("score")):
             return CompletionResult(False, f"ideation_accepted_missing_score:{idea_id}", state)
+        ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
         if ranking.get("status") == "final" and status == "accepted" and not isinstance(idea.get("rank"), int):
             return CompletionResult(False, f"ideation_accepted_missing_rank:{idea_id}", state)
         if ranking.get("status") == "final" and evaluation in {"REJECTED", "ACCEPTED_WITHOUT_REFERENCE"} and not has_int_score(idea.get("score")):
             return CompletionResult(False, f"ideation_scored_terminal_missing_score:{idea_id}", state)
-        if status in {"skipped", "failed", "rejected", "error"} and not has_substantive_value(idea.get("skip_reason") or idea.get("reason") or idea.get("error") or idea.get("rejection_reason")):
+        if status in {"skipped", "failed", "error", "exhausted"} and not has_substantive_value(idea.get("skip_reason") or idea.get("reason") or idea.get("error") or idea.get("exhaustion_reason")):
             return CompletionResult(False, f"ideation_skipped_missing_reason:{idea_id}", state)
         if idea.get("researchable") is True or evaluation == "ACCEPTED":
             researchable.append(idea)
@@ -786,12 +788,13 @@ def evaluate_ideation_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, "ideation_budget_exhausted_missing_candidate", state)
     if len(researchable) < min_candidates:
         return CompletionResult(False, "ideation_no_researchable_candidate", state)
-    if ranking.get("status") != "final":
-        return CompletionResult(False, "ideation_ranking_not_final", state)
     handoff = phase_state.get("handoff") if isinstance(phase_state.get("handoff"), dict) else {}
-    selected = ranking.get("selected_idea_id") or handoff.get("selected_idea_id")
-    if not isinstance(selected, str) or selected not in {str(idea.get("id")) for idea in researchable}:
-        return CompletionResult(False, "ideation_selected_candidate_invalid", state)
+    batch_ids = handoff.get("idea_batch")
+    if not isinstance(batch_ids, list) or not batch_ids:
+        return CompletionResult(False, "ideation_handoff_batch_missing", state)
+    researchable_ids = {str(idea.get("id")) for idea in researchable}
+    if any(not isinstance(item, str) or item not in researchable_ids for item in batch_ids):
+        return CompletionResult(False, "ideation_handoff_batch_invalid", state)
     return CompletionResult(True, "ideation_state_complete", state)
 
 
@@ -845,7 +848,7 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, f"research_node_state_invalid:{selected_node}", state)
     if selected.get("status") != "accepted":
         return CompletionResult(False, "research_selected_node_not_accepted", state)
-    critic_reason = node_fresh_critic_reason(str(selected_node), selected, required_verdict="ACCEPT")
+    critic_reason = node_fresh_critic_reason(str(selected_node), selected, allowed_verdicts=NODE_ACCEPTING_CRITIC_VERDICTS)
     if critic_reason:
         return CompletionResult(False, critic_reason, state)
     if selection.get("selected_node") != selected_node:

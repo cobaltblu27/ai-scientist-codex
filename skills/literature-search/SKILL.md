@@ -74,7 +74,7 @@ The literature search does not write the idea for the agent. Use returned papers
 - identify plausible baseline/reference papers;
 - check whether the idea is already obvious or saturated;
 - extract benchmark protocols and comparable metrics;
-- revise `research_contract.baseline_reference`, `benchmark_plan`, and `target_threshold` when needed;
+- identify evidence that supports or challenges the run-owned baseline, benchmark plan, and target threshold; report contract concerns to the orchestrator instead of editing the contract;
 - reject ideas whose only support is a weak title match.
 
 Preflight references found before generator subagents exist are advisory only. Once a generator relies on a reference for novelty, baseline, benchmark, or contract support, the generator should record canonical evidence through the CLI for its assigned idea id.

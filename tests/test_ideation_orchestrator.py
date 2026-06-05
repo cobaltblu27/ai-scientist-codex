@@ -27,6 +27,10 @@ def research_contract(goal_type: str = "performance") -> dict[str, object]:
         "non_drift_definition": "A report about dataset properties or an underimplemented negative result is claim drift.",
         "metrics_that_matter": ["score"],
         "non_negotiable_comparisons": ["baseline", "declared split", "reference paper"],
+        "fixed_dataset": {"name": "Fixture dataset", "path": "data/fixture"},
+        "fixed_split": {"name": "Fixture split", "seed": 1},
+        "fixed_baseline": {"name": "Reference Benchmark Model"},
+        "evaluator_command": "uv run python -m pytest",
     }
     if goal_type == "performance":
         contract.update(
@@ -43,8 +47,11 @@ def research_contract(goal_type: str = "performance") -> dict[str, object]:
 
 
 def run_cli(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    command_args = list(args)
+    if len(command_args) >= 2 and command_args[0] == "ideation" and command_args[1] == "start" and "--json" not in command_args and "--json-file" not in command_args:
+        command_args.extend(["--json", json.dumps({"research_contract": research_contract()})])
     return subprocess.run(
-        [*CLI_ARGS, "--target-repo", str(target), *args],
+        [*CLI_ARGS, "--target-repo", str(target), *command_args],
         text=True,
         capture_output=True,
         check=False,
@@ -69,6 +76,11 @@ def idea_payload(idea_id: str, title: str = "Fixture idea") -> dict[str, object]
         "expected_metric": "score",
         "risks": ["May not improve over baseline"],
         "novelty_rationale": "The combination has not been tested in this repository.",
+        "mechanism": "Changes the update rule to improve representation quality.",
+        "implementation_sketch": "Implement the update rule in the existing model path.",
+        "expected_metric_effect": "Improve held-out score under the fixed evaluator.",
+        "fit_to_research_contract": "Uses the fixed fixture dataset, split, baseline, metric, and evaluator unchanged.",
+        "novelty_angle": "A repo-specific combination of update rule and benchmark framing.",
     }
 
 
@@ -99,6 +111,11 @@ def compact_payload(idea_id: str, title: str, family_key: str | None = None, *, 
         "evidence_refs": [],
         "rubric_scores": {"performance": score, "feasibility": score, "repo_fit": score, "novelty": 40},
         "risk_flags": ["May not improve baseline"],
+        "mechanism": "Changes the scoring path while keeping the benchmark fixed.",
+        "implementation_sketch": f"Apply {title} in the existing model path.",
+        "expected_metric_effect": "Improve held-out score over the reference baseline.",
+        "fit_to_research_contract": "Uses the fixed fixture dataset, split, baseline, metric, and evaluator unchanged.",
+        "novelty_angle": "Potential model-level finding under the fixed benchmark.",
     }
 
 
@@ -122,11 +139,18 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(started.returncode, 0, started.stderr)
             self.assertEqual(json.loads(started.stdout)["next_action"], "start_generator_batch")
             config = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "config.json").read_text())
+            self.assertEqual(config["research_contract"]["fixed_dataset"]["name"], "Fixture dataset")
+            self.assertEqual(config["ideation"]["reflection_budget_per_idea"], 5)
+            self.assertNotIn("reflection_budget", config["ideation"])
+            self.assertEqual(config["ideation"]["max_attempts_per_slot"], 3)
             self.assertEqual(config["ideation"]["concurrency"]["max_subagents"], 6)
             scientist = config["ideation"]["modes"]["scientist"]
             self.assertEqual(scientist["generator_prompt"], "prompts/ideation/scientist/generator.md")
             self.assertEqual(scientist["critic_prompt"], "prompts/ideation/scientist/critic.md")
             self.assertEqual(scientist["ranker_prompt"], "prompts/ideation/scientist/ranker.md")
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["reflection_budget_per_idea"], 5)
+            self.assertEqual(state["state"]["max_attempts_per_slot"], 3)
 
             resumed = run_cli(target, "ideation", "resume", "--run-id", "run-001", "--prompt")
             self.assertEqual(resumed.returncode, 0, resumed.stderr)
@@ -137,6 +161,18 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertTrue((target / ".ai-scientist" / "active-run.json").exists())
             self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "config.json").exists())
             self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "ideas.json").exists())
+
+    def test_ideation_start_requires_run_owned_research_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            started = subprocess.run(
+                [*CLI_ARGS, "--target-repo", str(target), "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(started.returncode, 0)
+            self.assertIn("research_contract_required", started.stdout)
 
     def test_pending_intent_blocks_stop_hook_with_record_result_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -332,7 +368,91 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("critic_stale_for_current_idea", completed.stdout)
 
-    def test_contract_alias_is_persisted_as_research_contract(self) -> None:
+    def test_per_attempt_budget_blocks_revision_but_not_new_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "2", "--reflection-budget", "1").returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001"))).returncode, 0)
+            revised = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REVISE", 62)))
+            self.assertEqual(revised.returncode, 0, revised.stderr + revised.stdout)
+            self.assertEqual(json.loads(revised.stdout)["next_action"], "revise_or_reject_batch")
+            self.assertEqual(json.loads(revised.stdout)["next_action_details"]["required_action"], "idea exhaust")
+
+            blocked = run_cli(target, "idea", "revise-start", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "try again")
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("idea_reflection_budget_exhausted:idea-001", blocked.stdout)
+
+            self.assertEqual(run_cli(target, "idea", "exhaust", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "reflection_budget_exhausted").returncode, 0)
+            resumed = run_cli(target, "ideation", "resume", "--run-id", "run-001")
+            self.assertEqual(json.loads(resumed.stdout)["next_action"], "start_generator_batch")
+            self.assertEqual(json.loads(resumed.stdout)["next_action_details"]["next_idea_id"], "idea-002")
+
+            premature = run_cli(target, "ideation", "complete", "--run-id", "run-001", "--budget-exhausted")
+            self.assertNotEqual(premature.returncode, 0)
+            self.assertIn("not all requested idea slots", premature.stdout)
+
+    def test_reject_respawns_fresh_attempt_same_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1").returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001", "Rejected draft"))).returncode, 0)
+            rejected = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REJECT", 25)))
+            self.assertEqual(rejected.returncode, 0, rejected.stderr + rejected.stdout)
+            payload = json.loads(rejected.stdout)
+            self.assertEqual(payload["next_action"], "start_generator_batch")
+            self.assertEqual(payload["next_action_details"]["idea_ids"], ["idea-001"])
+
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            idea = state["state"]["idea_states"]["idea-001"]
+            self.assertEqual(idea["status"], "fresh_attempt_requested")
+            self.assertEqual(idea["attempt_index"], 2)
+            self.assertEqual(idea["attempts_used"], 2)
+            self.assertEqual(idea["reflection_count"], 0)
+            self.assertEqual(len(idea["attempt_history"]), 1)
+            self.assertNotIn("latest_draft", idea)
+            self.assertNotIn("latest_critic", idea)
+
+            batch = run_cli(target, "ideation", "intent", "start-batch", "--run-id", "run-001", "--role", "generator", "--idea-ids", "idea-001")
+            self.assertEqual(batch.returncode, 0, batch.stderr + batch.stdout)
+            intent = json.loads(batch.stdout)["intents"][0]
+            fresh_payload = idea_payload("idea-001", "Fresh replacement")
+            completed = run_cli(target, "ideation", "intent", "complete", "--run-id", "run-001", "--intent-id", intent["intent_id"], "--json", json.dumps(fresh_payload))
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            idea = state["state"]["idea_states"]["idea-001"]
+            self.assertEqual(idea["latest_draft"]["title"], "Fresh replacement")
+            self.assertEqual(idea["attempt_index"], 2)
+            self.assertEqual(idea["reflection_count"], 1)
+
+    def test_reject_attempt_cap_requires_exhaustion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1", "--max-attempts-per-slot", "3").returncode, 0)
+            for attempt in range(1, 4):
+                self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001", f"Rejected draft {attempt}"))).returncode, 0)
+                rejected = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REJECT", 20 + attempt)))
+                self.assertEqual(rejected.returncode, 0, rejected.stderr + rejected.stdout)
+
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            idea = state["state"]["idea_states"]["idea-001"]
+            self.assertEqual(idea["status"], "fresh_attempt_requested")
+            self.assertEqual(idea["budget_status"], "attempt_cap_reached")
+            self.assertEqual(idea["attempts_used"], 3)
+            self.assertEqual(len(idea["attempt_history"]), 3)
+            cursor = json.loads(run_cli(target, "ideation", "resume", "--run-id", "run-001").stdout)
+            self.assertEqual(cursor["next_action"], "revise_or_reject_batch")
+            self.assertEqual(cursor["next_action_details"]["required_action"], "idea exhaust")
+
+            blocked = run_cli(target, "ideation", "intent", "start-batch", "--run-id", "run-001", "--role", "generator", "--idea-ids", "idea-001")
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("idea_attempt_cap_reached:idea-001", blocked.stdout)
+
+            exhausted = run_cli(target, "idea", "exhaust", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "fresh_attempt_cap_reached")
+            self.assertEqual(exhausted.returncode, 0, exhausted.stderr + exhausted.stdout)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["idea_states"]["idea-001"]["status"], "exhausted")
+
+    def test_legacy_contract_fields_are_not_persisted_on_idea(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
@@ -344,46 +464,43 @@ class AgentDrivenIdeationTests(unittest.TestCase):
 
             self.assertEqual(drafted.returncode, 0, drafted.stderr + drafted.stdout)
             state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
-            contract = state["state"]["idea_states"]["idea-001"]["latest_draft"]["research_contract"]
-            self.assertTrue(contract["extra_nested"]["kept"])
+            self.assertNotIn("research_contract", state["state"]["idea_states"]["idea-001"]["latest_draft"])
             self.assertNotIn("contract", state["state"]["idea_states"]["idea-001"]["latest_draft"])
 
-    def test_accept_blocks_without_research_contract(self) -> None:
+    def test_accept_blocks_without_fit_to_research_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
-            payload = compact_payload("idea-001", "Missing contract")
+            payload = compact_payload("idea-001", "Missing fit")
+            payload.pop("fit_to_research_contract")
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+
+            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+
+            self.assertNotEqual(finalized.returncode, 0)
+            self.assertIn("idea_fit_to_research_contract_required", finalized.stdout)
+
+    def test_idea_that_changes_fixed_dataset_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
+            payload = compact_payload("idea-001", "Different dataset")
+            payload["fixed_dataset"] = "another dataset"
+            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+
+            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+
+            self.assertNotEqual(finalized.returncode, 0)
+            self.assertIn("idea_changes_campaign_fixed_dataset", finalized.stdout)
+
+    def test_idea_accepts_without_per_idea_research_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
+            payload = compact_payload("idea-001", "Performance idea")
             payload.pop("research_contract")
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
-
-            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
-
-            self.assertNotEqual(finalized.returncode, 0)
-            self.assertIn("research_contract_required", finalized.stdout)
-
-    def test_performance_contract_requires_baseline_reference(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp)
-            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
-            payload = compact_payload("idea-001", "No baseline")
-            payload["research_contract"].pop("baseline_reference")
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
-
-            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
-
-            self.assertNotEqual(finalized.returncode, 0)
-            self.assertIn("performance_contract_baseline_reference_required", finalized.stdout)
-
-    def test_non_performance_contract_accepts_hard_natural_language_criteria(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp)
-            self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
-            payload = compact_payload("idea-001", "Leakage probe")
-            payload["research_contract"] = research_contract("leakage")
-            payload["research_contract"]["success_criteria"] = "Detect leakage only if a control model predicts labels from split identifiers with statistically significant lift across held-out folds."
-            payload["research_contract"]["failure_criteria"] = "A fully implemented leakage audit finds no statistically meaningful split-derived signal under the declared controls."
             self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
             self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
 
@@ -399,27 +516,6 @@ class AgentDrivenIdeationTests(unittest.TestCase):
                 run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(idea_payload("idea-001"))),
                 run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 86))),
                 run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001"),
-                run_cli(
-                    target,
-                    "ideation",
-                    "rank-finalize",
-                    "--run-id",
-                    "run-001",
-                    "--json",
-                    json.dumps(
-                        {
-                            "selected_idea_id": "idea-001",
-                            "ranked_ideas": [
-                                {
-                                    "idea_id": "idea-001",
-                                    "score": 88,
-                                    "score_components": {"performance": 45, "feasibility": 25, "repo_fit": 18},
-                                    "rationale": "Best expected performance.",
-                                }
-                            ],
-                        }
-                    ),
-                ),
                 run_cli(target, "ideation", "complete", "--run-id", "run-001"),
             ]
             for step in steps:
@@ -427,7 +523,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
 
             ideas = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "ideas.json").read_text())["ideas"]
             self.assertEqual(ideas[0]["evaluation"], "ACCEPTED")
-            self.assertEqual(ideas[0]["rank"], 1)
+            self.assertIsNone(ideas[0]["rank"])
             validator = run_validator(target)
             self.assertEqual(validator.returncode, 0, validator.stderr)
             self.assertEqual(evaluate_stop_decision(target).decision, "allow")
@@ -554,7 +650,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
             self.assertEqual(state["state"]["idea_states"]["idea-001"]["status"], "critic_accepted")
 
-    def test_ranking_required_when_candidate_exists(self) -> None:
+    def test_ranking_not_required_when_candidate_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1").returncode, 0)
@@ -564,8 +660,9 @@ class AgentDrivenIdeationTests(unittest.TestCase):
 
             completed = run_cli(target, "ideation", "complete", "--run-id", "run-001")
 
-            self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("ranking must be finalized", completed.stdout)
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
+            self.assertEqual(state["state"]["handoff"]["idea_batch"], ["idea-001"])
 
     def test_exhausted_no_candidate_is_terminal_but_fails_handoff_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -573,7 +670,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1").returncode, 0)
             self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(idea_payload("idea-001"))).returncode, 0)
             self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("REJECT", 20))).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "reject", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "critic rejected").returncode, 0)
+            self.assertEqual(run_cli(target, "idea", "exhaust", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "critic rejected").returncode, 0)
             exhausted = run_cli(target, "ideation", "exhaust", "--run-id", "run-001")
             self.assertEqual(exhausted.returncode, 0, exhausted.stderr + exhausted.stdout)
 

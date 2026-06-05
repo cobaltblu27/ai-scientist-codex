@@ -20,12 +20,12 @@ You are the ideation orchestrator. The current Codex session owns the loop. Pyth
 2. Do not mutate target repository source code during ideation. The only target-repository writes are under `.ai-scientist/`.
 3. Install/check the project-local Stop hook before starting a real run.
 4. All state transitions go through `ai-scientist`.
-5. Record subagent intents before spawning generators, critics, or the ranker. Pending intents intentionally block Stop until you record completion or cancellation.
+5. Record subagent intents before spawning generators or critics. Pending intents intentionally block Stop until you record completion or cancellation.
 6. Before spawning the first generator batch for a topic, perform the prompt-only pre-generation synthesis: find reference papers, run `skills/heiemeier-question/SKILL.md`, and use those insights to frame generator assignments.
 7. Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use `gpt-5.5` with `xhigh` effort for substantive idea generation when model controls are available.
 8. Spawn a fresh critic for each draft or revised draft. Include previous critic verdict/revision notes in the new critic prompt; do not reuse long critic context.
-9. Ranking is LLM-owned. After idea generation/reflection is done and at least one researchable candidate exists, `rank-candidates` starts the ranker intent.
-10. `ideation_to_research` means "safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
+9. Do not rank or select a single idea in the normal flow. Ideation produces an accepted idea batch under one run-owned performance contract.
+10. `ideation_to_research` means "the fixed contract plus accepted idea batch is safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
 11. Do not report success while Stop hook would still block.
 </Non_Negotiable_Rules>
 - 
@@ -36,7 +36,7 @@ You are the ideation orchestrator. The current Codex session owns the loop. Pyth
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
 - `config.json`: frozen ideation config, mode preset, prompt paths, and scoring policy.
-- `loop-state.json`: active cursor, active idea ids, pending intents, terminal status, candidate/ranking state.
+- `loop-state.json`: active cursor, active idea ids, pending intents, terminal status, candidate and batch handoff state.
 - `ideas.json`: canonical terminal idea archive.
 - `journal.jsonl`: append-only audit stream.
 - `logs/drafts/*.json`: versioned draft payloads.
@@ -44,7 +44,7 @@ All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 - `logs/openalex/*.json` and `logs/semantic-scholar/*.json`: literature response payloads when used.
 - `logs/pending/<intent-id>.json`: assigned path where each subagent writes JSON only.
 - `logs/ideation-contract.json`: shared run context, repo entrypoints, split policy, hardware limits, forbidden workflows, reusable baselines, metric names, and strictness mode.
-- `logs/ranking/ranking-final.json`: final ranking payload.
+- `logs/ranking/ranking-final.json`: legacy/manual ranking payload when explicitly used.
 
 Root `.ai-scientist/active-run.json` points the Stop hook to the active run.
 Shared literature caches live under `.ai-scientist/evidence-cache/openalex/` and `.ai-scientist/evidence-cache/semantic-scholar/`.
@@ -98,7 +98,7 @@ Subagent prompt files are mode-specific:
 
 - Generator: `prompts/ideation/<mode>/generator.md`
 - Critic: `prompts/ideation/<mode>/critic.md`
-- Ranker: `prompts/ideation/<mode>/ranker.md`
+- Ranker: `prompts/ideation/<mode>/ranker.md` exists for legacy/manual ranking only.
 
 
 </Modes>
@@ -122,11 +122,12 @@ ai-scientist \
   ideation start \
   --run-id <run-id> \
   --prompt "<research prompt>" \
+  --json-file <campaign-contract.json> \
   --strictness-mode scientist \
   --num-ideas 10
 ```
 
-If `--strictness-mode` is omitted, default is `scientist`. If `--num-ideas` is omitted, default is 10 attempted slots. This is slot-based, not "10 accepted ideas."
+The JSON payload must include a top-level run-owned `research_contract` for a fixed performance campaign: dataset, split/protocol, baseline, metric(s), evaluator command, success criteria, target threshold, and non-drift definition. If `--strictness-mode` is omitted, default is `scientist`. If `--num-ideas` is omitted, default is 10 attempted slots. If `--reflection-budget` is omitted, default is 10 generator draft attempts per fresh idea attempt. Each slot may respawn up to `ideation.max_attempts_per_slot` fresh attempts, default 3. This is slot-based, not "10 accepted ideas."
 
 Resume from state:
 
@@ -146,14 +147,13 @@ Use the returned `next_action` and prompt text as the immediate loop cursor. Rep
 
 The helper computes `next_action`. Follow it exactly.
 
-- `start_generator_batch`: run the prompt-only pre-generation synthesis before the first generator batch for a topic, then record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, and record all draft results.
-- `collect_subagent_results`: previous generator/critic/ranker intents are pending; record completion or cancellation for each representative `intent_id` before doing anything else.
+- `start_generator_batch`: run the prompt-only pre-generation synthesis before the first generator batch for a topic, then record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, and record all draft results. When `next_action_details.idea_ids` is present, start generators for those exact same idea ids instead of allocating new slots.
+- `collect_subagent_results`: previous generator/critic intents are pending; record completion or cancellation for each representative `intent_id` before doing anything else.
 - `search_semantic_scholar`: use `literature-search` as a backstop; run/record OpenAlex-first literature evidence if the generator did not already attach required evidence.
 - `start_critic_batch`: record critic intents for all ready draft `idea_ids`, spawn critics, then record all verdicts.
-- `revise_or_reject_batch`: one or more critics returned `REVISE` or `REJECT`; revise same idea thread(s) or explicitly reject them.
+- `revise_or_reject_batch`: one or more slots need a decision. `REVISE` means improve the current attempt if its per-attempt reflection budget remains. `REJECT` means kill the current attempt and respawn a fully fresh generator for the same slot. If details say the reflection budget or fresh-attempt cap is exhausted, call `idea exhaust`.
 - `finalize_ready_ideas`: call `ideation finalize-ready`; the transition is atomic and refuses stale critics, duplicate families without a meaningful protocol/metric delta, invalid commands, or missing evidence.
-- `rank_candidates`: call `ideation rank-candidates`; this starts the ranker intent and blocks Stop until the result is recorded or cancelled.
-- `complete_or_exhaust`: call `ideation complete` if researchable candidate and ranking exist; otherwise call `ideation exhaust`.
+- `complete_or_exhaust`: call `ideation complete` if the accepted idea batch satisfies `min_candidates`; otherwise call `ideation exhaust`.
 
 </Cursor_Actions>
 
@@ -210,7 +210,7 @@ ai-scientist \
   ideation intent start-batch --run-id <run-id> --role generator --count <n>
 ```
 
-Use `--role critic --idea-ids <idea-id> ...` for critic batches. Ranking remains single-agent and is started with `ideation rank-candidates`.
+Use `--role critic --idea-ids <idea-id> ...` for critic batches. Ranking is not part of the normal flow; `ideation rank-candidates` remains only for explicit legacy/manual use.
 
 Each returned intent includes `result_path`. Give that path to the subagent and require it to overwrite the file with JSON only. `intent complete --intent-id <id>` reads `result_path` by default. Use `--json` or `--path` only as explicit overrides.
 
@@ -228,7 +228,7 @@ ai-scientist \
   ideation intent cancel --run-id <run-id> --intent-id <intent-id> --reason "malformed generator output"
 ```
 
-Failed/cancelled attempts consume loop budget. Do not leave pending intents unresolved.
+Generator drafts consume only the current idea attempt's per-attempt reflection budget. Failed/cancelled generator intents end the slot as `error`; critic calls, literature search, finalization, and rejection bookkeeping do not consume reflection budget. Do not leave pending intents unresolved.
 
 </Subagent_Protocol>
 
@@ -243,15 +243,17 @@ Generator prompt must include:
 - research topic
 - strictness mode
 - current slot/idea id
+- run-owned `research_contract` with fixed dataset, split, baseline, metric, evaluator, and target threshold
 - mode-specific generator prompt from `config.json` when available
 - preflight reference papers or a "none found" note
 - Heiemeier answers/insights from the pre-generation synthesis
 - unresolved assumptions from the preflight
 - `skills/literature-search/SKILL.md` and permission to use it during the generator intent
-- previous critic verdict and required revisions when this is a revision
+- previous critic verdict and required revisions only when this is a `REVISE` revision of the same attempt
+- no rejected draft details when this is a fresh replacement after `REJECT`
 - instruction to return JSON only
 
-Generators should use the preflight reference and Heiemeier brief as seed context, not as a substitute for canonical evidence. Generators should use `literature-search` themselves when the idea needs papers, baseline references, novelty checks, or benchmark protocol evidence. This is especially expected for scientist-mode drafts and performance-focused ideas. The generator may run `idea search-semantic-scholar` for its assigned `idea_id`; this records canonical evidence while the generator still owns query choice and synthesis.
+Generators should use the preflight reference and Heiemeier brief as seed context, not as a substitute for canonical evidence. Generators must not create per-idea research contracts or change the fixed dataset, split, baseline, metric, evaluator, or target threshold. Generators should use `literature-search` themselves when the idea needs papers, novelty checks, or mechanism evidence. The generator may run `idea search-semantic-scholar` for its assigned `idea_id`; this records canonical evidence while the generator still owns query choice and synthesis.
 
 Canonical draft payload should include at least:
 
@@ -261,23 +263,11 @@ Canonical draft payload should include at least:
   "family_key": "family_key",
   "title": "Short title",
   "hypothesis": "Concrete hypothesis",
-  "research_contract": {
-    "primary_hypothesis": "The exact hypothesis the research loop must resolve",
-    "goal_type": "performance",
-    "success_criteria": "Hard, non-drifting success rule",
-    "failure_criteria": "Hard rule for when the original hypothesis is genuinely false",
-    "allowed_rescue_scope": "What narrowed findings are allowed, if any",
-    "kill_criteria": "When to stop rather than drift",
-    "non_drift_definition": "What would count as quiet claim drift",
-    "metrics_that_matter": ["score"],
-    "non_negotiable_comparisons": ["baseline", "reference paper"],
-    "baseline_reference": {
-      "title": "Comparable reference paper or model",
-      "usability": "How this reference can be used for baseline calculation"
-    },
-    "benchmark_plan": "How to calculate an apples-to-apples benchmark score in this repo",
-    "target_threshold": "Minimum score or statistical rule required for success"
-  },
+  "mechanism": "Why this direction may improve the fixed benchmark",
+  "implementation_sketch": "How to implement this direction in the repository",
+  "expected_metric_effect": "Expected effect on the fixed metric",
+  "fit_to_research_contract": "Why this preserves the fixed dataset, split, baseline, metric, evaluator, and target threshold",
+  "novelty_angle": "Why this could become a scientific finding or useful engineering direction",
   "unique_protocol": "What makes this experiment distinct from same-family ideas",
   "expected_metric": "Metric or benchmark target",
   "smoke_runnable_now": true,
@@ -289,7 +279,7 @@ Canonical draft payload should include at least:
 }
 ```
 
-Full prose, related work, and detailed plans belong in the referenced draft log, not in persisted state or final `ideas.json`. The `research_contract` is the exception: it must be persisted because research start freezes it as the anti-drift contract for node workers and critics.
+Full prose, related work, and detailed plans belong in the referenced draft log, not in persisted state or final `ideas.json`. The run-owned `research_contract` is persisted in `config.json`; generated ideas should not carry their own contracts.
 
 </Generator_Agent>
 
@@ -388,8 +378,8 @@ Allowed verdicts:
 
 - `ACCEPT`: candidate may become plain `ACCEPTED` if CLI hard gates pass.
 - `ACCEPT_WITHOUT_REFERENCE`: allowed only by mode config; useful for engineer/custom or S2 failure cases.
-- `REVISE`: do not finalize; either revise same idea thread or reject explicitly.
-- `REJECT`: reject explicitly or revise if the orchestrator has a clear reason.
+- `REVISE`: do not finalize; revise the same idea attempt if budget remains, otherwise exhaust the slot.
+- `REJECT`: do not finalize; kill the current attempt and let the CLI respawn a fully fresh generator for the same slot when attempts remain.
 
 Record verdict:
 
@@ -413,15 +403,17 @@ ai-scientist \
   idea revise-start --run-id <run-id> --idea-id <idea-id> --reason "<revision reason>"
 ```
 
-Then spawn a new generator for the revised draft.
+Then spawn a new generator for the revised draft. This keeps the same attempt alive and consumes another reflection from that attempt's per-attempt budget.
 
-Or abandon it explicitly:
+If the critic verdict is `REJECT`, or if you decide the current attempt is structurally weak, drifty, redundant, or not worth repairing, reject the current attempt into a fresh replacement for the same slot:
 
 ```bash
 ai-scientist \
   --target-repo <target-repo> \
-  idea reject --run-id <run-id> --idea-id <idea-id> --reason "abandoned_after_revise"
+  idea reject --run-id <run-id> --idea-id <idea-id> --reason "current_attempt_not_worth_repairing"
 ```
+
+After `idea reject`, resume. If fresh attempts remain, the cursor returns `start_generator_batch` with the same `idea_id`; start that generator from the original topic, frozen contract, mode prompt, and preflight/Heiemeier brief only. Do not pass the rejected draft, critic payload, or rejection reason to the replacement generator.
 
 For budget exhaustion on an active idea:
 
@@ -431,7 +423,7 @@ ai-scientist \
   idea exhaust --run-id <run-id> --idea-id <idea-id> --reason "reflection_budget_exhausted"
 ```
 
-Rejected/exhausted ideas stay in the audit trail and final `ideas.json` with `evaluation: "REJECTED"`.
+Rejected attempts stay in hidden attempt history. They do not count as terminal slot completion and are not research handoff candidates. Exhausted slots stay in the final `ideas.json` with `evaluation: "REJECTED"`.
 
 </Revision_And_Rejection>
 
@@ -455,9 +447,9 @@ Use `idea finalize --idea-id <idea-id>` only for a targeted single-idea transiti
 
 ## Ranking
 
-After all requested slots are attempted, or after budget forces stopping, rank candidates if at least one researchable candidate exists.
+Ranking is legacy/manual only. Do not run it in the normal fixed-contract performance campaign flow. After all requested slots are accepted, exhausted, or error, complete the accepted idea batch instead of selecting one default idea.
 
-Start the ranker:
+If the user explicitly asks for legacy/manual ranking, start the ranker:
 
 ```bash
 ai-scientist \
@@ -472,7 +464,7 @@ The ranker prompt must include:
 - evidence summaries and critic verdicts
 - instruction to score every terminal non-malformed idea
 - instruction that dense `rank` applies only to plain `ACCEPTED`
-- instruction to select one default research candidate
+- instruction to select one default research candidate for manual compatibility only
 
 Ranking payload:
 
@@ -519,8 +511,8 @@ Successful completion requires:
 - no active unterminated idea
 - requested slots attempted unless early stop is explicitly configured
 - at least one researchable candidate under the frozen mode config
-- finalized ranking
-- valid selected candidate
+- accepted idea batch recorded in `handoff.idea_batch`
+- run-owned `research_contract` in `config.json`
 - `ideation_to_research` validation/handoff evidence
 
 Complete:
@@ -531,7 +523,7 @@ ai-scientist \
   ideation complete --run-id <run-id>
 ```
 
-If budget was exhausted but at least one researchable candidate exists:
+If one or more slots were exhausted but at least one researchable candidate exists:
 
 ```bash
 ai-scientist \

@@ -2859,6 +2859,7 @@ def ideation_response(target: Path, run_id: str, **extra: Any) -> int:
 
 def cmd_ideation_start(args: argparse.Namespace) -> int:
     target = target_repo(args)
+    payload = load_payload(args)
     state = start_ideation(
         target,
         args.run_id,
@@ -2867,7 +2868,9 @@ def cmd_ideation_start(args: argparse.Namespace) -> int:
         num_ideas_required=args.num_ideas,
         min_candidates_required=args.min_candidates,
         reflection_budget=args.reflection_budget,
+        max_attempts_per_slot=args.max_attempts_per_slot,
         max_subagents=args.max_subagents,
+        payload=payload,
     )
     cfg = current_config(target, args.run_id)
     cursor = cursor_for_state(state, cfg)
@@ -3264,7 +3267,7 @@ def build_parser() -> argparse.ArgumentParser:
     start = research_sub.add_parser("start")
     start.add_argument("--run-id", required=True)
     start.add_argument("--strictness-mode", required=True, choices=sorted(research_workflow.ACTIVE_MODES))
-    start.add_argument("--selected-idea-id", required=True)
+    start.add_argument("--selected-idea-id")
     start.add_argument("--resource-config", type=Path)
     start.add_argument("--codex-session-id")
     start.add_argument("--codex-thread-id")
@@ -3303,7 +3306,9 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_start.add_argument("--num-ideas", type=int)
     ideation_start.add_argument("--min-candidates", type=int)
     ideation_start.add_argument("--reflection-budget", type=int)
+    ideation_start.add_argument("--max-attempts-per-slot", type=int)
     ideation_start.add_argument("--max-subagents", type=int)
+    add_json_args(ideation_start)
     ideation_start.set_defaults(func=cmd_ideation_start)
     ideation_resume = ideation_sub.add_parser("resume")
     ideation_resume.add_argument("--run-id")

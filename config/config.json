@@ -16,7 +16,8 @@
     "default_mode": "scientist",
     "num_ideas_required": 10,
     "min_candidates_required": 1,
-    "reflection_budget": 120,
+    "reflection_budget_per_idea": 10,
+    "max_attempts_per_slot": 3,
     "early_stop_allowed": false,
     "prompt_root": "prompts/ideation",
     "concurrency": {

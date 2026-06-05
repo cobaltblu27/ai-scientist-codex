@@ -40,7 +40,7 @@ from core.state import (
 MODES = {"scientist", "engineer", "custom"}
 INTENT_ROLES = {"generator", "critic", "ranker"}
 PROMPT_ROLES = ("generator", "critic", "ranker")
-TERMINAL_IDEA_STATUSES = {"accepted", "accepted_without_reference", "rejected", "error", "exhausted"}
+TERMINAL_IDEA_STATUSES = {"accepted", "accepted_without_reference", "error", "exhausted"}
 TERMINAL_IDEATION_STATUSES = {"COMPLETED", "COMPLETED_BUDGET_EXHAUSTED", "EXHAUSTED_NO_CANDIDATE", "CANCELLED"}
 SUCCESS_TERMINAL_STATUSES = {"COMPLETED", "COMPLETED_BUDGET_EXHAUSTED"}
 IDEA_OUTPUT_SCHEMA = {
@@ -49,9 +49,13 @@ IDEA_OUTPUT_SCHEMA = {
         "family_key",
         "title",
         "hypothesis",
-        "research_contract",
         "unique_protocol",
         "expected_metric",
+        "mechanism",
+        "implementation_sketch",
+        "expected_metric_effect",
+        "fit_to_research_contract",
+        "novelty_angle",
         "smoke_runnable_now",
         "requires_implementation",
         "minimum_command",
@@ -72,6 +76,13 @@ RESEARCH_CONTRACT_REQUIRED_FIELDS = {
     "non_negotiable_comparisons",
 }
 PERFORMANCE_GOAL_TERMS = {"performance", "model_performance", "enhanced_model_performance", "benchmarking"}
+CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS = {
+    "fixed_dataset": ("fixed_dataset", "dataset", "dataset_ref"),
+    "fixed_split": ("fixed_split", "split_protocol", "split_ref", "fixed_split_ref"),
+    "fixed_baseline": ("fixed_baseline", "baseline_reference", "baseline_ref"),
+    "metrics": ("metrics_that_matter", "metrics", "metric"),
+    "evaluator_command": ("evaluator_command", "evaluator", "benchmark_command", "benchmark_plan"),
+}
 
 
 def prompt_path_for(mode: str, role: str) -> str:
@@ -118,7 +129,8 @@ DEFAULT_IDEATION_CONFIG: dict[str, Any] = {
     "default_mode": "scientist",
     "num_ideas_required": 10,
     "min_candidates_required": 1,
-    "reflection_budget": 120,
+    "reflection_budget_per_idea": 10,
+    "max_attempts_per_slot": 3,
     "early_stop_allowed": False,
     "prompt_root": "prompts/ideation",
     "concurrency": {"max_subagents": 6},
@@ -249,6 +261,12 @@ def validate_max_subagents(value: Any) -> int:
     return value
 
 
+def validate_positive_int(value: Any, name: str) -> int:
+    if not isinstance(value, int) or value <= 0:
+        raise IdeationStateError(f"{name} must be a positive integer")
+    return value
+
+
 def choose_mode(config: dict[str, Any], requested_mode: str | None) -> str:
     ideation = config.get("ideation") if isinstance(config.get("ideation"), dict) else {}
     mode = requested_mode or config.get("strictness_mode") or ideation.get("default_mode") or "scientist"
@@ -289,6 +307,7 @@ def frozen_config(
     num_ideas_required: int | None = None,
     min_candidates_required: int | None = None,
     reflection_budget: int | None = None,
+    max_attempts_per_slot: int | None = None,
     max_subagents: int | None = None,
 ) -> dict[str, Any]:
     base = {
@@ -319,8 +338,21 @@ def frozen_config(
         ideation_cfg["num_ideas_required"] = num_ideas_required
     if min_candidates_required is not None:
         ideation_cfg["min_candidates_required"] = min_candidates_required
+    if "reflection_budget_per_idea" not in ideation_cfg and "reflection_budget" in ideation_cfg:
+        ideation_cfg["reflection_budget_per_idea"] = ideation_cfg["reflection_budget"]
     if reflection_budget is not None:
-        ideation_cfg["reflection_budget"] = reflection_budget
+        ideation_cfg["reflection_budget_per_idea"] = reflection_budget
+    ideation_cfg["reflection_budget_per_idea"] = validate_positive_int(
+        ideation_cfg.get("reflection_budget_per_idea", 10),
+        "ideation.reflection_budget_per_idea",
+    )
+    ideation_cfg.pop("reflection_budget", None)
+    if max_attempts_per_slot is not None:
+        ideation_cfg["max_attempts_per_slot"] = max_attempts_per_slot
+    ideation_cfg["max_attempts_per_slot"] = validate_positive_int(
+        ideation_cfg.get("max_attempts_per_slot", 3),
+        "ideation.max_attempts_per_slot",
+    )
     validate_ideation_prompt_files(merged, mode)
     merged.update(
         {
@@ -405,21 +437,18 @@ def compact_idea_payload(payload: dict[str, Any], idea_id: str, run_id: str) -> 
     if minimum_command is not None:
         minimum_command = str(minimum_command).strip() or None
     family_key = str(payload.get("family_key") or slug_key(title or hypothesis)).strip()
-    research_contract = payload.get("research_contract")
-    if research_contract is None:
-        research_contract = payload.get("contract")
-    if research_contract is None:
-        research_contract = {}
-    if not isinstance(research_contract, dict):
-        raise IdeationStateError("research_contract must be a JSON object")
-    return {
+    compact = {
         "id": idea_id,
         "family_key": family_key,
         "title": title,
         "hypothesis": hypothesis,
-        "research_contract": deepcopy(research_contract),
         "unique_protocol": summarize_protocol(payload),
         "expected_metric": expected_metric,
+        "mechanism": payload.get("mechanism"),
+        "implementation_sketch": payload.get("implementation_sketch"),
+        "expected_metric_effect": payload.get("expected_metric_effect"),
+        "fit_to_research_contract": payload.get("fit_to_research_contract"),
+        "novelty_angle": payload.get("novelty_angle"),
         "smoke_runnable_now": bool(payload.get("smoke_runnable_now")),
         "requires_implementation": requires_implementation,
         "minimum_command": minimum_command,
@@ -428,6 +457,11 @@ def compact_idea_payload(payload: dict[str, Any], idea_id: str, run_id: str) -> 
         "risk_flags": risk_flags,
         "source_run_id": str(payload.get("source_run_id") or run_id),
     }
+    for aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.values():
+        for key in aliases:
+            if key in payload:
+                compact[key] = deepcopy(payload[key])
+    return compact
 
 
 def pyproject_commands(target_repo: Path) -> list[str]:
@@ -586,10 +620,46 @@ def validate_research_contract(contract: Any, *, require_performance_baseline: b
             raise IdeationStateError("performance_contract_target_threshold_required")
 
 
-def idea_contract(idea: dict[str, Any]) -> dict[str, Any]:
-    draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-    contract = draft.get("research_contract")
+def first_substantive_value(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if has_substantive_value(value):
+            return value
+    return None
+
+
+def normalize_contract_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True).lower()
+    if isinstance(value, list):
+        return json.dumps(value, sort_keys=True).lower()
+    return str(value or "").strip().lower()
+
+
+def validate_campaign_research_contract(contract: Any) -> None:
+    validate_research_contract(contract, require_performance_baseline=True)
+    if not isinstance(contract, dict) or not is_performance_contract(contract):
+        raise IdeationStateError("campaign_research_contract_goal_type_must_be_performance")
+    missing = sorted(name for name, aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.items() if not has_substantive_value(first_substantive_value(contract, aliases)))
+    if missing:
+        raise IdeationStateError(f"campaign_research_contract_missing_fields:{','.join(missing)}")
+
+
+def run_research_contract(config: dict[str, Any]) -> dict[str, Any]:
+    contract = config.get("research_contract")
     return contract if isinstance(contract, dict) else {}
+
+
+def validate_idea_fits_campaign(draft: dict[str, Any], campaign_contract: dict[str, Any]) -> None:
+    if not has_substantive_value(draft.get("fit_to_research_contract")):
+        raise IdeationStateError("idea_fit_to_research_contract_required")
+    for name, aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.items():
+        campaign_value = first_substantive_value(campaign_contract, aliases)
+        draft_value = first_substantive_value(draft, aliases)
+        if draft_value is None or campaign_value is None:
+            continue
+        if normalize_contract_value(draft_value) != normalize_contract_value(campaign_value):
+            raise IdeationStateError(f"idea_changes_campaign_{name}")
 
 
 def terminal_ideas(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -605,9 +675,6 @@ def is_researchable_idea(idea: dict[str, Any], config: dict[str, Any]) -> bool:
     if evaluation == "ACCEPTED":
         return True
     if evaluation == "ACCEPTED_WITHOUT_REFERENCE":
-        contract = idea_contract(idea)
-        if is_performance_contract(contract) and not contract_has_baseline_reference(contract):
-            return False
         return bool(mode_preset(config).get("allow_selection_without_reference"))
     return False
 
@@ -635,9 +702,120 @@ def latest_critic_matches(idea: dict[str, Any]) -> bool:
     )
 
 
-def reflection_budget_exhausted(phase_state: dict[str, Any]) -> bool:
-    budget = int(phase_state.get("reflection_budget") or 0)
-    return budget > 0 and int(phase_state.get("iterations_used") or 0) >= budget
+def phase_reflection_budget_per_idea(phase_state: dict[str, Any]) -> int:
+    value = phase_state.get("reflection_budget_per_idea")
+    if value is None:
+        value = phase_state.get("reflection_budget")
+    return validate_positive_int(int(value or 10), "state.reflection_budget_per_idea")
+
+
+def phase_max_attempts_per_slot(phase_state: dict[str, Any]) -> int:
+    return validate_positive_int(int(phase_state.get("max_attempts_per_slot") or 3), "state.max_attempts_per_slot")
+
+
+def ensure_idea_slot_defaults(phase_state: dict[str, Any], idea: dict[str, Any]) -> None:
+    idea.setdefault("attempt_index", 1)
+    idea.setdefault("attempts_used", int(idea.get("attempt_index") or 1))
+    idea.setdefault("max_attempts", phase_max_attempts_per_slot(phase_state))
+    idea.setdefault("reflection_budget", phase_reflection_budget_per_idea(phase_state))
+    idea.setdefault("reflection_count", 0)
+    idea.setdefault("attempt_history", [])
+    if not isinstance(idea["attempt_history"], list):
+        raise IdeationStateError("idea attempt_history must be a list")
+
+
+def new_idea_slot(phase_state: dict[str, Any], idea_id: str, slot_index: int) -> dict[str, Any]:
+    idea = {
+        "id": idea_id,
+        "slot_index": slot_index,
+        "status": "generating",
+        "source_run_id": None,
+        "attempt_index": 1,
+        "attempts_used": 1,
+        "max_attempts": phase_max_attempts_per_slot(phase_state),
+        "reflection_budget": phase_reflection_budget_per_idea(phase_state),
+        "reflection_count": 0,
+        "attempt_history": [],
+    }
+    return idea
+
+
+def idea_budget_remaining(idea: dict[str, Any]) -> int:
+    return int(idea.get("reflection_budget") or 0) - int(idea.get("reflection_count") or 0)
+
+
+def idea_reflection_budget_exhausted(idea: dict[str, Any]) -> bool:
+    return idea_budget_remaining(idea) <= 0
+
+
+def idea_attempts_remaining(idea: dict[str, Any]) -> int:
+    return int(idea.get("max_attempts") or 0) - int(idea.get("attempts_used") or 0)
+
+
+def idea_can_start_fresh_attempt(idea: dict[str, Any]) -> bool:
+    return idea_attempts_remaining(idea) > 0
+
+
+def archive_current_attempt(idea: dict[str, Any], reason: str, *, status: str = "rejected") -> None:
+    history = idea.setdefault("attempt_history", [])
+    if not isinstance(history, list):
+        raise IdeationStateError("idea attempt_history must be a list")
+    attempt_record = {
+        "attempt_index": int(idea.get("attempt_index") or len(history) + 1),
+        "status": status,
+        "reason": reason,
+        "latest_draft": deepcopy(idea.get("latest_draft")) if isinstance(idea.get("latest_draft"), dict) else None,
+        "score": idea.get("score"),
+        "reflection_count": int(idea.get("reflection_count") or 0),
+        "draft_version": idea.get("draft_version"),
+        "idea_hash": idea.get("idea_hash"),
+        "draft_ref": idea.get("draft_ref"),
+        "critic_ref": (idea.get("latest_critic") or {}).get("critic_ref") if isinstance(idea.get("latest_critic"), dict) else None,
+        "critic_verdict": (idea.get("latest_critic") or {}).get("verdict") if isinstance(idea.get("latest_critic"), dict) else None,
+        "recorded_at": utc_now(),
+    }
+    history.append({key: value for key, value in attempt_record.items() if value is not None})
+
+
+def clear_current_attempt_state(idea: dict[str, Any]) -> None:
+    for key in (
+        "latest_draft",
+        "latest_critic",
+        "idea_hash",
+        "draft_ref",
+        "evaluation",
+        "score",
+        "rank",
+        "manual_selection_only",
+        "researchable",
+        "literature_evidence",
+        "literature_search_count",
+        "revision_reason",
+        "rejection_reason",
+        "exhaustion_reason",
+        "risk_flags",
+        "rationale",
+        "score_components",
+    ):
+        idea.pop(key, None)
+
+
+def request_fresh_attempt(phase_state: dict[str, Any], idea: dict[str, Any], reason: str) -> None:
+    ensure_idea_slot_defaults(phase_state, idea)
+    archive_current_attempt(idea, reason)
+    clear_current_attempt_state(idea)
+    if idea_can_start_fresh_attempt(idea):
+        idea["attempts_used"] = int(idea.get("attempts_used") or 0) + 1
+        idea["attempt_index"] = int(idea.get("attempt_index") or 0) + 1
+        idea["reflection_count"] = 0
+        idea["reflection_budget"] = phase_reflection_budget_per_idea(phase_state)
+        idea["max_attempts"] = phase_max_attempts_per_slot(phase_state)
+        idea["budget_status"] = "open"
+    else:
+        idea["budget_status"] = "attempt_cap_reached"
+    idea["status"] = "fresh_attempt_requested"
+    idea["fresh_attempt_reason"] = reason
+    idea["updated_at"] = utc_now()
 
 
 def next_idea_id(phase_state: dict[str, Any]) -> str:
@@ -731,6 +909,35 @@ def cursor_for_state(state: dict[str, Any], config: dict[str, Any] | None = None
         running = [idea["id"] for idea in active_ideas if str(idea.get("status") or "") in {"generating", "critic_running", "ranking_running"}]
         if running:
             return {"next_action": "collect_subagent_results", "next_action_details": {"reason": "active ideas have running subagents without pending intents", "idea_ids": running}}
+        fresh_requested = [idea["id"] for idea in active_ideas if str(idea.get("status") or "") == "fresh_attempt_requested"]
+        if fresh_requested:
+            fresh_ready = []
+            fresh_capped = []
+            for idea in active_ideas:
+                if idea["id"] not in fresh_requested:
+                    continue
+                ensure_idea_slot_defaults(phase_state, idea)
+                if idea.get("budget_status") == "attempt_cap_reached":
+                    fresh_capped.append(idea["id"])
+                else:
+                    fresh_ready.append(idea["id"])
+            if fresh_capped:
+                return {
+                    "next_action": "revise_or_reject_batch",
+                    "next_action_details": {
+                        "reason": "fresh attempt cap reached; exhaust idea slots",
+                        "idea_ids": fresh_capped,
+                        "required_action": "idea exhaust",
+                    },
+                }
+            return {
+                "next_action": "start_generator_batch",
+                "next_action_details": {
+                    "reason": "critic rejected current attempt; start fresh attempts for same slots",
+                    "idea_ids": fresh_ready,
+                    "count": len(fresh_ready),
+                },
+            }
         needs_draft = [idea["id"] for idea in active_ideas if not isinstance(idea.get("latest_draft"), dict)]
         if needs_draft:
             return {"next_action": "start_generator_batch", "next_action_details": {"reason": "active ideas need drafts", "idea_ids": needs_draft, "count": len(needs_draft)}}
@@ -741,13 +948,27 @@ def cursor_for_state(state: dict[str, Any], config: dict[str, Any] | None = None
         if needs_critic:
             return {"next_action": "start_critic_batch", "next_action_details": {"reason": "latest drafts need fresh critics", "idea_ids": needs_critic, "count": len(needs_critic)}}
         revise_or_reject = []
+        budget_exhausted = []
         ready = []
         for idea in active_ideas:
+            ensure_idea_slot_defaults(phase_state, idea)
             verdict = str(idea["latest_critic"].get("verdict") or "").upper()
             if verdict in {"REVISE", "REJECT"}:
-                revise_or_reject.append(idea["id"])
+                if verdict == "REVISE" and idea_reflection_budget_exhausted(idea):
+                    budget_exhausted.append(idea["id"])
+                else:
+                    revise_or_reject.append(idea["id"])
             else:
                 ready.append(idea["id"])
+        if budget_exhausted:
+            return {
+                "next_action": "revise_or_reject_batch",
+                "next_action_details": {
+                    "reason": "per-idea reflection budget exhausted; exhaust idea slots",
+                    "idea_ids": budget_exhausted,
+                    "required_action": "idea exhaust",
+                },
+            }
         if revise_or_reject:
             return {"next_action": "revise_or_reject_batch", "next_action_details": {"reason": "critic requested revision or rejection", "idea_ids": revise_or_reject}}
         if ready:
@@ -756,16 +977,13 @@ def cursor_for_state(state: dict[str, Any], config: dict[str, Any] | None = None
     attempted = int(phase_state.get("attempted_slots") or 0)
     early_stop = bool(phase_state.get("early_stop_allowed"))
     candidates = researchable_candidates(state, cfg) if cfg else []
-    if attempted < required and not reflection_budget_exhausted(phase_state) and not (early_stop and candidates):
+    if attempted < required and not (early_stop and candidates):
         limit = max_subagents(cfg) if cfg else 6
         count = min(limit, required - attempted)
         return {"next_action": "start_generator_batch", "next_action_details": {"reason": "idea slots remain", "next_idea_id": next_idea_id(phase_state), "count": count, "concurrency_limit": limit}}
     if not terminal_attempts_complete(state):
         return {"next_action": "revise_or_reject_batch", "next_action_details": {"reason": "attempted ideas must reach terminal states"}}
-    ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
-    if candidates and ranking.get("status") != "final":
-        return {"next_action": "rank_candidates", "next_action_details": {"reason": "researchable candidates need ranking", "candidate_count": len(candidates)}}
-    return {"next_action": "complete_or_exhaust", "next_action_details": {"reason": "slots or budget exhausted", "candidate_count": len(candidates)}}
+    return {"next_action": "complete_or_exhaust", "next_action_details": {"reason": "all requested slots are terminal", "candidate_count": len(candidates)}}
 
 
 def update_cursor(state: dict[str, Any], config: dict[str, Any] | None = None) -> None:
@@ -778,8 +996,13 @@ def update_cursor(state: dict[str, Any], config: dict[str, Any] | None = None) -
 
 
 def public_idea_record(idea: dict[str, Any]) -> dict[str, Any]:
+    attempt_history = idea.get("attempt_history") if isinstance(idea.get("attempt_history"), list) else []
+    last_attempt = attempt_history[-1] if attempt_history and isinstance(attempt_history[-1], dict) else {}
     latest_draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
+    if not latest_draft and isinstance(last_attempt.get("latest_draft"), dict):
+        latest_draft = last_attempt["latest_draft"]
     compact = {key: latest_draft.get(key) for key in IDEA_OUTPUT_SCHEMA["required"] if key in latest_draft}
+    reflection_count = int(idea.get("reflection_count") or last_attempt.get("reflection_count") or 0)
     return {
         "id": idea.get("id"),
         "status": idea.get("status"),
@@ -792,13 +1015,18 @@ def public_idea_record(idea: dict[str, Any]) -> dict[str, Any]:
         "selected": idea.get("selected") is True,
         "researchable": idea.get("researchable") is True,
         "source_run_id": idea.get("source_run_id"),
-        "reflection_count": int(idea.get("reflection_count") or 0),
+        "reflection_count": reflection_count,
         "literature_search_count": int(idea.get("literature_search_count") or 0),
         "draft_version": idea.get("draft_version"),
         "idea_hash": idea.get("idea_hash"),
         "manual_selection_only": idea.get("manual_selection_only"),
-        "draft_ref": idea.get("draft_ref"),
-        "critic_ref": (idea.get("latest_critic") or {}).get("critic_ref") if isinstance(idea.get("latest_critic"), dict) else None,
+        "draft_ref": idea.get("draft_ref") or last_attempt.get("draft_ref"),
+        "critic_ref": ((idea.get("latest_critic") or {}).get("critic_ref") if isinstance(idea.get("latest_critic"), dict) else None) or last_attempt.get("critic_ref"),
+        "attempt_index": idea.get("attempt_index"),
+        "attempts_used": idea.get("attempts_used"),
+        "max_attempts": idea.get("max_attempts"),
+        "reflection_budget": idea.get("reflection_budget"),
+        "attempt_history": attempt_history,
         "risks": latest_draft.get("risk_flags", []),
         "normalized": compact,
         "upstream": compact,
@@ -839,12 +1067,17 @@ def start_ideation(
     num_ideas_required: int | None = None,
     min_candidates_required: int | None = None,
     reflection_budget: int | None = None,
+    max_attempts_per_slot: int | None = None,
     max_subagents: int | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if load_loop_state(target_repo, run_id):
         raise IdeationStateError(f"ideation run already exists: {run_id}")
     if not prompt.strip():
         raise IdeationStateError("ideation prompt is required")
+    payload = payload or {}
+    research_contract = payload.get("research_contract")
+    validate_campaign_research_contract(research_contract)
     cfg = frozen_config(
         target_repo,
         run_id,
@@ -852,8 +1085,10 @@ def start_ideation(
         num_ideas_required=num_ideas_required,
         min_candidates_required=min_candidates_required,
         reflection_budget=reflection_budget,
+        max_attempts_per_slot=max_attempts_per_slot,
         max_subagents=max_subagents,
     )
+    cfg["research_contract"] = deepcopy(research_contract)
     ideation_cfg = cfg["ideation"]
     initial = {
         "prompt": prompt,
@@ -861,7 +1096,8 @@ def start_ideation(
         "orchestrator": {"role": "main_codex_session", "iteration": 0},
         "num_ideas_required": int(ideation_cfg.get("num_ideas_required") or 10),
         "min_candidates_required": int(ideation_cfg.get("min_candidates_required") or 1),
-        "reflection_budget": int(ideation_cfg.get("reflection_budget") or 10),
+        "reflection_budget_per_idea": int(ideation_cfg.get("reflection_budget_per_idea") or 10),
+        "max_attempts_per_slot": int(ideation_cfg.get("max_attempts_per_slot") or 3),
         "early_stop_allowed": bool(ideation_cfg.get("early_stop_allowed")),
         "attempted_slots": 0,
         "iterations_used": 0,
@@ -870,8 +1106,9 @@ def start_ideation(
         "intents": {},
         "batches": [],
         "idea_states": {},
-        "ranking": {"status": "pending"},
-        "handoff": {"status": "pending", "candidates": [], "selected_idea_id": None},
+        "research_contract": deepcopy(research_contract),
+        "ranking": {"status": "not_required"},
+        "handoff": {"status": "pending", "candidates": []},
     }
     state = start_phase(target_repo, run_id, "ideation", initial)
     update_cursor(state, cfg)
@@ -905,6 +1142,7 @@ def orchestration_prompt(state: dict[str, Any], config: dict[str, Any], cursor: 
         "Do not run a Python ideation orchestrator or nested codex exec.",
         f"Run id: {state.get('run_id')}",
         f"Mode: {config.get('strictness_mode')}",
+        f"Run-owned research contract: {json.dumps(config.get('research_contract') or {}, sort_keys=True)}",
         f"Shared contract: {ideation_contract_path(Path(str(config.get('target_repo'))), str(state.get('run_id')))}",
         f"Next action: {next_action}",
         f"Details: {json.dumps(cursor.get('next_action_details') or {}, sort_keys=True)}",
@@ -913,8 +1151,6 @@ def orchestration_prompt(state: dict[str, Any], config: dict[str, Any], cursor: 
         lines.append(f"Generator prompt file: {preset['generator_prompt']}")
     elif next_action == "start_critic_batch":
         lines.append(f"Critic prompt file: {preset['critic_prompt']}")
-    elif next_action == "rank_candidates":
-        lines.append(f"Ranker prompt file: {preset['ranker_prompt']}")
     lines.append(f"Original topic: {phase_state.get('prompt')}")
     return "\n".join(lines)
 
@@ -924,7 +1160,9 @@ def allocate_idea_if_needed(phase_state: dict[str, Any], idea_id: str | None = N
     if idea_id:
         if idea_id not in ideas:
             phase_state["attempted_slots"] = int(phase_state.get("attempted_slots") or 0) + 1
-            ideas[idea_id] = {"id": idea_id, "slot_index": int(phase_state["attempted_slots"]), "status": "generating"}
+            ideas[idea_id] = new_idea_slot(phase_state, idea_id, int(phase_state["attempted_slots"]))
+        else:
+            ensure_idea_slot_defaults(phase_state, ideas[idea_id])
         add_active_idea(phase_state, idea_id)
         return idea_id
     active = active_idea_ids(phase_state)
@@ -938,7 +1176,7 @@ def allocate_idea_if_needed(phase_state: dict[str, Any], idea_id: str | None = N
         raise IdeationStateError("no idea slots remain")
     new_id = next_idea_id(phase_state)
     phase_state["attempted_slots"] = attempted + 1
-    ideas[new_id] = {"id": new_id, "slot_index": phase_state["attempted_slots"], "status": "generating", "source_run_id": None}
+    ideas[new_id] = new_idea_slot(phase_state, new_id, int(phase_state["attempted_slots"]))
     add_active_idea(phase_state, new_id)
     return new_id
 
@@ -951,7 +1189,7 @@ def allocate_new_idea(phase_state: dict[str, Any]) -> str:
         raise IdeationStateError("no idea slots remain")
     new_id = f"idea-{attempted + 1:03d}"
     phase_state["attempted_slots"] = attempted + 1
-    ideas[new_id] = {"id": new_id, "slot_index": phase_state["attempted_slots"], "status": "generating", "source_run_id": None}
+    ideas[new_id] = new_idea_slot(phase_state, new_id, int(phase_state["attempted_slots"]))
     add_active_idea(phase_state, new_id)
     return new_id
 
@@ -1054,7 +1292,18 @@ def start_intent_batch(
                 idea["status"] = "critic_running"
                 add_active_idea(phase_state, str(resolved_idea_id))
             elif role == "generator":
-                ideas[str(resolved_idea_id)]["status"] = "generating"
+                idea = ideas[str(resolved_idea_id)]
+                ensure_idea_slot_defaults(phase_state, idea)
+                if str(idea.get("status") or "") in TERMINAL_IDEA_STATUSES:
+                    raise IdeationStateError(f"terminal idea cannot start generator: {resolved_idea_id}")
+                if str(idea.get("status") or "") == "fresh_attempt_requested":
+                    if idea.get("budget_status") == "attempt_cap_reached":
+                        raise IdeationStateError(f"idea_attempt_cap_reached:{resolved_idea_id}")
+                    clear_current_attempt_state(idea)
+                elif idea_reflection_budget_exhausted(idea):
+                    raise IdeationStateError(f"idea_reflection_budget_exhausted:{resolved_idea_id}")
+                idea["status"] = "generating"
+                idea["budget_status"] = "open"
             intent_id = next_intent_id(phase_state)
             result_path = pending_result_path(target_repo, run_id, intent_id)
             result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1213,6 +1462,9 @@ def record_draft(target_repo: Path, run_id: str, payload: dict[str, Any], *, ide
         resolved_id = allocate_idea_if_needed(phase_state, idea_id)
         ideas = phase_state.setdefault("idea_states", {})
         idea = ideas.setdefault(resolved_id, {"id": resolved_id})
+        ensure_idea_slot_defaults(phase_state, idea)
+        if idea_reflection_budget_exhausted(idea):
+            raise IdeationStateError(f"idea_reflection_budget_exhausted:{resolved_id}")
         normalized = normalize_idea_payload(payload, resolved_id, run_id)
         compact = compact_idea_payload(normalized, resolved_id, run_id)
         validate_minimum_command(compact, contract)
@@ -1230,6 +1482,7 @@ def record_draft(target_repo: Path, run_id: str, payload: dict[str, Any], *, ide
                 "idea_hash": idea_hash,
                 "draft_ref": str(draft_ref),
                 "reflection_count": int(idea.get("reflection_count") or 0) + 1,
+                "reflection_budget": int(idea.get("reflection_budget") or phase_reflection_budget_per_idea(phase_state)),
                 "updated_at": utc_now(),
             }
         )
@@ -1253,8 +1506,11 @@ def start_revision(target_repo: Path, run_id: str, idea_id: str, reason: str | N
         idea = ideas.get(idea_id)
         if not isinstance(idea, dict):
             raise IdeationStateError(f"unknown idea_id: {idea_id}")
+        ensure_idea_slot_defaults(phase_state, idea)
         if str(idea.get("status") or "") in TERMINAL_IDEA_STATUSES:
             raise IdeationStateError("terminal idea cannot be revised")
+        if idea_reflection_budget_exhausted(idea):
+            raise IdeationStateError(f"idea_reflection_budget_exhausted:{idea_id}")
         add_active_idea(phase_state, idea_id)
         idea["status"] = "revision_requested"
         idea["revision_reason"] = reason
@@ -1290,6 +1546,7 @@ def record_critic(target_repo: Path, run_id: str, payload: dict[str, Any], *, id
         idea = ideas.get(resolved_id)
         if not isinstance(idea, dict):
             raise IdeationStateError(f"unknown idea_id: {resolved_id}")
+        ensure_idea_slot_defaults(phase_state, idea)
         if not isinstance(idea.get("latest_draft"), dict):
             raise IdeationStateError("critic-record requires a latest draft")
         if intent_id:
@@ -1311,7 +1568,9 @@ def record_critic(target_repo: Path, run_id: str, payload: dict[str, Any], *, id
         if verdict == "REVISE":
             idea["status"] = "needs_revision"
         elif verdict == "REJECT":
-            idea["status"] = "critic_rejected"
+            request_fresh_attempt(phase_state, idea, str(critic.get("rejection_reason") or critic.get("rationale") or "critic_rejected"))
+            add_active_idea(phase_state, resolved_id)
+            phase_state["rejected_attempt_count"] = int(phase_state.get("rejected_attempt_count") or 0) + 1
         elif verdict == "ACCEPT_WITHOUT_REFERENCE":
             idea["status"] = "critic_accepted_without_reference"
         else:
@@ -1624,7 +1883,7 @@ def finalization_decision(idea: dict[str, Any], preset: dict[str, Any]) -> tuple
     if verdict == "REVISE":
         raise IdeationStateError("critic requested revision")
     if verdict == "REJECT":
-        raise IdeationStateError("critic rejected idea; call idea reject or idea revise-start")
+        raise IdeationStateError("critic rejected idea; start a fresh attempt with idea reject or exhaust the slot")
     if verdict == "ACCEPT_WITHOUT_REFERENCE":
         if not preset.get("allow_accepted_without_reference"):
             raise IdeationStateError("mode does not allow ACCEPTED_WITHOUT_REFERENCE")
@@ -1643,9 +1902,6 @@ def apply_finalized_idea(phase_state: dict[str, Any], idea: dict[str, Any], eval
     idea["score"] = critic["score"]
     idea["rank"] = None
     idea["manual_selection_only"] = evaluation == "ACCEPTED_WITHOUT_REFERENCE" and not preset.get("allow_selection_without_reference")
-    contract = idea_contract(idea)
-    if evaluation == "ACCEPTED_WITHOUT_REFERENCE" and is_performance_contract(contract) and not contract_has_baseline_reference(contract):
-        idea["manual_selection_only"] = True
     idea["updated_at"] = utc_now()
     remove_active_idea(phase_state, str(idea["id"]))
     key = "accepted_without_reference_count" if evaluation == "ACCEPTED_WITHOUT_REFERENCE" else "accepted_count"
@@ -1656,6 +1912,7 @@ def finalize_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None)
     cfg = current_config(target_repo, run_id)
     preset = mode_preset(cfg)
     contract = load_ideation_contract(target_repo, run_id)
+    campaign_contract = run_research_contract(cfg)
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
@@ -1668,7 +1925,7 @@ def finalize_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None)
         validate_minimum_command(draft, contract)
         validate_family_dedup(phase_state, resolved_id)
         evaluation, status = finalization_decision(idea, preset)
-        validate_research_contract(idea_contract(idea), require_performance_baseline=True)
+        validate_idea_fits_campaign(draft, campaign_contract)
         apply_finalized_idea(phase_state, idea, evaluation, status, preset)
         increment_iteration(phase_state)
         update_cursor(state, cfg)
@@ -1682,6 +1939,7 @@ def finalize_ready(target_repo: Path, run_id: str, *, idea_ids: list[str] | None
     cfg = current_config(target_repo, run_id)
     preset = mode_preset(cfg)
     contract = load_ideation_contract(target_repo, run_id)
+    campaign_contract = run_research_contract(cfg)
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
@@ -1704,7 +1962,7 @@ def finalize_ready(target_repo: Path, run_id: str, *, idea_ids: list[str] | None
                 raise IdeationStateError(f"duplicate_idea_family:{resolved_id}:{batch_keys[dedup_key]}")
             batch_keys[dedup_key] = resolved_id
             evaluation, status = finalization_decision(idea, preset)
-            validate_research_contract(idea_contract(idea), require_performance_baseline=True)
+            validate_idea_fits_campaign(draft, campaign_contract)
             decisions.append((resolved_id, evaluation, status))
         for resolved_id, evaluation, status in decisions:
             apply_finalized_idea(phase_state, ideas[resolved_id], evaluation, status, preset)
@@ -1726,15 +1984,14 @@ def reject_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None, r
         idea = ideas.get(resolved_id)
         if not isinstance(idea, dict):
             raise IdeationStateError(f"unknown idea_id: {resolved_id}")
-        critic = idea.get("latest_critic") if isinstance(idea.get("latest_critic"), dict) else {}
-        idea["status"] = "rejected"
-        idea["evaluation"] = "REJECTED"
-        idea["rejection_reason"] = reason
-        idea["score"] = critic.get("score") if has_int_score(critic.get("score")) else idea.get("score")
-        idea["rank"] = None
+        ensure_idea_slot_defaults(phase_state, idea)
+        if str(idea.get("status") or "") in TERMINAL_IDEA_STATUSES:
+            raise IdeationStateError("terminal idea cannot be rejected into a fresh attempt")
+        if str(idea.get("status") or "") != "fresh_attempt_requested":
+            request_fresh_attempt(phase_state, idea, reason)
+        add_active_idea(phase_state, resolved_id)
         idea["updated_at"] = utc_now()
-        phase_state["rejected_count"] = int(phase_state.get("rejected_count") or 0) + 1
-        remove_active_idea(phase_state, resolved_id)
+        phase_state["rejected_attempt_count"] = int(phase_state.get("rejected_attempt_count") or 0) + 1
         increment_iteration(phase_state)
         update_cursor(state, cfg)
 
@@ -1744,7 +2001,37 @@ def reject_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None, r
 
 
 def exhaust_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None, reason: str = "reflection_budget_exhausted") -> dict[str, Any]:
-    return reject_idea(target_repo, run_id, idea_id=idea_id, reason=reason)
+    cfg = current_config(target_repo, run_id)
+
+    def mutator(state: dict[str, Any]) -> None:
+        phase_state = state.setdefault("state", {})
+        resolved_id = resolve_idea_id(phase_state, idea_id, "exhaust")
+        ideas = phase_state.setdefault("idea_states", {})
+        idea = ideas.get(resolved_id)
+        if not isinstance(idea, dict):
+            raise IdeationStateError(f"unknown idea_id: {resolved_id}")
+        ensure_idea_slot_defaults(phase_state, idea)
+        if str(idea.get("status") or "") in {"accepted", "accepted_without_reference"}:
+            raise IdeationStateError("accepted idea cannot be exhausted")
+        if str(idea.get("status") or "") != "fresh_attempt_requested" and isinstance(idea.get("latest_draft"), dict):
+            archive_current_attempt(idea, reason, status="exhausted")
+        history = idea.get("attempt_history") if isinstance(idea.get("attempt_history"), list) else []
+        last_score = history[-1].get("score") if history and isinstance(history[-1], dict) else None
+        idea["status"] = "exhausted"
+        idea["evaluation"] = "REJECTED"
+        idea["exhaustion_reason"] = reason
+        idea["score"] = idea.get("score") if has_int_score(idea.get("score")) else (last_score if has_int_score(last_score) else 0)
+        idea["rank"] = None
+        idea["researchable"] = False
+        idea["updated_at"] = utc_now()
+        phase_state["exhausted_count"] = int(phase_state.get("exhausted_count") or 0) + 1
+        remove_active_idea(phase_state, resolved_id)
+        increment_iteration(phase_state)
+        update_cursor(state, cfg)
+
+    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "idea exhaust", "idea_id": idea_id, "reason": reason}, mutator)
+    sync_ideas_archive(target_repo, run_id, updated)
+    return updated
 
 
 def ranking_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1871,6 +2158,7 @@ def final_summary(state: dict[str, Any]) -> dict[str, Any]:
 
 def complete_ideation(target_repo: Path, run_id: str, *, budget_exhausted: bool = False) -> dict[str, Any]:
     cfg = current_config(target_repo, run_id)
+    validate_campaign_research_contract(cfg.get("research_contract"))
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
@@ -1882,17 +2170,25 @@ def complete_ideation(target_repo: Path, run_id: str, *, budget_exhausted: bool 
             raise IdeationStateError("all attempted ideas must be terminal before completion")
         required = int(phase_state.get("num_ideas_required") or 0)
         attempted = int(phase_state.get("attempted_slots") or 0)
-        if attempted < required and not phase_state.get("early_stop_allowed") and not budget_exhausted:
+        if attempted < required and not phase_state.get("early_stop_allowed"):
             raise IdeationStateError("not all requested idea slots have been attempted")
         candidates = researchable_candidates(state, cfg)
         if len(candidates) < int(phase_state.get("min_candidates_required") or 1):
             raise IdeationStateError("not enough researchable candidates")
-        ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
-        if ranking.get("status") != "final":
-            raise IdeationStateError("ranking must be finalized before completion")
-        selected = ranking.get("selected_idea_id")
-        if not isinstance(selected, str) or selected not in {idea["id"] for idea in candidates}:
-            raise IdeationStateError("selected idea must be researchable")
+        phase_state["handoff"] = {
+            "status": "ready",
+            "idea_batch": [idea["id"] for idea in candidates],
+            "candidates": [
+                {
+                    "idea_id": idea["id"],
+                    "evaluation": idea.get("evaluation"),
+                    "score": idea.get("score"),
+                    "idea_hash": idea.get("idea_hash"),
+                }
+                for idea in candidates
+            ],
+            "research_contract_hash": data_hash(cfg.get("research_contract")),
+        }
         status = "COMPLETED_BUDGET_EXHAUSTED" if budget_exhausted else "COMPLETED"
         state["active"] = False
         state["phase_status"] = status
@@ -1923,6 +2219,10 @@ def exhaust_ideation(target_repo: Path, run_id: str) -> dict[str, Any]:
             raise IdeationStateError("active idea blocks exhaustion; reject or exhaust the idea first")
         if not terminal_attempts_complete(new_state):
             raise IdeationStateError("all attempted ideas must be terminal before exhaustion")
+        required = int(phase_state.get("num_ideas_required") or 0)
+        attempted = int(phase_state.get("attempted_slots") or 0)
+        if attempted < required and not phase_state.get("early_stop_allowed"):
+            raise IdeationStateError("not all requested idea slots have been attempted")
         new_state["active"] = False
         new_state["phase_status"] = "EXHAUSTED_NO_CANDIDATE"
         new_state["run_outcome"] = "EXHAUSTED_NO_CANDIDATE"

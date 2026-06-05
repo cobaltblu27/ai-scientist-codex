@@ -20,6 +20,11 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             "family_key",
             "unique_protocol",
             "expected_metric",
+            "mechanism",
+            "implementation_sketch",
+            "expected_metric_effect",
+            "fit_to_research_contract",
+            "novelty_angle",
             "smoke_runnable_now",
             "requires_implementation",
             "minimum_command",
@@ -28,6 +33,7 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             "risk_flags",
         }:
             self.assertIn(field, required)
+        self.assertNotIn("research_contract", required)
 
     def test_persisted_idea_schema_matches_compact_contract(self) -> None:
         schema = json.loads((PLUGIN_ROOT / "schemas" / "idea.schema.json").read_text())
@@ -95,6 +101,36 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             self.assertIn("preflight reference papers", prompt)
             self.assertIn("Heiemeier answers/insights", prompt)
             self.assertIn("not a substitute for canonical evidence", prompt)
+            self.assertIn("run-owned `research_contract`", prompt)
+            self.assertIn("fit_to_research_contract", prompt)
+            self.assertIn("Do not create or edit a per-idea `research_contract`", prompt)
+
+    def test_fixed_contract_campaign_prompt_contracts(self) -> None:
+        ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
+        self.assertIn("run-owned `research_contract`", ideation)
+        self.assertIn("accepted idea batch", ideation)
+        self.assertIn("handoff.idea_batch", ideation)
+        self.assertIn("Ranking is legacy/manual only", ideation)
+        self.assertNotIn("finalized ranking", ideation)
+
+    def test_research_prompts_use_learning_notes_and_campaign_verdicts(self) -> None:
+        skill = (PLUGIN_ROOT / "skills" / "research-loop" / "SKILL.md").read_text()
+        worker = (PLUGIN_ROOT / "prompts" / "research-loop" / "worker.md").read_text()
+        self.assertIn("idea_batch", skill)
+        self.assertIn("learning-notes.jsonl", skill)
+        self.assertIn("resource_queue", skill)
+        self.assertIn("borrowed_from_node_id", skill)
+        self.assertIn("node seed idea", worker)
+        self.assertIn("learning_notes_ref", worker)
+        for mode in ["scientist", "engineer", "custom"]:
+            critic = (PLUGIN_ROOT / "prompts" / "research-loop" / mode / "critic.md").read_text()
+            revision = (PLUGIN_ROOT / "prompts" / "research-loop" / mode / "revision-worker.md").read_text()
+            self.assertIn("PROMISING_CONTINUE", critic)
+            self.assertIn("NEEDS_SCIENTIFIC_FRAMING", critic)
+            self.assertIn("KILL", critic)
+            self.assertIn("learning notes", critic.lower())
+            self.assertIn("borrowed_from_node_id", revision)
+            self.assertIn("insight_ref", revision)
 
     def test_heiemeier_question_skill_invocation_boundary(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "heiemeier-question" / "SKILL.md").read_text()
@@ -107,6 +143,49 @@ class IdeationPromptSchemaTests(unittest.TestCase):
 
     def test_ideation_defaults_to_six_subagents(self) -> None:
         self.assertEqual(DEFAULT_IDEATION_CONFIG["concurrency"]["max_subagents"], 6)
+        self.assertEqual(DEFAULT_IDEATION_CONFIG["reflection_budget_per_idea"], 10)
+        self.assertEqual(DEFAULT_IDEATION_CONFIG["max_attempts_per_slot"], 3)
+
+    def test_ideation_prompts_define_reject_as_fresh_respawn(self) -> None:
+        skill = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
+        self.assertIn("`REJECT` means kill the current attempt and respawn a fully fresh generator for the same slot", skill)
+        for mode in ["scientist", "engineer", "custom"]:
+            critic = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "critic.md").read_text()
+            generator = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "generator.md").read_text()
+            self.assertIn("respawn a fully fresh generator for the same slot", critic)
+            self.assertIn("do not use rejected draft details", generator)
+            for verdict in ["ACCEPT", "ACCEPT_WITHOUT_REFERENCE", "REVISE", "REJECT"]:
+                self.assertIn(f"## `{verdict}`:", critic)
+            self.assertGreaterEqual(critic.count("Examples:"), 4)
+
+    def test_ideation_acceptance_requires_mechanistic_reason_to_work(self) -> None:
+        required_terms = [
+            "Acceptance_Mechanism_Bar",
+            "Acceptance_Probe_Filters",
+            "credible mechanism",
+            "Information-use probe",
+            "Measurement probe",
+            "Data-quirk probe",
+            "Mechanism probe",
+            "Transfer probe",
+            "Non-drift probe",
+            "overfitting",
+            "underfitting",
+            "transfer-learning",
+            "inductive bias",
+            "optimization",
+            "calibration",
+            "representation",
+            "Which dimension should improve",
+            "apples-to-apples",
+            "leakage risk",
+        ]
+        for mode in ["scientist", "engineer", "custom"]:
+            critic = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "critic.md").read_text()
+            for term in required_terms:
+                self.assertIn(term, critic)
+            self.assertIn("gives a strong", critic)
+            self.assertIn("reason it should work", critic)
 
 
 if __name__ == "__main__":

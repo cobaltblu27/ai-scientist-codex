@@ -138,6 +138,25 @@ def selected_idea_from(payload: dict[str, Any]) -> Any:
     return payload.get("selected_idea") or payload.get("idea")
 
 
+def idea_batch_from(payload: dict[str, Any], selected_idea: Any) -> list[dict[str, Any]]:
+    batch = payload.get("idea_batch") or payload.get("ideas")
+    if batch is None:
+        if isinstance(selected_idea, dict):
+            return [deepcopy(selected_idea)]
+        return []
+    if not isinstance(batch, list) or not batch:
+        raise ResearchError("idea_batch must be a non-empty list")
+    normalized: list[dict[str, Any]] = []
+    for index, idea in enumerate(batch, start=1):
+        if not isinstance(idea, dict):
+            raise ResearchError(f"idea_batch item {index} must be a JSON object")
+        idea_id = idea.get("id")
+        if not isinstance(idea_id, str) or not idea_id.strip():
+            raise ResearchError(f"idea_batch item {index} missing id")
+        normalized.append(deepcopy(idea))
+    return normalized
+
+
 def research_contract_from(payload: dict[str, Any], selected_idea: Any) -> Any:
     if isinstance(selected_idea, dict) and "research_contract" in selected_idea:
         return deepcopy(selected_idea["research_contract"])
@@ -146,12 +165,14 @@ def research_contract_from(payload: dict[str, Any], selected_idea: Any) -> Any:
     return None
 
 
-def frozen_arguments(target: Path, args: argparse.Namespace, payload: dict[str, Any], selected_idea: Any, mode: str) -> dict[str, Any]:
+def frozen_arguments(target: Path, args: argparse.Namespace, payload: dict[str, Any], selected_idea: Any, idea_batch: list[dict[str, Any]], mode: str) -> dict[str, Any]:
     provided = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+    selected_idea_id = getattr(args, "selected_idea_id", None) or (selected_idea.get("id") if isinstance(selected_idea, dict) else None)
     return {
         "target_repo": str(target),
-        "target_idea": deepcopy(provided.get("target_idea", selected_idea)),
-        "selected_idea_id": args.selected_idea_id,
+        "target_idea": deepcopy(provided.get("target_idea", selected_idea or {"idea_batch": idea_batch})),
+        "selected_idea_id": selected_idea_id,
+        "idea_batch_ids": [idea["id"] for idea in idea_batch],
         "python_environment": provided.get("python_environment", payload.get("python_environment")),
         "mode": mode,
         "target_venue": deepcopy(provided.get("target_venue", payload.get("target_venue"))),
@@ -165,15 +186,26 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
         raise ResearchError("custom mode requires custom_criteria in research start JSON payload")
     resources = load_resource_config(args, payload)
     selected_idea = selected_idea_from(payload)
+    idea_batch = idea_batch_from(payload, selected_idea)
     research_contract = research_contract_from(payload, selected_idea)
+    if research_contract is None and idea_batch:
+        research_contract = payload.get("research_contract")
+    if not idea_batch:
+        raise ResearchError("research start requires idea_batch or selected_idea")
+    if research_contract is None:
+        raise ResearchError("research start requires research_contract for campaign runs or selected_idea.research_contract for legacy runs")
+    selected_idea_id = args.selected_idea_id or (selected_idea.get("id") if isinstance(selected_idea, dict) else None)
     cfg = {
         "schema_version": 1,
         "run_id": args.run_id,
         "target_repo": str(target),
         "strictness_mode": mode,
-        "selected_idea_id": args.selected_idea_id,
+        "selected_idea_id": selected_idea_id,
         "selected_idea": selected_idea,
-        "arguments": frozen_arguments(target, args, payload, selected_idea, mode),
+        "idea_batch": idea_batch,
+        "campaign_mode": len(idea_batch) > 1 or selected_idea is None,
+        "learning_notes_ref": str(run_dir(target, args.run_id) / "learning-notes.jsonl"),
+        "arguments": frozen_arguments(target, args, payload, selected_idea, idea_batch, mode),
         "research_contract": research_contract,
         "custom_criteria": criteria,
         "resources": resources,
@@ -194,7 +226,11 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     cfg["strictness_mode"] = mode
     cfg["resources"] = resources
     cfg["selected_idea"] = selected_idea
-    cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, mode)
+    cfg["idea_batch"] = idea_batch
+    cfg["campaign_mode"] = len(idea_batch) > 1 or selected_idea is None
+    cfg["learning_notes_ref"] = str(run_dir(target, args.run_id) / "learning-notes.jsonl")
+    cfg["selected_idea_id"] = selected_idea_id
+    cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, idea_batch, mode)
     research = cfg.setdefault("research", {})
     if isinstance(research, dict):
         research.setdefault("baseline_worker_prompt", prompt_path_for(mode, "baseline-worker"))
@@ -412,7 +448,13 @@ def cmd_research_start(args: argparse.Namespace) -> int:
     initial_state = {
         "mode": mode,
         "custom_criteria": cfg.get("custom_criteria"),
-        "selected_idea_id": args.selected_idea_id,
+        "selected_idea_id": cfg.get("selected_idea_id"),
+        "idea_batch": deepcopy(cfg.get("idea_batch") or []),
+        "campaign_mode": bool(cfg.get("campaign_mode")),
+        "learning_notes": {
+            "path": cfg.get("learning_notes_ref"),
+            "status": "active",
+        },
         "orchestrator": {
             "role": "main_codex_session",
             "next_action": "plan",
@@ -431,6 +473,7 @@ def cmd_research_start(args: argparse.Namespace) -> int:
             "repo_refs": [],
         },
         "nodes": {},
+        "resource_queue": {"pending": [], "released": [], "completed": []},
         "resources": {"caps": cfg.get("resources"), "leases": {}, "completed_leases": {}, "events": []},
         "selection": {"status": "pending", "selected_node": None},
     }
@@ -447,6 +490,11 @@ def cmd_research_start(args: argparse.Namespace) -> int:
         codex_thread_id=args.codex_thread_id or os.environ.get("CODEX_THREAD_ID"),
     )
     atomic_write_json(config_path(target, args.run_id), cfg)
+    learning_notes_ref = cfg.get("learning_notes_ref")
+    if isinstance(learning_notes_ref, str) and learning_notes_ref:
+        notes_path = Path(learning_notes_ref)
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        notes_path.touch(exist_ok=True)
     append_journal_event(target, args.run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
     return emit("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)), mode=mode)
 
