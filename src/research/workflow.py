@@ -206,6 +206,7 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
         "idea_batch": idea_batch,
         "campaign_mode": len(idea_batch) > 1 or selected_idea is None,
         "learning_notes_ref": str(run_dir(target, args.run_id) / "learning-notes.jsonl"),
+        "discovery_notes_ref": str(run_dir(target, args.run_id) / "discovery-notes.md"),
         "arguments": frozen_arguments(target, args, payload, selected_idea, idea_batch, mode),
         "research_contract": research_contract,
         "custom_criteria": criteria,
@@ -230,6 +231,7 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     cfg["idea_batch"] = idea_batch
     cfg["campaign_mode"] = len(idea_batch) > 1 or selected_idea is None
     cfg["learning_notes_ref"] = str(run_dir(target, args.run_id) / "learning-notes.jsonl")
+    cfg["discovery_notes_ref"] = str(run_dir(target, args.run_id) / "discovery-notes.md")
     cfg["selected_idea_id"] = selected_idea_id
     cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, idea_batch, mode)
     research = cfg.setdefault("research", {})
@@ -617,6 +619,10 @@ def cmd_research_start(args: argparse.Namespace) -> int:
             "path": cfg.get("learning_notes_ref"),
             "status": "active",
         },
+        "discovery_notes": {
+            "path": cfg.get("discovery_notes_ref"),
+            "status": "active",
+        },
         "orchestrator": {
             "role": "main_codex_session",
             "next_action": "plan",
@@ -657,6 +663,32 @@ def cmd_research_start(args: argparse.Namespace) -> int:
         notes_path = Path(learning_notes_ref)
         notes_path.parent.mkdir(parents=True, exist_ok=True)
         notes_path.touch(exist_ok=True)
+    discovery_notes_ref = cfg.get("discovery_notes_ref")
+    if isinstance(discovery_notes_ref, str) and discovery_notes_ref:
+        notes_path = Path(discovery_notes_ref)
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        if not notes_path.exists():
+            notes_path.write_text(
+                "# Discovery Notes\n\n"
+                "## Current Best Understanding\n\n"
+                "No discovery synthesis recorded yet.\n\n"
+                "## What Worked\n\n"
+                "- TBD\n\n"
+                "## What Did Not Work\n\n"
+                "- TBD\n\n"
+                "## Data And Evaluation Findings\n\n"
+                "- TBD\n\n"
+                "## Model And Mechanism Hypotheses\n\n"
+                "- TBD\n\n"
+                "## Transferable Insights\n\n"
+                "- TBD\n\n"
+                "## Branch Seeds\n\n"
+                "- TBD\n\n"
+                "## Things To Avoid Repeating\n\n"
+                "- TBD\n\n"
+                "## Node Notes\n\n",
+                encoding="utf-8",
+            )
     append_journal_event(target, args.run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
     return emit("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)), mode=mode)
 

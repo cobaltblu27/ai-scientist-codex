@@ -14,6 +14,28 @@ from ideation.state import DEFAULT_IDEATION_CONFIG, IDEA_OUTPUT_SCHEMA
 
 
 class IdeationPromptSchemaTests(unittest.TestCase):
+    def test_subagent_prompts_have_persona_blocks(self) -> None:
+        prompt_paths = sorted((PLUGIN_ROOT / "prompts").rglob("*.md"))
+        self.assertTrue(prompt_paths)
+        for path in prompt_paths:
+            text = path.read_text()
+            with self.subTest(path=path.relative_to(PLUGIN_ROOT)):
+                self.assertIn("<Persona>", text)
+                self.assertIn("<Id>", text)
+                self.assertIn("<Ego>", text)
+                self.assertIn("<Superego>", text)
+                self.assertIn("</Persona>", text)
+                self.assertIn("discovery", text.lower())
+                self.assertIn("stronger", text.lower())
+                if path.name == "revision-worker.md" or path.name == "generator.md":
+                    self.assertIn("Curiosity", text)
+                elif path.name == "critic.md":
+                    self.assertIn("Honesty, helpfulness, and ruthlessness", text)
+                elif path.name == "ranker.md":
+                    self.assertIn("Disciplined taste", text)
+                else:
+                    self.assertIn("Thoroughness and meticulousness", text)
+
     def test_schema_requires_compact_vnext_fields(self) -> None:
         required = set(IDEA_OUTPUT_SCHEMA["required"])
         for field in {
@@ -112,6 +134,10 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertIn("handoff.idea_batch", ideation)
         self.assertIn("Ranking is legacy/manual only", ideation)
         self.assertNotIn("finalized ranking", ideation)
+        self.assertIn("<Persona>", ideation)
+        self.assertIn("You are curious and aesthetically demanding", ideation)
+        self.assertIn("You are the idea curator", ideation)
+        self.assertIn("worth spending research-loop resources on", ideation)
 
     def test_research_prompts_use_learning_notes_and_campaign_verdicts(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "research-loop" / "SKILL.md").read_text()

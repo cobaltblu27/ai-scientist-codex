@@ -38,6 +38,12 @@ Expect some subset of:
 Do not merely reason from summary metrics. For each revision decision, perform a fresh diagnostic pass for the current node scenario. First inspect the repository, node evidence, and data interfaces, then write the smallest task-specific inspection script that can answer the revision question. Run it, keep its artifacts, and recommend only actions supported by those artifacts. Prior data-insight reports may be cited as evidence but must not replace the fresh pass.
 </Core_Rule>
 
+<Model_Failure_Diagnosis>
+When prediction files, residuals, logits, scores, losses, or per-example outputs are available, the inspection must compare success cases against failure cases. If a residual corrector, calibration layer, ensemble, or other output-level patch exists or is tempting, treat it as a diagnostic probe: record where it helps, where it fails, and whether it appears to overfit a slice.
+
+Use that contrast to identify a model-side root-cause hypothesis. Prefer insights that can drive upstream changes to representation, conditioning, feature interaction, loss/objective, data preprocessing, augmentation, sampling/reweighting, training schedule, architecture, or uncertainty modeling that changes training/model behavior. Do not recommend "add a residual corrector after the prediction head" as the primary revision unless the frozen contract explicitly makes post-processing/calibration the target method.
+</Model_Failure_Diagnosis>
+
 <Artifact_Location>
 When inside an AI Scientist research run, write artifacts under:
 
@@ -77,6 +83,8 @@ The inspection code should answer the relevant subset of these questions:
 - Evidence integrity: which prediction, loss, metric, split, baseline, and dataset artifacts exist, and which needed artifacts are missing?
 - Metric sanity: did the node improve globally, regress, fail, or produce inconclusive evidence under the frozen metric?
 - Error table: which examples are high-loss, high-confidence wrong, false positive, false negative, baseline-only correct, candidate-only correct, or model-disagreement cases?
+- Success/failure contrast: what distinguishes examples the current model gets right from examples it gets wrong, and which differences point to an upstream model/data/training issue?
+- Output correction probe: if residual correction, calibration, ensembling, or post-head patching helps, which slices improve, which slices remain weak, and does the base model itself still fail?
 - Slice metrics: do errors concentrate by class, group, source, length, missingness, time, cluster, modality, feature range, or other reproducible slice?
 - Baseline comparison: does the candidate fail where the baseline succeeds, succeed where the baseline fails, or merely shift errors?
 - Data quality: are suspicious failures explained by wrong labels, ambiguous targets, conflicting duplicates, missing context, impossible values, or systematic missingness?
@@ -119,6 +127,12 @@ The inspection code should answer the relevant subset of these questions:
     "usable_for_revision": true
   },
   "failure_summary": "",
+  "success_failure_contrast": {
+    "where_base_model_works": [],
+    "where_base_model_fails": [],
+    "where_output_correction_helps": [],
+    "where_output_correction_fails": []
+  },
   "error_patterns": [],
   "slice_metrics": [
     {
@@ -136,6 +150,8 @@ The inspection code should answer the relevant subset of these questions:
   ],
   "recommended_action": "revise_same_node|branch_from_node|abandon_or_reject|escalate",
   "revision_hypothesis": "",
+  "model_improvement_target": "representation|conditioning|feature_interaction|loss_objective|preprocessing|augmentation|sampling|training_schedule|architecture|uncertainty_modeling|implementation_bug|insufficient_evidence|other",
+  "post_head_correction_role": "not_used|diagnostic_only|ablation_only|contract_allowed_primary",
   "validation_plan": [],
   "risk_to_contract": [],
   "critic_questions": [],
@@ -151,11 +167,14 @@ Write the Markdown brief in this order:
 2. `Evidence Inventory`: usable refs and missing refs.
 3. `Inspection Code`: script path, command run, produced artifact refs.
 4. `Observed Failure Pattern`: artifact-backed facts only.
-5. `Slice And Baseline Findings`: measurable gaps and comparison notes.
-6. `Likely Root Cause`: evidence and uncertainty.
-7. `Recommended Revision Action`: one of revise, branch, abandon/reject, or escalate.
-8. `Validation Plan`: the smallest check that would confirm the revision hypothesis.
-9. `Critic Questions`: what the revision-plan critic should scrutinize.
+5. `Success Versus Failure Contrast`: where the base model works, where it fails, and what that implies.
+6. `Output Correction Probe`: whether residual/post-head correction was examined, where it helps or fails, and why it is diagnostic or explicitly contract-allowed.
+7. `Slice And Baseline Findings`: measurable gaps and comparison notes.
+8. `Likely Root Cause`: evidence and uncertainty.
+9. `Model Improvement Target`: the upstream model/data/training change suggested by the evidence.
+10. `Recommended Revision Action`: one of revise, branch, abandon/reject, or escalate.
+11. `Validation Plan`: the smallest check that would confirm the revision hypothesis.
+12. `Critic Questions`: what the revision-plan critic should scrutinize.
 </Brief_Format>
 
 <Revision_Brainstorm_Hand_Off>
