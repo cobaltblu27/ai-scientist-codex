@@ -455,6 +455,40 @@ def resource_usage(leases: dict[str, dict[str, Any]]) -> dict[str, int]:
     return usage
 
 
+def empty_resource_queue() -> dict[str, list[Any]]:
+    return {"pending": [], "released": [], "completed": []}
+
+
+def normalize_resource_queue(value: Any) -> dict[str, list[Any]]:
+    queue = empty_resource_queue()
+    if isinstance(value, dict):
+        for bucket in queue:
+            entries = value.get(bucket)
+            if isinstance(entries, list):
+                queue[bucket] = entries
+    return queue
+
+
+def merge_resource_queue(current: Any, patch: Any) -> dict[str, list[Any]]:
+    queue = normalize_resource_queue(current)
+    if isinstance(patch, dict):
+        for bucket in queue:
+            entries = patch.get(bucket)
+            if isinstance(entries, list):
+                queue[bucket] = entries
+    return queue
+
+
+def resource_queue_summary(phase_state: dict[str, Any]) -> dict[str, Any]:
+    queue = normalize_resource_queue(phase_state.get("resource_queue"))
+    return {
+        "counts": {bucket: len(entries) for bucket, entries in queue.items()},
+        "pending": queue["pending"],
+        "released": queue["released"],
+        "completed": queue["completed"],
+    }
+
+
 def can_fit(caps: dict[str, int | None], usage: dict[str, int], request: dict[str, int]) -> bool:
     max_parallel = caps["max_parallel"]
     if isinstance(max_parallel, int) and usage["parallel"] + 1 > max_parallel:
@@ -479,7 +513,11 @@ def resource_summary(target: Path, run_id: str, state: dict[str, Any]) -> dict[s
     cfg = cfg if isinstance(cfg, dict) else {}
     phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
     leases = active_leases(phase_state)
-    summary: dict[str, Any] = {"active_leases": leases, "active_lease_count": len(leases)}
+    summary: dict[str, Any] = {
+        "active_leases": leases,
+        "active_lease_count": len(leases),
+        "resource_queue": resource_queue_summary(phase_state),
+    }
     caps = resource_caps_from_config(cfg)
     if isinstance(caps, dict):
         try:
@@ -597,7 +635,7 @@ def cmd_research_start(args: argparse.Namespace) -> int:
             "repo_refs": [],
         },
         "nodes": {},
-        "resource_queue": {"pending": [], "released": [], "completed": []},
+        "resource_queue": empty_resource_queue(),
         "resources": {"caps": cfg.get("resources"), "leases": {}, "completed_leases": {}, "events": []},
         "selection": {"status": "pending", "selected_node": None},
     }
@@ -656,6 +694,8 @@ def cmd_research_checkpoint(args: argparse.Namespace) -> int:
             if isinstance(patch.get(key), dict):
                 current = phase_state.setdefault(key, {})
                 current.update(patch[key])
+        if isinstance(patch.get("resource_queue"), dict):
+            phase_state["resource_queue"] = merge_resource_queue(phase_state.get("resource_queue"), patch["resource_queue"])
         if isinstance(patch.get("nodes"), dict):
             nodes = phase_state.setdefault("nodes", {})
             for node_id, node_patch in patch["nodes"].items():

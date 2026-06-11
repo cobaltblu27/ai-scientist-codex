@@ -80,6 +80,24 @@ NODE_EVIDENCE_ADMIN_KEYS = {
     "repair_log_ref",
     "requires_fresh_critic",
 }
+
+
+def open_resource_queue_ids(phase_state: dict[str, Any]) -> list[str]:
+    queue = phase_state.get("resource_queue") if isinstance(phase_state.get("resource_queue"), dict) else {}
+    open_ids: list[str] = []
+    for bucket in ("pending", "released"):
+        entries = queue.get(bucket)
+        if not isinstance(entries, list):
+            if entries:
+                open_ids.append(bucket)
+            continue
+        for index, entry in enumerate(entries):
+            if isinstance(entry, dict):
+                identifier = entry.get("job_id") or entry.get("work_id") or entry.get("node_id") or f"{bucket}[{index}]"
+            else:
+                identifier = entry or f"{bucket}[{index}]"
+            open_ids.append(f"{bucket}:{identifier}")
+    return sorted(str(item) for item in open_ids)
 SUBAGENT_TERMINAL_STATUSES = {"integrated", "rejected_with_reason", "abandoned_with_reason"}
 RESOURCE_TERMINAL_STATUSES = {"completed", "cancelled", "superseded", "abandoned", "expired"}
 
@@ -832,6 +850,9 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
     ]
     if active_leases:
         return CompletionResult(False, f"research_resources_unresolved:{','.join(sorted(active_leases))}", state)
+    open_queue = open_resource_queue_ids(phase_state)
+    if open_queue:
+        return CompletionResult(False, f"research_resource_queue_unresolved:{','.join(open_queue)}", state)
     selection = phase_state.get("selection")
     if not isinstance(selection, dict) or selection.get("status") != "final":
         return CompletionResult(False, "research_selection_not_final", state)

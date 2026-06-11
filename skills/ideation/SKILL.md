@@ -81,7 +81,7 @@ Before the first generator intent batch for a topic, follow this prompt-only ord
 4. Generator assignment synthesis.
 5. Generator intent batch.
 
-This sequence is orchestration guidance, not a new CLI cursor action. Do not add a new helper-enforced state transition for this preflight. The orchestrator must still obtain a valid data-insight report, or a recorded blocker explaining why data insight cannot be performed, before spawning generator subagents. Keep the result as compact context that is copied into generator assignments.
+This sequence is orchestration guidance, not a new CLI lifecycle gate. Do not create new required artifacts, new cursor actions, or new Stop-hook blockers for this preflight. Do not add a new helper-enforced state transition for this preflight. The orchestrator must still obtain a valid data-insight report, or a recorded blocker explaining why data insight cannot be performed, before spawning generator subagents. Keep the result as compact context that is copied into generator assignments.
 
 <Preflight_Reference_Scan>
 Find reference papers first. Use the query strategy and provider order from `skills/literature-search/SKILL.md`: OpenAlex first, Semantic Scholar as fallback. Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later records evidence through the existing literature CLI for its assigned idea id.

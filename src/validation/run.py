@@ -9,7 +9,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from core.state import evaluate_completion, journal_has_event, node_evidence_fingerprint, node_fresh_critic_reason, validate_node_contract
+from core.state import (
+    evaluate_completion,
+    journal_has_event,
+    node_evidence_fingerprint,
+    node_fresh_critic_reason,
+    open_resource_queue_ids,
+    validate_node_contract,
+)
 
 ALLOWED_DEP_STATUSES = {"approved", "rejected", "not_needed"}
 MODES = {"scientist", "engineer", "custom"}
@@ -553,6 +560,9 @@ def check_research_loop_state(root: Path, run: Path) -> None:
     ]
     if active_leases:
         raise ValidationError(f"active resource leases block research_to_review: {', '.join(sorted(active_leases))}")
+    open_queue = open_resource_queue_ids(phase_state)
+    if open_queue:
+        raise ValidationError(f"resource queue blocks research_to_review: {', '.join(open_queue)}")
     nodes = phase_state.get("nodes")
     if not isinstance(nodes, dict) or not nodes:
         raise ValidationError("loop-state.json must contain at least one node")

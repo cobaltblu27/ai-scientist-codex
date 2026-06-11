@@ -140,6 +140,9 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("research checkpoint", orchestrator)
         self.assertIn("Do not start editing", orchestrator)
         self.assertIn("Checkpoint the worker assignment", orchestrator)
+        self.assertIn("Queue_Triage", orchestrator)
+        self.assertIn("Every resume begins with durable resource queue triage", orchestrator)
+        self.assertIn("state.resource_queue.pending` and `state.resource_queue.released` are empty", orchestrator)
         self.assertIn("parent_node_id", orchestrator)
         self.assertIn("fresh accepting critic verdict", orchestrator)
         self.assertIn("Research completion is two-stage", orchestrator)
@@ -151,6 +154,8 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("Terminal work statuses", orchestrator)
         self.assertIn("--gpus 1 --cpu-cores 4 --memory-mb 8192 --timeout-sec 3600 --poll-sec 30", orchestrator)
         self.assertIn("first return must be a plan", worker)
+        self.assertIn("job_id", worker)
+        self.assertIn("blocked_resource_unavailable", worker)
         self.assertIn("fixed_split_dir", worker)
         self.assertIn("target_threshold", worker)
         self.assertIn("custom_criteria", worker)
@@ -392,6 +397,145 @@ class ResearchWorkflowTests(unittest.TestCase):
             blocked = run_cli(target, "research", "complete", "--run-id", "run-001", "--json", json.dumps(audit))
             self.assertNotEqual(blocked.returncode, 0)
             self.assertIn("research_work_unresolved", blocked.stdout)
+
+    def test_resource_queue_checkpoint_resume_and_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "scientist",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps({"resources": {"max_parallel": 1, "gpus": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            queue = {
+                "pending": [
+                    {
+                        "job_id": "job-node-001-benchmark",
+                        "node_id": "node-001",
+                        "work_id": "worker-node-001",
+                        "worker_id": "worker-node-001",
+                        "purpose": "main benchmark",
+                        "command": "uv run pytest",
+                        "cwd": ".ai-scientist/runs/run-001/nodes/node-001/workspace",
+                        "request": {"gpus": 1, "cpu_cores": 4, "memory_mb": 8192},
+                        "assignment_ref": ".ai-scientist/runs/run-001/logs/workers/node-001/assignment.json",
+                        "result_ref": ".ai-scientist/runs/run-001/logs/workers/node-001/result.json",
+                        "resource_evidence_refs": [],
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "status": "pending",
+                        "reason": "capacity wait",
+                    }
+                ]
+            }
+            checkpoint = run_cli(target, "research", "checkpoint", "--run-id", "run-001", "--json", json.dumps({"resource_queue": queue}))
+            self.assertEqual(checkpoint.returncode, 0, checkpoint.stdout + checkpoint.stderr)
+            state = read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
+            self.assertEqual(state["state"]["resource_queue"]["pending"][0]["job_id"], "job-node-001-benchmark")
+            self.assertEqual(state["state"]["resource_queue"]["released"], [])
+            self.assertEqual(state["state"]["resource_queue"]["completed"], [])
+
+            resume = run_cli(target, "research", "resume", "--run-id", "run-001")
+            self.assertEqual(resume.returncode, 0, resume.stdout + resume.stderr)
+            resume_queue = json_out(resume)["resources"]["resource_queue"]
+            self.assertEqual(resume_queue["counts"], {"pending": 1, "released": 0, "completed": 0})
+            self.assertEqual(resume_queue["pending"][0]["job_id"], "job-node-001-benchmark")
+
+            status = run_cli(target, "resource", "status", "--run-id", "run-001")
+            self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+            status_queue = json_out(status)["resources"]["resource_queue"]
+            self.assertEqual(status_queue["counts"]["pending"], 1)
+            self.assertEqual(status_queue["counts"]["released"], 0)
+            self.assertEqual(status_queue["counts"]["completed"], 0)
+
+    def test_resource_queue_blocks_completion_and_validation(self) -> None:
+        for bucket in ("pending", "released"):
+            with self.subTest(bucket=bucket), tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp)
+                start = run_cli(
+                    target,
+                    "research",
+                    "start",
+                    "--run-id",
+                    "run-001",
+                    "--strictness-mode",
+                    "scientist",
+                    "--selected-idea-id",
+                    "idea-001",
+                    "--json",
+                    json.dumps({"resources": {"max_parallel": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
+                )
+                self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+                queue_item = {
+                    "job_id": f"job-node-001-{bucket}",
+                    "node_id": "node-001",
+                    "work_id": "worker-node-001",
+                    "worker_id": "worker-node-001",
+                    "agent_thread_id": "thread-001" if bucket == "released" else None,
+                    "purpose": "main benchmark",
+                    "command": "uv run pytest",
+                    "cwd": ".ai-scientist/runs/run-001/nodes/node-001/workspace",
+                    "request": {"gpus": 1, "cpu_cores": 4, "memory_mb": 8192},
+                    "assignment_ref": ".ai-scientist/runs/run-001/logs/workers/node-001/assignment.json",
+                    "result_ref": ".ai-scientist/runs/run-001/logs/workers/node-001/result.json",
+                    "resource_evidence_refs": [],
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "status": bucket,
+                    "reason": "fixture unresolved queue job",
+                }
+                queue = {"pending": [], "released": [], "completed": []}
+                queue[bucket] = [queue_item]
+                checkpoint = run_cli(
+                    target,
+                    "research",
+                    "checkpoint",
+                    "--run-id",
+                    "run-001",
+                    "--json",
+                    json.dumps(
+                        {
+                            "nodes": {
+                                "node-001": {
+                                    "node_id": "node-001",
+                                    "status": "accepted",
+                                    "summary": "accepted fixture",
+                                    "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
+                                    "critic_verdict": "ACCEPT_FINAL",
+                                    "critic_completed_at": "2026-01-01T00:00:00Z",
+                                }
+                            },
+                            "resource_queue": queue,
+                        }
+                    ),
+                )
+                self.assertEqual(checkpoint.returncode, 0, checkpoint.stdout + checkpoint.stderr)
+                select = run_cli(target, "research", "select", "--run-id", "run-001", "--node-id", "node-001", "--summary", "accepted fixture")
+                self.assertEqual(select.returncode, 0, select.stdout + select.stderr)
+                audit = {"passed": True, "prompt_to_artifact_checklist": ["selected accepted node"], "verification_evidence": ["unit fixture"]}
+                blocked = run_cli(target, "research", "complete", "--run-id", "run-001", "--json", json.dumps(audit))
+                self.assertNotEqual(blocked.returncode, 0)
+                self.assertIn("research_resource_queue_unresolved", blocked.stdout)
+                self.assertIn(f"{bucket}:job-node-001-{bucket}", blocked.stdout)
+
+                validate = subprocess.run(
+                    [*AI_SCIENTIST_CMD, "validate", "run", str(target), "--gate", "research_to_review", "--run-id", "run-001"],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertNotEqual(validate.returncode, 0)
+                self.assertIn("resource queue blocks research_to_review", validate.stdout + validate.stderr)
+                self.assertIn(f"{bucket}:job-node-001-{bucket}", validate.stdout + validate.stderr)
 
     def test_baseline_checkpoint_resume_and_completion_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

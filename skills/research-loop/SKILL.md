@@ -95,9 +95,13 @@ Treat `.ai-scientist/runs/<run-id>/config.json`, `loop-state.json`, `journal.jso
 </Run_Artifacts>
 
 <Orchestrator_Role>
+Orchestrator_Instructions
+
 This `SKILL.md` is the orchestrator instruction source for the main Codex session. Do not load or rely on a separate orchestrator prompt file.
 
 The current Codex session is the orchestrator of Codex subagents. It watches, assigns, reviews, and records state; it must not implement node work itself. DO NOT work on assignments that belong to subagents. If implementation, criticism, or revision is needed, delegate it to the appropriate Codex subagent.
+
+Subagents
 
 Predifined Codex subagents:
 
@@ -157,16 +161,46 @@ Before any node work begins, freeze the exact run-owned `research_contract` into
 Repeat until completion criteria are met:
 
 1. Resume: `ai-scientist --target-repo <target-repo> research resume --run-id <run-id>`.
-2. Decide the next action as orchestrator and checkpoint it with `research checkpoint`.
-3. In campaign mode, create one node id for each idea in the frozen `idea_batch`; in legacy mode, create one node id for the selected idea. Record each assignment with `research checkpoint`, and spawn a dedicated Codex worker for it. This is mandatory. The orchestrator must not implement the node directly.
-4. Record worker, critic, revision-worker, and revision-critic progress with `research checkpoint`, including prompt path, worker/thread id, result path, status, and next action.
-5. If baseline setup is required, spawn/checkpoint the baseline worker and pass expected split refs to node workers.
-6. Workers that run experiments must use `resource acquire`/`resource release`, or preferably `resource run`.
-7. Integrate every worker/critic/revision return with evidence by checkpointing node summaries, result refs, and the next action.
-8. Before accepting a final outcome or a revision plan, run a mode-specific critic and checkpoint its verdict.
+2. Triage `state.resource_queue` before making new assignments.
+3. Decide the next action as orchestrator and checkpoint it with `research checkpoint`.
+4. In campaign mode, create one node id for each idea in the frozen `idea_batch`; in legacy mode, create one node id for the selected idea. Record each assignment with `research checkpoint`, and spawn a dedicated Codex worker for it. This is mandatory. The orchestrator must not implement the node directly.
+5. Record worker, critic, revision-worker, and revision-critic progress with `research checkpoint`, including prompt path, worker/thread id, result path, status, and next action.
+6. If baseline setup is required, spawn/checkpoint the baseline worker and pass expected split refs to node workers.
+7. Workers that run experiments must use `resource acquire`/`resource release`, or preferably `resource run`.
+8. Integrate every worker/critic/revision return with evidence by checkpointing node summaries, result refs, and the next action.
+9. Before accepting a final outcome or a revision plan, run a mode-specific critic and checkpoint its verdict.
 
 Workers are not loop owners. If a worker session stops, the Stop hook should allow it when the active run is owned by the orchestrator thread/session.
 </Loop>
+
+<Queue_Triage>
+Every resume begins with durable resource queue triage. Do not rely on chat memory for long benchmark jobs.
+
+Queue buckets live at `state.resource_queue`:
+
+- `pending`: runnable resource-heavy job known to the orchestrator but not yet assigned to a worker.
+- `released`: job assigned to a worker/thread and awaiting a worker return.
+- `completed`: worker returned terminal evidence and the orchestrator integrated it.
+
+Queue item shape:
+
+- `job_id`, `node_id`, `work_id`, `worker_id`, `agent_thread_id`;
+- `purpose`, `command`, `cwd`, `request`;
+- `assignment_ref`, `result_ref`;
+- `resource_evidence_refs`, `created_at`, `updated_at`, `status`, `reason`.
+
+On every resume:
+
+1. Inspect `resource_queue.released`.
+2. Check each released job's `result_ref`, `assignment_ref`, and assigned `agent_thread_id` for a worker return.
+3. If the worker returned terminal evidence, integrate the node/work/resource evidence, move the queue item to `completed`, and checkpoint the updated queue.
+4. If the worker is still running or has no terminal result, keep the item in `released` and continue sweeping other nodes.
+5. Inspect `resource_queue.pending` and call `resource status` to check active leases, configured caps, available capacity, and queue summary.
+6. Release only jobs that fit current resource caps by assigning them to the node worker; checkpoint the item under `released` with `agent_thread_id`, `assignment_ref`, and `result_ref`.
+7. Continue other node, critic, baseline, revision, or planning work instead of waiting for the released job to finish.
+
+For long benchmarks, the orchestrator creates or updates a `pending` item first. It then releases the job to a worker only when capacity is available. The worker runs the existing synchronous `resource run`; blocking is acceptable inside that worker thread, not in the main orchestrator thread.
+</Queue_Triage>
 
 <Baseline_Unit>
 The baseline unit is a shared node-like setup workspace for fixed data splits and apples-to-apples baseline score calculation. It is separate from normal research nodes and is shared by all nodes in the run.
@@ -267,16 +301,20 @@ Pass the learning notes ref to workers, critics, and revision workers as advisor
 </Learning_Notes>
 
 <Resource_Heavy_Runs>
-After implementation is ready, the orchestrator prompts the node worker to run the main project benchmark or resource-heavy experiment.
+Resource-Heavy Runs
+
+After implementation is ready, the orchestrator queues or releases the node worker's main project benchmark or resource-heavy experiment.
 
 Resource policy:
 
 - Read resource caps from run config. Do not infer hardware.
 - Scheduler policy is separate from resource caps. Normal servers use the default local scheduler. HPC runs should freeze `resources.scheduler.type: "slurm"` and explicit Slurm options in run config, or pass the matching `resource run` flags.
 - Use `resource status` to inspect active leases and available capacity.
-- A Codex worker may invoke `resource run` directly when assigned to run an experiment; the orchestrator must still checkpoint the command refs, resource outcome, and next action after the worker reports back.
-- If another node owns the needed resources, the orchestrator may wait and poll, or assign non-heavy work while waiting. Keep pending runnable benchmark/experiment work in `state.resource_queue`; the queue manages capacity and runnable order, while the orchestrator owns scientific priority and tells node workers when they are released to run.
-- If enough resources are available, the worker should start immediately through `resource run` or acquire a lease first.
+- The orchestrator must not run long official benchmark commands itself. It owns queue movement and worker dispatch.
+- A Codex worker invokes `resource run` only after the orchestrator assigns or releases the queued job to that worker.
+- If resources are not available, checkpoint the job in `state.resource_queue.pending`, sweep other nodes, and retry queue triage on the next resume.
+- If resources are available, assign the job to the node worker and checkpoint it in `state.resource_queue.released` with `job_id`, `agent_thread_id`, `assignment_ref`, and `result_ref`.
+- When the worker returns terminal benchmark evidence, integrate the evidence refs and move the queue item to `state.resource_queue.completed`.
 - Example: `ai-scientist --target-repo <target-repo> resource run --run-id <run-id> --task-id <work-id> --cwd .ai-scientist/runs/<run-id>/nodes/<node-id>/workspace --purpose benchmark --gpus 1 --cpu-cores 4 --memory-mb 8192 --timeout-sec 3600 --poll-sec 30 -- <command ...>`.
 - Slurm example: `ai-scientist --target-repo <target-repo> resource run --run-id <run-id> --task-id <work-id> --cwd .ai-scientist/runs/<run-id>/nodes/<node-id>/workspace --purpose benchmark --gpus 1 --cpu-cores 8 --memory-mb 32768 --scheduler slurm --partition gpu --time 7-00:00:00 --gres gpu:1 --cpus-per-task 8 --mem 32G -- <command ...>`.
 - On HPC clusters, official GPU benchmark/final-validation commands must still go through `resource run`; do not run raw `python`, `uv run`, `conda run`, or ad hoc `sbatch --wrap` for official evidence. The Slurm backend writes a generated job script under the resource log directory and records the `sbatch` argv, Slurm job id, stdout/stderr paths, and exit code in `command.json`.
@@ -298,6 +336,7 @@ Checkpoint after:
 - assigning or receiving critic/revision work;
 - recording a critic verdict with `critic_ref`, `critic_verdict`, `critic_completed_at`, and evidence refs on the reviewed node;
 - recording a revision plan, revision critic verdict, or branch decision;
+- creating a resource queue item, releasing it to a worker, or integrating its terminal result;
 - deciding to wait for resources or after a resource run finishes;
 - changing the next action;
 - accepting, rejecting, or abandoning a node.
@@ -348,6 +387,29 @@ Prefer this loose payload shape:
       "worker_id": "worker-node-001",
       "summary": "<latest durable summary>"
     }
+  },
+  "resource_queue": {
+    "pending": [
+      {
+        "job_id": "resource-job-node-001-main-benchmark",
+        "node_id": "node-001",
+        "work_id": "worker-node-001",
+        "worker_id": "worker-node-001",
+        "purpose": "main benchmark",
+        "command": "<benchmark command>",
+        "cwd": ".ai-scientist/runs/<run-id>/nodes/node-001/workspace",
+        "request": {"gpus": 1, "cpu_cores": 4, "memory_mb": 8192},
+        "assignment_ref": ".ai-scientist/runs/<run-id>/logs/workers/node-001/worker-node-001/resource-job-node-001-main-benchmark.assignment.json",
+        "result_ref": ".ai-scientist/runs/<run-id>/logs/workers/node-001/worker-node-001/resource-job-node-001-main-benchmark.result.json",
+        "resource_evidence_refs": [],
+        "created_at": "<iso8601>",
+        "updated_at": "<iso8601>",
+        "status": "pending",
+        "reason": "implementation ready; waiting for resource capacity"
+      }
+    ],
+    "released": [],
+    "completed": []
   }
 }
 ```
@@ -359,12 +421,12 @@ All examples use the active CLI shape: `ai-scientist --target-repo <target-repo>
 The orchestrator should know what each active research-loop command changes:
 
 - `ai-scientist --target-repo <target-repo> research start --run-id <run-id> --strictness-mode <mode> --json-file <run-config.json>`: creates `.ai-scientist/active-run.json`, `.ai-scientist/runs/<run-id>/config.json`, `.ai-scientist/runs/<run-id>/loop-state.json`, and a `journal.jsonl` start event. In campaign mode, the JSON payload contains `research_contract` and `idea_batch`; the command freezes arguments, idea batch, learning notes ref, prompt paths, mode, and resource caps. Legacy single-idea starts may still pass `--selected-idea-id`.
-- `ai-scientist --target-repo <target-repo> research resume --run-id <run-id>`: reads `active-run.json`, `config.json`, and `loop-state.json`; returns the orchestrator cursor, selected node, optional open work records, and resource summary. It only journals the resume event.
-- `ai-scientist --target-repo <target-repo> research checkpoint --run-id <run-id> --json-file <checkpoint.json>`: merges orchestrator-owned updates into `loop-state.json` and journals the checkpoint. Use it for Stop-hook continuation: after spawning a subagent, receiving a result, deciding the next action, or starting/waiting on resources, write enough state that a resumed orchestrator knows what to do next.
+- `ai-scientist --target-repo <target-repo> research resume --run-id <run-id>`: reads `active-run.json`, `config.json`, and `loop-state.json`; returns the orchestrator cursor, selected node, optional open work records, resource summary, and resource queue summary. It only journals the resume event.
+- `ai-scientist --target-repo <target-repo> research checkpoint --run-id <run-id> --json-file <checkpoint.json>`: merges orchestrator-owned updates into `loop-state.json`, including `resource_queue`, and journals the checkpoint. Use it for Stop-hook continuation: after spawning a subagent, receiving a result, deciding the next action, or creating/releasing/completing a resource queue item, write enough state that a resumed orchestrator knows what to do next.
 - `ai-scientist --target-repo <target-repo> research select --run-id <run-id> --node-id <node-id> --summary "<summary>" --evidence-ref <path>`: updates the accepted node and final selection in `loop-state.json`, then writes `.ai-scientist/runs/<run-id>/selection.json`.
 - `ai-scientist --target-repo <target-repo> research complete --run-id <run-id> --json-file <audit.json>`: writes the completion audit into `loop-state.json`, sets the run inactive/complete, and changes `active-run.json` status to `validating`. It does not run validation by itself.
 - `ai-scientist --target-repo <target-repo> research cancel --run-id <run-id> --reason "<reason>"`: writes cancellation details into `loop-state.json` and clears `.ai-scientist/active-run.json`.
-- `ai-scientist --target-repo <target-repo> resource status --run-id <run-id>`: reads config/state and reports caps, active leases, available capacity, and stale warnings. It should not mutate research artifacts.
+- `ai-scientist --target-repo <target-repo> resource status --run-id <run-id>`: reads config/state and reports caps, active leases, available capacity, queue counts/details, and stale warnings. It should not mutate research artifacts.
 - `ai-scientist --target-repo <target-repo> resource acquire --run-id <run-id> --task-id <work-id> --gpus <n> --cpu-cores <n> --memory-mb <n>`: adds a lease to `state.resources.leases` in `loop-state.json`, may attach the lease id to a matching work record, and journals a resource event. Here `--task-id` is a resource/log label; use the worker, node, or benchmark work id.
 - `ai-scientist --target-repo <target-repo> resource release --run-id <run-id> --lease-id <lease-id>`: moves a lease from `state.resources.leases` to `state.resources.completed_leases` in `loop-state.json` and journals the release.
 - `ai-scientist --target-repo <target-repo> resource run --run-id <run-id> --task-id <work-id> --cwd <node-workspace> --purpose benchmark --gpus <n> --cpu-cores <n> --memory-mb <n> --timeout-sec <seconds> --poll-sec <seconds> -- <command ...>`: acquires a lease for the requested resources, creates `logs/resources/<work-id>/<lease-id>/command.json`, `stdout.log`, and `stderr.log`, optionally records metrics, executes through the configured scheduler backend, then releases the lease in `finally`. The default scheduler is local. HPC runs may set `resources.scheduler.type` to `slurm` or pass `--scheduler slurm`.
@@ -386,6 +448,7 @@ Research completion is two-stage. First, `research complete` runs after the acce
 Run `research complete` only after:
 
 - all worker/critic/revision assignments have terminal evidence or are explicitly abandoned;
+- `state.resource_queue.pending` and `state.resource_queue.released` are empty;
 - no active resource leases remain;
 - final selection points to an accepted node/outcome;
 - the selected accepted node has a fresh `ACCEPT` critic verdict recorded in node state;

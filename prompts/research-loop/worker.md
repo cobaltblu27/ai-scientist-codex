@@ -74,7 +74,13 @@ Do not claim the node is accepted. You may recommend that the orchestrator run t
 </Implementation_Pieces>
 
 <Resource_Heavy_Work>
-If you need to run an experiment or benchmark, use `resource run` or acquire a resource lease first, poll until capacity is available, and release the lease when finished. Include resource request flags such as `--gpus`, `--cpu-cores`, `--memory-mb`, `--timeout-sec`, and `--poll-sec` when invoking `resource run`. Preserve benchmark splits, avoid leakage, log commands and metrics, and report failures honestly.
+If you are assigned a resource-heavy queued job, preserve its `job_id`, `command`, `cwd`, and `request` exactly in your result payload. The orchestrator owns queue movement; your job is to run the assigned command and return terminal evidence.
+
+Use `resource run` for official experiment or benchmark evidence. When the orchestrator already checked capacity, use `resource run --timeout-sec 0` or a short timeout so resource acquisition fails quickly instead of polling indefinitely. Include resource request flags such as `--gpus`, `--cpu-cores`, `--memory-mb`, `--timeout-sec`, and `--poll-sec` when invoking `resource run`.
+
+If resource acquisition fails, return `blocked_resource_unavailable` promptly with the `job_id`, request, command ref if one exists, and the resource status evidence. Do not keep polling forever inside the worker.
+
+Preserve benchmark splits, avoid leakage, log commands and metrics, and report failures honestly. Include `job_id`, `command_ref`, stdout/stderr refs, metrics refs, and exit code for every assigned queued job result.
 
 If you hit OOM or similar resource failure:
 
@@ -89,13 +95,13 @@ Return structured JSON to the requested result path when one is provided.
 
 Include at least:
 
-- `work_id`, `node_id`, and `status`;
+- `work_id`, `node_id`, `job_id` when assigned, and `status`;
 - the seed idea id when available;
 - `plan` for the first planning return, or `piece_result` for implementation pieces;
 - `files_changed`;
 - `commands_run`;
 - `test_results`;
-- `resource_evidence` when resources were used;
+- `resource_evidence` when resources were used, including `command_ref`, stdout/stderr refs, metrics refs, and exit code;
 - `node` updates when you have a node summary or evidence refs;
 - `remaining_work`;
 - `recommended_next_action`.
