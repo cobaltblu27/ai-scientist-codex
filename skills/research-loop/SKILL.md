@@ -123,6 +123,7 @@ Use the prompt files under `prompts/research-loop/`:
 - Critic: `prompts/research-loop/<mode>/critic.md`
 - Revision worker: `prompts/research-loop/<mode>/revision-worker.md`
 - Shared revision skill: `skills/revision-brainstorm/SKILL.md`
+- Required revision data insight skill: `skills/data-insight-revision/SKILL.md`
 
 The CLI records prompt paths through checkpoints and run config. It does not enforce prompt contents. Because the CLI does not enforce prompt contents, the orchestrator MUST read the selected `prompts/research-loop/*.md` file and include its Markdown contents in the actual spawned subagent prompt.
 
@@ -243,12 +244,12 @@ Critics must also receive the full Markdown contents of `prompts/research-loop/<
 
 When a critic reviews a final node outcome, checkpoint the verdict on the node with `critic_ref`, `critic_verdict`, `critic_completed_at`, `critic_result_path`, and the evidence refs. `ACCEPT_FINAL` on a final node means the node is safe to select/complete if all other gates pass. `PROMISING_CONTINUE` means performance evidence is worth more depth. `NEEDS_SCIENTIFIC_FRAMING` means performance is promising but the node needs a better novelty/mechanism story. `REVISE` means bounded fixes are needed. `KILL` means the node should stop because evidence is weak, exhausted, or violates the contract. `INVALID` means benchmark drift, leakage, wrong split, or unusable evidence. Completion requires the selected accepted node to have a fresh accepting critic verdict. If node evidence changes after the critic, run another critic.
 
-When a critic requests revision or the orchestrator sees a promising rescue path, spawn a revision worker with `prompts/research-loop/<mode>/revision-worker.md`. The revision worker must use `revision-brainstorm` and first return a plan unless implementation was explicitly assigned. The plan must choose one action: revise the same node, branch from a node, abandon/reject, or escalate.
+When a critic requests revision or the orchestrator sees a promising rescue path, spawn a revision worker with `prompts/research-loop/<mode>/revision-worker.md`. The revision worker must use `revision-brainstorm` and `data-insight-revision`, and first return a plan unless implementation was explicitly assigned. `data-insight-revision` is required for every revision decision and must create a fresh analysis for the current node scenario before the plan chooses one action: revise the same node, branch from a node, abandon/reject, or escalate.
 Revision workers must receive the full Markdown contents of `prompts/research-loop/<mode>/revision-worker.md`, labeled with its source path.
 
 A revision plan must pass critic review before the orchestrator assigns implementation or creates a branch from it. `ACCEPT` on a revision-plan critic means the plan is safe to implement or branch from; it does not mean the node itself is accepted.
 
-Store revision-plan critic work under `state.work`. Store plan refs and verdict refs on the affected node or branched node using `revision_plan_ref`, `revision_critic_ref`, `revision_critic_verdict`, `revision_critic_completed_at`, and `revision_critic_scope`. If the accepted plan revises the same node, assign implementation to the original node worker when possible. If the accepted plan branches, create a new node and assign implementation to that new node's dedicated worker.
+Store revision-plan critic work under `state.work`. Store plan refs and verdict refs on the affected node or branched node using `revision_plan_ref`, `revision_critic_ref`, `revision_critic_verdict`, `revision_critic_completed_at`, and `revision_critic_scope`. Store `data_insight_refs` with every revision plan or node checkpoint. If the accepted plan revises the same node, assign implementation to the original node worker when possible. If the accepted plan branches, create a new node and assign implementation to that new node's dedicated worker.
 </Critic_Revision_Flow>
 
 <Branching>

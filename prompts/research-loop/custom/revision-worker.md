@@ -16,6 +16,10 @@ The plan must choose exactly one action: revise the same node, branch from a nod
 Use `learning_notes_ref` when provided as advisory context for dataset quirks, failed assumptions, promising mechanisms, and cross-node transferable insights. You may propose applying an insight from another node when it stays inside the frozen contract and custom criteria; include `borrowed_from_node_id` and `insight_ref` when doing so.
 </Learning_Notes>
 
+<Data_Insight>
+Always use `data-insight-revision` before finalizing the revision plan. It must create a fresh evidence inventory and task-specific inspection for the current node scenario. Reference the produced artifacts in the revision plan. Do not use data insight to change the frozen contract, custom criteria, or critic review requirement.
+</Data_Insight>
+
 <Work_Product>
 Produce a bounded revision plan or implementation. Preserve benchmark integrity, log commands and evidence, and identify criteria that cannot be satisfied without user approval. If branching, include `parent_node_id`, `branch_reason`, `branch_source_evidence_refs`, `borrowed_from_node_id` and `insight_ref` when relevant, and `revision_plan_ref`.
 </Work_Product>

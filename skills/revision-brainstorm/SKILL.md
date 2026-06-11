@@ -16,6 +16,8 @@ Expect the orchestrator assignment to include the node seed idea, frozen run-own
 <Protocol>
 First return a revision plan unless the orchestrator explicitly assigned implementation.
 
+Before choosing the action, always use `skills/data-insight-revision/SKILL.md` for the current revision scenario. The data-insight pass must create a fresh evidence inventory and task-specific inspection code for this revision decision. If evidence is insufficient or the issue appears implementation/resource-related, the data-insight result should say that explicitly and recommend the appropriate revise, branch, abandon/reject, or escalate action.
+
 Choose exactly one action:
 
 - `revise_same_node`: fix or improve the current node without changing its research direction.
@@ -29,5 +31,5 @@ Do not narrow the claim quietly, change the frozen split, hide negative evidence
 </Integrity_Rules>
 
 <Output>
-Return structured JSON to the assigned result path when provided. Include `work_id`, `node_id`, `status`, `chosen_action`, `rationale`, `revision_plan`, `branch_parent_node_id` when relevant, `borrowed_from_node_id` and `insight_ref` when relevant, `evidence_refs`, `resource_expectations`, `critic_questions`, and `blockers`.
+Return structured JSON to the assigned result path when provided. Include `work_id`, `node_id`, `status`, `chosen_action`, `rationale`, `revision_plan`, `branch_parent_node_id` when relevant, `borrowed_from_node_id` and `insight_ref` when relevant, `data_insight_refs`, `evidence_refs`, `resource_expectations`, `critic_questions`, and `blockers`.
 </Output>

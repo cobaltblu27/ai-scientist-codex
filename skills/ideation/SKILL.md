@@ -77,10 +77,11 @@ Before the first generator intent batch for a topic, follow this prompt-only ord
 
 1. Preflight reference scan.
 2. Heiemeier question pass.
-3. Generator assignment synthesis.
-4. Generator intent batch.
+3. Required data-insight ideation pass.
+4. Generator assignment synthesis.
+5. Generator intent batch.
 
-This sequence is orchestration guidance, not a new CLI lifecycle gate. Do not create new required artifacts, new cursor actions, or new Stop-hook blockers for this preflight. Keep the result as compact context that is copied into generator assignments.
+This sequence is orchestration guidance, not a new CLI cursor action. Do not add a new helper-enforced state transition for this preflight. The orchestrator must still obtain a valid data-insight report, or a recorded blocker explaining why data insight cannot be performed, before spawning generator subagents. Keep the result as compact context that is copied into generator assignments.
 
 <Preflight_Reference_Scan>
 Find reference papers first. Use the query strategy and provider order from `skills/literature-search/SKILL.md`: OpenAlex first, Semantic Scholar as fallback. Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later records evidence through the existing literature CLI for its assigned idea id.
@@ -96,13 +97,24 @@ Capture a short brief:
 Use `skills/heiemeier-question/SKILL.md` on the original topic plus the preflight reference brief. Lay out the questions and answer them one by one. Extract only the high-signal insights needed for generator assignments: problem framing, current approaches, gap, key insight, smallest publishable version, skeptical-reviewer evidence, and success checks.
 </Heiemeier_Question_Pass>
 
+<Required_Data_Insight_Ideation_Pass>
+Use `skills/data-insight-ideation/SKILL.md` before generator assignment synthesis. Serious AI/ML ideation must be grounded in dataset evidence, not only literature or abstract reasoning.
+
+First check whether `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/idea_seed_insights.json` and `data_insight_ideation_brief.md` already exist. Reuse them only when they match the current run id, prompt/contract, dataset refs, split refs, evaluator refs, and artifact paths. If they are missing, stale, incomplete, or tied to a different contract, rerun the data-insight pass.
+
+If there is no concrete data path, the required environment is unclear, or the pass would require dependency/environment changes, record a data-insight blocker. Outside autonomous loops, stop and ask the user. Inside the ideation loop, record a clear failure-with-reason and follow the loop protocol rather than silently continuing with paper-only ideation.
+
+Keep the pass lightweight: have the data-insight agent inspect repo/data interfaces, write and run task-specific inspection code under `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/`, and return only artifact-backed findings. Copy only the compact generator assignment notes, dataset bottlenecks, leakage/split warnings, slice candidates, baseline requirements, and directions to avoid into generator prompts.
+</Required_Data_Insight_Ideation_Pass>
+
 <Generator_Assignment_Synthesis>
-Before spawning generator subagents, convert the reference scan and Heiemeier answers into a compact assignment brief. Give every generator the shared brief, then add slot-specific emphasis so subagents explore distinct hypotheses instead of rephrasing the same paper trail.
+Before spawning generator subagents, convert the reference scan, Heiemeier answers, and required data-insight findings into a compact assignment brief. Give every generator the shared brief, then add slot-specific emphasis so subagents explore distinct hypotheses instead of rephrasing the same paper trail.
 
 The compact brief should include:
 
 - preflight reference papers or a "none found" note;
 - Heiemeier answers/insights;
+- data-insight generator notes from the valid report;
 - unresolved assumptions from the preflight;
 - seed directions to explore and obvious directions to avoid;
 - reminder that generator-owned literature search is still required when the idea relies on papers, baselines, novelty, or benchmark evidence.
