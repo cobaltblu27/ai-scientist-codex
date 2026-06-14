@@ -45,19 +45,20 @@ The ideation loop starts only after the user explicitly calls this skill with a 
 3. Install/check the project-local Stop hook before starting a real run.
 4. All state transitions go through `ai-scientist`.
 5. Record subagent intents before spawning generators or critics. Pending intents intentionally block Stop until you record completion or cancellation.
-6. When spawning any subagent whose role references a Markdown file under `prompts/`, read that file and inject its full Markdown contents into the spawned subagent prompt. You MUST use the given prompt as a template.
-7. Before spawning the first generator batch for a topic, perform the prompt-only pre-generation synthesis: find reference papers, run `skills/heiemeier-question/SKILL.md`, and use those insights to frame generator assignments.
-8. Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use `gpt-5.5` with `xhigh` effort for substantive idea generation when model controls are available.
-9. Spawn a fresh critic for each draft or revised draft. Include previous critic verdict/revision notes in the new critic prompt; do not reuse long critic context.
-10. Do not rank or select a single idea in the normal flow. Ideation produces an accepted idea batch under one run-owned performance contract.
-11. `ideation_to_research` means "the fixed contract plus accepted idea batch is safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
-12. Do not report success while Stop hook would still block.
+6. Before spawning generators or critics, run `ai-scientist agents check`; if generated native agents are missing or stale, run `ai-scientist agents install` for the same Codex home or target repo.
+7. Spawn generator and critic subagents by configured `agent_type`; do not read and paste prompt Markdown from `prompts/` into task prompts.
+8. Before spawning the first generator batch for a topic, perform the prompt-only pre-generation synthesis: find reference papers, run `skills/heiemeier-question/SKILL.md`, and use those insights to frame generator assignments.
+9. Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use the configured generator `agent_type`.
+10. Spawn a fresh critic for each draft or revised draft using the configured critic `agent_type`. Include previous critic verdict/revision notes in the dynamic assignment context; do not reuse long critic context.
+11. Do not rank or select a single idea in the normal flow. Ideation produces an accepted idea batch under one run-owned performance contract.
+12. `ideation_to_research` means "the fixed contract plus accepted idea batch is safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
+13. Do not report success while Stop hook would still block.
 </Non_Negotiable_Rules>
 
 <Required_Artifacts>
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
-- `config.json`: frozen ideation config, mode preset, prompt paths, and scoring policy.
+- `config.json`: frozen ideation config, mode preset, generator/critic agent types, legacy ranker prompt, prompt source refs, and scoring policy.
 - `loop-state.json`: active cursor, active idea ids, pending intents, terminal status, candidate and batch handoff state.
 - `ideas.json`: canonical terminal idea archive.
 - `journal.jsonl`: append-only audit stream.
@@ -149,7 +150,7 @@ These are common rules for ideation. You MUST consider this for idea generation 
 <Modes>
 - These are ideation policy "modes". You MUST consider the policy of given mode into consideration on idea generation and reflection.
 - Default mode is `scientist`. Mode is frozen once `ideation start` runs.
-- Mode presets live in frozen `config.json`. Read prompt paths from the preset instead of hardcoding subagent prompts, then load and inject the referenced Markdown contents when spawning subagents.
+- Mode presets live in frozen `config.json`. Read `generator_agent` and `critic_agent` from the preset instead of hardcoding subagent types. `ranker_prompt` remains for explicit legacy/manual ranking only.
 
 `scientist`:
 
@@ -166,10 +167,10 @@ These are common rules for ideation. You MUST consider this for idea generation 
 
 - Follow the user's custom criteria and make the success rule explicit enough for handoff.
 
-Subagent prompt files are mode-specific:
+Generated native agents are mode-specific:
 
-- Generator: `prompts/ideation/<mode>/generator.md`
-- Critic: `prompts/ideation/<mode>/critic.md`
+- Generator: `ai-scientist-ideation-generator-<mode>`
+- Critic: `ai-scientist-ideation-critic-<mode>`
 - Ranker: `prompts/ideation/<mode>/ranker.md` exists for legacy/manual ranking only.
 </Modes>
 
@@ -194,6 +195,12 @@ From the target repository root, install/check the Stop hook:
 
 ```bash
 ai-scientist hooks install --project-root <target-repo>
+```
+
+Install/check generated Codex native agents before spawning subagents:
+
+```bash
+ai-scientist agents check --target-repo <target-repo> || ai-scientist agents install --target-repo <target-repo>
 ```
 
 Start the run:
@@ -233,7 +240,7 @@ ai-scientist \
 
 Use `--role critic --idea-ids <idea-id> ...` for critic batches. Ranking is not part of the normal flow; `ideation rank-candidates` remains only for explicit legacy/manual use.
 
-Before spawning a generator, critic, or explicit manual ranker, resolve every role/mode prompt path under `prompts/`, read the Markdown file, and include the full contents in the subagent prompt with the source path clearly labeled. Keep `prompt_path` in run config, checkpoints, and logs for auditability, but do not rely on the path as a substitute for prompt text. If a required prompt file is missing or unreadable, fail fast before spawning the subagent.
+Before spawning a generator or critic, read the mode preset from `config.json` and use its `generator_agent` or `critic_agent` as the subagent `agent_type`. Do not paste the generated-agent source Markdown into the task prompt. The task prompt should contain only dynamic assignment context: run id, idea id, role, research topic, frozen `research_contract`, shared contract path, compact preflight/data-insight brief, prior verdicts only when revising, required result path, and required skill refs. If an explicit legacy/manual ranker is requested, use `ranker_prompt` as a manual prompt asset.
 
 Each returned intent includes `result_path`. Give that path to the subagent and require it to overwrite the file with JSON only. `intent complete --intent-id <id>` reads `result_path` by default. Use `--json` or `--path` only as explicit overrides.
 
@@ -257,13 +264,12 @@ Generator drafts consume only the current idea attempt's per-attempt reflection 
 <Generator_Agent>
 Spawn one generator per idea slot or substantive revision in the current batch. Generators should not edit files. Each returns one canonical idea object.
 
-Generator prompt must include:
+Spawn the generator with `agent_type` from `config.json` (`generator_agent`). The dynamic task prompt must include:
 
 - research topic
 - strictness mode
 - current slot/idea id
 - run-owned `research_contract` with fixed dataset, split, baseline, metric, evaluator, and target threshold
-- full Markdown contents of the mode-specific generator prompt from `config.json` when available, labeled with its source path
 - preflight reference papers or a "none found" note
 - Heiemeier answers/insights from the pre-generation synthesis
 - unresolved assumptions from the preflight
@@ -360,10 +366,10 @@ All API evidence is logged to `journal.jsonl` as `api_call` with provider, fallb
 <Critic_Agent>
 Spawn a fresh critic for every draft version. The critic should not edit files. It returns a verdict payload.
 
-Critic prompt must include:
+Spawn the critic with `agent_type` from `config.json` (`critic_agent`). The dynamic task prompt must include:
 
 - current canonical idea draft
-- strictness mode and full Markdown contents of the mode-specific critic prompt from frozen `config.json`, labeled with its source path
+- strictness mode
 - target venue/journal/conference when the user provided one in the original request or assignment; ask whether the idea is solid enough for that venue
 - evidence/search results if available
 - previous critic verdict and required revisions if this is a revised draft
@@ -455,7 +461,7 @@ ai-scientist \
   ideation rank-candidates --run-id <run-id>
 ```
 
-The ranker prompt must include:
+The ranker prompt is the only legacy prompt-file flow. It must include:
 
 - all terminal ideas from `.ai-scientist/runs/<run-id>/ideas.json`
 - frozen mode config and full Markdown contents of the ranker prompt, labeled with its source path

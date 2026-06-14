@@ -100,6 +100,10 @@ exec "$VENV_DIR/bin/ai-scientist" "\$@"
 EOF
 chmod +x "$BIN_DIR/ai-scientist"
 
+CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+"$VENV_DIR/bin/ai-scientist" agents install --codex-home "$CODEX_HOME_DIR" >/dev/null
+agents_message="agents:   installed $CODEX_HOME_DIR/agents"
+
 cache_message="plugin cache: not installed; skipped"
 if [ -d "$PLUGIN_CACHE_DIR" ]; then
   if ! command -v rsync >/dev/null 2>&1; then
@@ -128,6 +132,7 @@ Installed ai-scientist.
   venv:     $VENV_DIR
   launcher: $BIN_DIR/ai-scientist
   python:   $PYTHON_RUNTIME
+  $agents_message
   $cache_message
 
 Make sure $BIN_DIR is on PATH.

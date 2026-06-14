@@ -145,8 +145,10 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(config["ideation"]["max_attempts_per_slot"], 3)
             self.assertEqual(config["ideation"]["concurrency"]["max_subagents"], 6)
             scientist = config["ideation"]["modes"]["scientist"]
-            self.assertEqual(scientist["generator_prompt"], "prompts/ideation/scientist/generator.md")
-            self.assertEqual(scientist["critic_prompt"], "prompts/ideation/scientist/critic.md")
+            self.assertEqual(scientist["generator_agent"], "ai-scientist-ideation-generator-scientist")
+            self.assertEqual(scientist["generator_prompt_source"], "prompts/ideation/scientist/generator.md")
+            self.assertEqual(scientist["critic_agent"], "ai-scientist-ideation-critic-scientist")
+            self.assertEqual(scientist["critic_prompt_source"], "prompts/ideation/scientist/critic.md")
             self.assertEqual(scientist["ranker_prompt"], "prompts/ideation/scientist/ranker.md")
             state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
             self.assertEqual(state["state"]["reflection_budget_per_idea"], 5)
@@ -157,7 +159,8 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             payload = json.loads(resumed.stdout)
             self.assertEqual(payload["next_action"], "start_generator_batch")
             self.assertIn("main Codex ideation orchestrator", payload["prompt"])
-            self.assertIn("prompts/ideation/scientist/generator.md", payload["prompt"])
+            self.assertIn("ai-scientist-ideation-generator-scientist", payload["prompt"])
+            self.assertNotIn("Generator prompt file", payload["prompt"])
             self.assertTrue((target / ".ai-scientist" / "active-run.json").exists())
             self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "config.json").exists())
             self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "ideas.json").exists())
@@ -201,8 +204,10 @@ class AgentDrivenIdeationTests(unittest.TestCase):
                         "ideation": {
                             "modes": {
                                 "custom": {
-                                    "generator_prompt": "prompts/ideation/custom/missing.md",
-                                    "critic_prompt": "prompts/ideation/custom/critic.md",
+                                    "generator_agent": "ai-scientist-ideation-generator-custom",
+                                    "generator_prompt_source": "prompts/ideation/custom/missing.md",
+                                    "critic_agent": "ai-scientist-ideation-critic-custom",
+                                    "critic_prompt_source": "prompts/ideation/custom/critic.md",
                                     "ranker_prompt": "prompts/ideation/custom/ranker.md",
                                 }
                             }
@@ -215,7 +220,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn("missing ideation prompt file", missing.stdout)
 
-    def test_ideation_start_freezes_prompt_paths_for_all_modes(self) -> None:
+    def test_ideation_start_freezes_agents_and_prompt_sources_for_all_modes(self) -> None:
         for mode in ["scientist", "engineer", "custom"]:
             with tempfile.TemporaryDirectory() as tmp:
                 target = Path(tmp)
@@ -223,8 +228,10 @@ class AgentDrivenIdeationTests(unittest.TestCase):
                 self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
                 config = json.loads((target / ".ai-scientist" / "runs" / f"run-{mode}" / "config.json").read_text())
                 preset = config["ideation"]["modes"][mode]
-                self.assertEqual(preset["generator_prompt"], f"prompts/ideation/{mode}/generator.md")
-                self.assertEqual(preset["critic_prompt"], f"prompts/ideation/{mode}/critic.md")
+                self.assertEqual(preset["generator_agent"], f"ai-scientist-ideation-generator-{mode}")
+                self.assertEqual(preset["generator_prompt_source"], f"prompts/ideation/{mode}/generator.md")
+                self.assertEqual(preset["critic_agent"], f"ai-scientist-ideation-critic-{mode}")
+                self.assertEqual(preset["critic_prompt_source"], f"prompts/ideation/{mode}/critic.md")
                 self.assertEqual(preset["ranker_prompt"], f"prompts/ideation/{mode}/ranker.md")
 
     def test_max_subagents_caps_generator_batch(self) -> None:

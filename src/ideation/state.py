@@ -19,6 +19,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from core.agents import ideation_agent_name
 from core.plugin import plugin_root
 from core.state import (
     ai_root,
@@ -94,7 +95,13 @@ def prompt_path_for(mode: str, role: str) -> str:
 
 
 def default_prompt_refs(mode: str) -> dict[str, str]:
-    return {f"{role}_prompt": prompt_path_for(mode, role) for role in PROMPT_ROLES}
+    return {
+        "generator_agent": ideation_agent_name(mode, "generator"),
+        "generator_prompt_source": prompt_path_for(mode, "generator"),
+        "critic_agent": ideation_agent_name(mode, "critic"),
+        "critic_prompt_source": prompt_path_for(mode, "critic"),
+        "ranker_prompt": prompt_path_for(mode, "ranker"),
+    }
 
 
 DEFAULT_MODE_PRESETS: dict[str, dict[str, Any]] = {
@@ -281,7 +288,7 @@ def validate_mode_preset(config: dict[str, Any], mode: str) -> dict[str, Any]:
     preset = modes.get(mode)
     if not isinstance(preset, dict):
         raise IdeationStateError(f"missing ideation preset for mode: {mode}")
-    for key in ("generator_prompt", "critic_prompt", "ranker_prompt"):
+    for key in ("generator_agent", "critic_agent", "ranker_prompt"):
         if not isinstance(preset.get(key), str) or not preset[key].strip():
             raise IdeationStateError(f"ideation preset {mode} missing {key}")
     return preset
@@ -290,8 +297,10 @@ def validate_mode_preset(config: dict[str, Any], mode: str) -> dict[str, Any]:
 def validate_ideation_prompt_files(config: dict[str, Any], mode: str) -> None:
     preset = validate_mode_preset(config, mode)
     root = plugin_root()
-    for key in ("generator_prompt", "critic_prompt", "ranker_prompt"):
-        value = str(preset[key])
+    for key in ("generator_prompt_source", "critic_prompt_source", "ranker_prompt"):
+        value = str(preset.get(key) or preset.get(key.replace("_source", "")) or "")
+        if not value:
+            raise IdeationStateError(f"ideation preset {mode} missing {key}")
         path = root / value
         if not path.exists():
             raise IdeationStateError(f"missing ideation prompt file for {mode} {key}: {value}")
@@ -1148,9 +1157,10 @@ def orchestration_prompt(state: dict[str, Any], config: dict[str, Any], cursor: 
         f"Details: {json.dumps(cursor.get('next_action_details') or {}, sort_keys=True)}",
     ]
     if next_action == "start_generator_batch":
-        lines.append(f"Generator prompt file: {preset['generator_prompt']}")
+        lines.append(f"Generator agent_type: {preset['generator_agent']}")
     elif next_action == "start_critic_batch":
-        lines.append(f"Critic prompt file: {preset['critic_prompt']}")
+        lines.append(f"Critic agent_type: {preset['critic_agent']}")
+    lines.append(f"Legacy/manual ranker prompt file: {preset['ranker_prompt']}")
     lines.append(f"Original topic: {phase_state.get('prompt')}")
     return "\n".join(lines)
 

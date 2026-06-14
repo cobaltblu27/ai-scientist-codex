@@ -68,8 +68,8 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertEqual(set(modes), {"scientist", "engineer", "custom"})
         for mode, preset in modes.items():
             for key, role in {
-                "generator_prompt": "generator",
-                "critic_prompt": "critic",
+                "generator_prompt_source": "generator",
+                "critic_prompt_source": "critic",
                 "ranker_prompt": "ranker",
             }.items():
                 prompt_path = preset[key]
@@ -77,14 +77,18 @@ class IdeationPromptSchemaTests(unittest.TestCase):
                 prompt_text = (PLUGIN_ROOT / prompt_path).read_text().lower()
                 self.assertIn("json", prompt_text)
                 self.assertIn(role, prompt_text)
+            self.assertEqual(preset["generator_agent"], f"ai-scientist-ideation-generator-{mode}")
+            self.assertEqual(preset["critic_agent"], f"ai-scientist-ideation-critic-{mode}")
 
-    def test_shipped_config_uses_prompt_paths_not_inline_templates(self) -> None:
+    def test_shipped_config_uses_agents_and_prompt_sources_not_inline_templates(self) -> None:
         config = json.loads((PLUGIN_ROOT / "config" / "config.json").read_text())
         modes = config["ideation"]["modes"]
         self.assertEqual(set(modes), {"scientist", "engineer", "custom"})
-        for preset in modes.values():
-            self.assertIn("generator_prompt", preset)
-            self.assertIn("critic_prompt", preset)
+        for mode, preset in modes.items():
+            self.assertEqual(preset["generator_agent"], f"ai-scientist-ideation-generator-{mode}")
+            self.assertEqual(preset["critic_agent"], f"ai-scientist-ideation-critic-{mode}")
+            self.assertIn("generator_prompt_source", preset)
+            self.assertIn("critic_prompt_source", preset)
             self.assertIn("ranker_prompt", preset)
             self.assertNotIn("idea_generation_prompt_template", preset)
             self.assertNotIn("critic_prompt_template", preset)

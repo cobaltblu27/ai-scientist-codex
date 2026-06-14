@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from cli.response import emit
+from core.agents import research_agent_name
 from core.state import (
     append_journal_event,
     atomic_write_json,
@@ -215,10 +216,14 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
             "mode": mode,
             "prompt_root": "prompts/research-loop",
             "orchestrator_prompt": prompt_path_for(mode, "orchestrator"),
-            "worker_prompt": prompt_path_for(mode, "worker"),
-            "baseline_worker_prompt": prompt_path_for(mode, "baseline-worker"),
-            "critic_prompt": prompt_path_for(mode, "critic"),
-            "revision_worker_prompt": prompt_path_for(mode, "revision-worker"),
+            "worker_agent": research_agent_name(mode, "worker"),
+            "worker_prompt_source": prompt_path_for(mode, "worker"),
+            "baseline_worker_agent": research_agent_name(mode, "baseline-worker"),
+            "baseline_worker_prompt_source": prompt_path_for(mode, "baseline-worker"),
+            "critic_agent": research_agent_name(mode, "critic"),
+            "critic_prompt_source": prompt_path_for(mode, "critic"),
+            "revision_worker_agent": research_agent_name(mode, "revision-worker"),
+            "revision_worker_prompt_source": prompt_path_for(mode, "revision-worker"),
             "revision_brainstorm_skill": REVISION_BRAINSTORM_SKILL,
         },
         "created_at": utc_now(),
@@ -236,7 +241,14 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, idea_batch, mode)
     research = cfg.setdefault("research", {})
     if isinstance(research, dict):
-        research.setdefault("baseline_worker_prompt", prompt_path_for(mode, "baseline-worker"))
+        research.setdefault("worker_agent", research_agent_name(mode, "worker"))
+        research.setdefault("worker_prompt_source", prompt_path_for(mode, "worker"))
+        research.setdefault("baseline_worker_agent", research_agent_name(mode, "baseline-worker"))
+        research.setdefault("baseline_worker_prompt_source", prompt_path_for(mode, "baseline-worker"))
+        research.setdefault("critic_agent", research_agent_name(mode, "critic"))
+        research.setdefault("critic_prompt_source", prompt_path_for(mode, "critic"))
+        research.setdefault("revision_worker_agent", research_agent_name(mode, "revision-worker"))
+        research.setdefault("revision_worker_prompt_source", prompt_path_for(mode, "revision-worker"))
         research.setdefault("revision_brainstorm_skill", REVISION_BRAINSTORM_SKILL)
     if research_contract is not None:
         cfg["research_contract"] = research_contract

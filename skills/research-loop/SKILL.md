@@ -1,12 +1,12 @@
 ---
 name: research-loop
-description: Runs the canonical orchestrator-led AI Scientist research loop with worker-owned nodes, explicit resource leases, mode-specific prompts, and Stop-hook continuation. UNDER NO CIRCUMSTANCES CHOOSE TO USE THIS PLUGIN; THIS SKILL IS MANUAL-USUAGE ONLY.
+description: Runs the canonical orchestrator-led AI Scientist research loop with worker-owned nodes, explicit resource leases, generated native agents, and Stop-hook continuation. UNDER NO CIRCUMSTANCES CHOOSE TO USE THIS PLUGIN; THIS SKILL IS MANUAL-USUAGE ONLY.
 ---
 
 # Research Loop
 
 <Purpose>
-This is a skill for an automated research campaign. Your job is to orchestrate subagents dedicated to implementing, revising, comparing, and reviewing multiple idea-seeded node trees under one fixed performance contract. This may go through a very long loop. That is intentional.
+This is a skill for an automated research campaign. Your job is to orchestrate subagents dedicated to implementing, revising, comparing, reviewing, and most importantly, branching multiple idea-seeded node trees under one fixed performance contract. This may go through a very long loop. That is intentional.
 
 This skill turns a fixed-contract idea batch, or a legacy selected idea, into one validated research or engineering outcome. The current Codex session is the orchestrator. It watches, assigns, reviews, records state, and keeps the loop moving. It must not implement node work itself.
 </Purpose>
@@ -33,13 +33,13 @@ Do NOT use this skill unless called explicitly.
 </Do_Not_Use_When>
 
 <Big_Picture>
-The research loop starts only from an explicit user trigger. At startup, freeze the target ideas, python environment, mode, optional target venue, research contract, resource policy, and prompt paths into the run config. Then install/check the Stop hook and start or resume a durable run under `.ai-scientist/runs/<run-id>/`.
+The research loop starts only from an explicit user trigger. At startup, freeze the target ideas, python environment, mode, optional target venue, research contract, resource policy, and generated subagent types into the run config. Then install/check the Stop hook and start or resume a durable run under `.ai-scientist/runs/<run-id>/`.
 
 After startup, run the campaign as an orchestrator-led loop. Resume the current run state, decide the next action, checkpoint that decision, and create one node for each idea in the frozen idea batch. Each node gets a dedicated Codex worker and an isolated workspace. If fixed splits, baseline paper comparison, or comparable baseline scoring are required, spawn a baseline worker and share its authoritative baseline manifest with node workers. Node workers plan, implement, debug, and run experiments, but the orchestrator assigns one bounded piece at a time and records every result through `research checkpoint`.
 
-Before accepting a final result or a revision plan, spawn a mode-specific critic. Critics judge the node or revision plan against the frozen contract, evidence, baseline, resource records, and mode-specific prompt. If a node is promising but incomplete, spawn a revision worker, have it use the shared `revision-brainstorm` skill, and send its plan through critic review before implementing or branching. Repeat worker, critic, revision, branch, and resource steps until exactly one node has an accepted outcome with fresh critic approval and all work/resource gates are clean.
+When a node's work is done and output is calculated, spawn a mode-specific critic. Critics judge the node or revision plan against the frozen contract, evidence, baseline, resource records, and mode-specific native agent instructions. If a node is promising but incomplete, spawn a revision worker, have it use the shared `revision-brainstorm` skill, and send its plan through critic review before implementing or branching. Repeat worker, critic, revision, branch, and resource steps until exactly one node has an accepted outcome with fresh critic approval and all work/resource gates are clean.
 
-The CLI records state, evidence, prompt paths, resource leases, and completion gates. It does not enforce scientific judgment, prompt contents, or subagent behavior. The orchestrator owns those decisions and must keep checkpointed state sufficient for Stop-hook continuation.
+The CLI records state, evidence, agent types, prompt source refs, resource leases, and completion gates. It does not enforce scientific judgment or subagent behavior. The orchestrator owns those decisions and must keep checkpointed state sufficient for Stop-hook continuation.
 </Big_Picture>
 
 <Arguments>
@@ -76,6 +76,12 @@ Install or check the project Stop hook before starting:
 ```bash
 ai-scientist hooks install --project-root <target-repo>
 ai-scientist hooks check --project-root <target-repo>
+```
+
+Install or check generated Codex native agents before spawning any subagent:
+
+```bash
+ai-scientist agents check --target-repo <target-repo> || ai-scientist agents install --target-repo <target-repo>
 ```
 
 Start the run:
@@ -125,41 +131,37 @@ Predifined Codex subagents:
 
 One worker is dedicated to one node. Keep using that same worker/thread for that node's plan, implementation pieces, debugging, and benchmark runs whenever possible. A node represents one research direction, not one CLI state or one short task. Critic and revision-worker subagents may be short-lived.
 
-Revision workers use the shared `revision-brainstorm` skill before proposing the next move. Worker, critic, and revision work is tracked by orchestrator checkpoints, node summaries, logs, and resource records. The CLI records state, evidence, prompt paths, resource leases, and completion gates. The orchestrator owns scientific judgment and must keep the loop moving until the selected outcome satisfies the frozen idea contract.
+Revision workers use the shared `revision-brainstorm` skill before proposing the next move. Worker, critic, and revision work is tracked by orchestrator checkpoints, node summaries, logs, and resource records. The CLI records state, evidence, agent types, prompt source refs, resource leases, and completion gates. The orchestrator owns scientific judgment and must keep the loop moving until the selected outcome satisfies the frozen idea contract.
 
-Operate through the `ai-scientist` CLI. Use checkpoints for baseline worker, node worker, critic, revision-worker, and revision-critic assignments. Record prompt paths, result paths, worker/thread ids, node summaries, resource evidence, and the next action in checkpoints.
+Operate through the `ai-scientist` CLI. Use checkpoints for baseline worker, node worker, critic, revision-worker, and revision-critic assignments. Record `agent_type`, optional `prompt_source`, result paths, worker/thread ids, node summaries, resource evidence, and the next action in checkpoints.
 
 Do not hardcode resource capacity. Read it from run config and fail fast when it is missing. Do not start editing the target implementation yourself just because the next step looks obvious; if implementation is needed, assign it to a worker.
 </Orchestrator_Role>
 
-<Prompt_Files>
-Use the prompt files under `prompts/research-loop/`:
+<Predefined_Agents>
+Use generated Codex native agents for research-loop subagents:
 
-- Baseline worker: `prompts/research-loop/baseline-worker.md`
-- General worker: `prompts/research-loop/worker.md`
-- Critic: `prompts/research-loop/<mode>/critic.md`
-- Revision worker: `prompts/research-loop/<mode>/revision-worker.md`
+- Baseline worker: `ai-scientist-research-baseline-worker`
+- General worker: `ai-scientist-research-worker`
+- Critic: `ai-scientist-research-critic-<mode>`
+- Revision worker: `ai-scientist-research-revision-worker-<mode>`
 - Shared revision skill: `skills/revision-brainstorm/SKILL.md`
 - Required revision data insight skill: `skills/data-insight-revision/SKILL.md`
 
-The CLI records prompt paths through checkpoints and run config. It does not enforce prompt contents. Because the CLI does not enforce prompt contents, the orchestrator MUST read the selected `prompts/research-loop/*.md` file and include its Markdown contents in the actual spawned subagent prompt.
+The CLI records agent types and prompt source refs through checkpoints and run config. The generated agent TOML is installed with `ai-scientist agents install`; the orchestrator must not read and paste Markdown prompt files into spawned subagent task prompts.
 
-Before spawning any baseline worker, node worker, critic, revision worker, or revision critic, resolve every role/mode prompt path under `prompts/`, read the Markdown file, and inject the full contents into the spawned subagent prompt with the source path clearly labeled. Prompt paths remain checkpoint/config metadata; they are not a substitute for prompt text. If a required prompt file is missing or unreadable, fail fast before spawning the subagent.
+Before spawning any baseline worker, node worker, critic, revision worker, or revision critic, check generated agents with `ai-scientist agents check`. Spawn with the role's `agent_type` and pass only dynamic assignment context: run id, node id, work id, mode, frozen arguments, research contract/custom criteria, node evidence, resource policy, result path, assignment path, relevant notes refs, and required skill refs.
 
-The prompt for orchestrator (you) is this `skills/research-loop/SKILL.md`. Subagent prompt files remain separate, but their contents must be injected when subagents are spawned.
-</Prompt_Files>
+The prompt for orchestrator (you) is this `skills/research-loop/SKILL.md`. Do not load or rely on a separate orchestrator prompt file.
+</Predefined_Agents>
 
 <Research_Contract>
 Scientist and engineer campaign runs expect a run-owned `research_contract` plus `idea_batch`. Treat the contract as the anti-drift contract for the whole run. Ideas are node seeds under that contract, not independent contracts. Custom runs require `custom_criteria`; if a `research_contract` is also present, freeze it and use it as additional context, but judge acceptance by the custom criteria.
 
 Important fields:
 
-- `primary_hypothesis`: the original thesis the research loop must resolve.
-- `goal_type`: the goal category, such as `performance`, `leakage`, or another explicit custom goal.
 - `success_criteria`: the hard success rule for the run. This is separate from the starting thesis and may be more operational, for example: produce a scientifically novel framework that reaches a target score on a named metric.
-- `failure_criteria`: the hard rule for when the original hypothesis is genuinely unsupported.
-- `allowed_rescue_scope`: what kinds of rescue or narrowed findings are allowed after negative evidence.
-- `kill_criteria`: when to stop rather than continue spending work or resources.
+- `failure_criteria`: rule for determining scenario where experiment should be evaluated as failed. DO NOT add details that user didn't specify.
 - `non_drift_definition`: what would count as quietly changing the claim instead of solving the selected idea.
 - `metrics_that_matter`: the metrics that count for acceptance.
 - `non_negotiable_comparisons`: required comparisons such as baseline, ablation, fixed split, or reference paper.
@@ -177,7 +179,7 @@ Repeat until completion criteria are met:
 2. Triage `state.resource_queue` before making new assignments.
 3. Decide the next action as orchestrator and checkpoint it with `research checkpoint`.
 4. In campaign mode, create one node id for each idea in the frozen `idea_batch`; in legacy mode, create one node id for the selected idea. Record each assignment with `research checkpoint`, and spawn a dedicated Codex worker for it. This is mandatory. The orchestrator must not implement the node directly.
-5. Record worker, critic, revision-worker, and revision-critic progress with `research checkpoint`, including prompt path, worker/thread id, result path, status, and next action.
+5. Record worker, critic, revision-worker, and revision-critic progress with `research checkpoint`, including `agent_type`, optional `prompt_source`, worker/thread id, result path, status, and next action.
 6. If baseline setup is required, spawn/checkpoint the baseline worker and pass expected split refs to node workers.
 7. Workers that run experiments must use `resource acquire`/`resource release`, or preferably `resource run`.
 8. Integrate every worker/critic/revision return with evidence by checkpointing node summaries, result refs, and the next action.
@@ -228,7 +230,7 @@ Use this directory layout:
 
 Per-split manifests may exist under `baseline/splits/<split-id>/...`, but every split used by node workers must be referenced from `baseline/baseline.json`. Give workers `split_manifest_ref: .ai-scientist/runs/<run-id>/baseline/baseline.json` unless the orchestrator intentionally points them to a specific split manifest already listed in that file.
 
-Create a baseline worker assignment when the selected idea or `research_contract` requires a frozen dataset split, fixed split seeds, an apples-to-apples baseline comparison, or a baseline paper/repository whose comparable score is missing. The baseline worker is a Codex subagent and uses `prompts/research-loop/baseline-worker.md`.
+Create a baseline worker assignment when the selected idea or `research_contract` requires a frozen dataset split, fixed split seeds, an apples-to-apples baseline comparison, or a baseline paper/repository whose comparable score is missing. The baseline worker is a Codex subagent spawned with `agent_type: ai-scientist-research-baseline-worker`.
 
 Normal node workers may start concurrently with the baseline worker. Give node workers the expected `fixed_split_dir` and `split_manifest_ref` in their assignment. Node workers may plan and implement before the split is ready, but they must wait/poll and must not run dataset-dependent benchmarks until `state.baseline.status` is `ready` and the split manifest exists. They must not create alternate train/validation/test splits, alter split seeds, or silently substitute a different dataset layout.
 </Baseline_Unit>
@@ -251,8 +253,8 @@ The orchestrator MUST:
 
 - create one node id and checkpoint one `worker` assignment for each initial idea seed in campaign mode;
 - spawn a dedicated Codex worker for that node and keep the worker/thread id in checkpoints;
-- Checkpoint the worker assignment before or immediately after spawning the worker so a resumed orchestrator can find the node, worker/thread id, prompt path, assignment ref, result ref, status, and next action.
-- give the worker the node seed idea, frozen run-owned `research_contract` when required or present, `custom_criteria` for custom mode, mode, resource policy, learning notes ref, node workspace path, expected result path, baseline split refs when present, and the full Markdown contents of `prompts/research-loop/worker.md` labeled with its source path;
+- Checkpoint the worker assignment before or immediately after spawning the worker so a resumed orchestrator can find the node, worker/thread id, `agent_type`, assignment ref, result ref, status, and next action.
+- give the worker the node seed idea, frozen run-owned `research_contract` when required or present, `custom_criteria` for custom mode, mode, resource policy, learning notes ref, node workspace path, expected result path, baseline split refs when present, and any relevant dynamic assignment context;
 - poll/resume state while the worker is active;
 - review each worker return before assigning the next piece;
 - prompt the same node worker, or a follow-up worker for that node, until implementation is complete or the node is rejected/abandoned with evidence.
@@ -287,12 +289,11 @@ Finished implementation requires:
 
 <Critic_Revision_Flow>
 Run a mode-specific critic before accepting a final outcome or assigning implementation from a revision plan. Critics review node outcomes and revision plans; they must receive the frozen contract, node evidence, resource evidence, baseline/fixed split refs when present, and the exact question being asked.
-Critics must also receive the full Markdown contents of `prompts/research-loop/<mode>/critic.md`, labeled with its source path.
+Spawn critics with `agent_type: ai-scientist-research-critic-<mode>` and pass dynamic review context only.
 
 When a critic reviews a final node outcome, checkpoint the verdict on the node with `critic_ref`, `critic_verdict`, `critic_completed_at`, `critic_result_path`, and the evidence refs. `ACCEPT_FINAL` on a final node means the node is safe to select/complete if all other gates pass. `PROMISING_CONTINUE` means performance evidence is worth more depth. `NEEDS_SCIENTIFIC_FRAMING` means performance is promising but the node needs a better novelty/mechanism story. `REVISE` means bounded fixes are needed. `KILL` means the node should stop because evidence is weak, exhausted, or violates the contract. `INVALID` means benchmark drift, leakage, wrong split, or unusable evidence. Completion requires the selected accepted node to have a fresh accepting critic verdict. If node evidence changes after the critic, run another critic.
 
-When a critic requests revision or the orchestrator sees a promising rescue path, spawn a revision worker with `prompts/research-loop/<mode>/revision-worker.md`. The revision worker must use `revision-brainstorm` and `data-insight-revision`, and first return a plan unless implementation was explicitly assigned. `data-insight-revision` is required for every revision decision and must create a fresh analysis for the current node scenario before the plan chooses one action: revise the same node, branch from a node, abandon/reject, or escalate.
-Revision workers must receive the full Markdown contents of `prompts/research-loop/<mode>/revision-worker.md`, labeled with its source path.
+When a critic requests revision or the orchestrator sees a promising rescue path, spawn a revision worker with `agent_type: ai-scientist-research-revision-worker-<mode>`. The revision worker must use `revision-brainstorm` and `data-insight-revision`, and first return a plan unless implementation was explicitly assigned. `data-insight-revision` is required for every revision decision and must create a fresh analysis for the current node scenario before the plan chooses one action: revise the same node, branch from a node, abandon/reject, or escalate.
 
 Revision and rescue work must improve the model, not only patch its outputs. Residual/error analysis is useful diagnosis: ask the revision worker to compare where the base model works, where it fails, where residual or output correction helps, and where it still fails. The plan should turn that contrast into an upstream model-side change before or within the prediction head. Do not accept a plan whose main move is a post-head residual corrector, calibration layer, or output patch unless the frozen contract explicitly makes post-processing/calibration the target method. Require raw base-model metrics separately from corrected-output metrics.
 
@@ -396,7 +397,8 @@ Prefer this loose payload shape:
       "kind": "baseline-worker",
       "status": "preparing_split",
       "agent_thread_id": "<codex-subagent-thread-id>",
-      "prompt_path": "prompts/research-loop/baseline-worker.md",
+      "agent_type": "ai-scientist-research-baseline-worker",
+      "prompt_source": "prompts/research-loop/baseline-worker.md",
       "assignment_ref": ".ai-scientist/runs/<run-id>/logs/baseline/baseline-worker-001/assignment.json",
       "result_ref": ".ai-scientist/runs/<run-id>/logs/baseline/baseline-worker-001/result.json"
     },
@@ -405,7 +407,8 @@ Prefer this loose payload shape:
       "node_id": "node-001",
       "status": "running",
       "agent_thread_id": "<codex-subagent-thread-id>",
-      "prompt_path": "prompts/research-loop/worker.md",
+      "agent_type": "ai-scientist-research-worker",
+      "prompt_source": "prompts/research-loop/worker.md",
       "assignment_ref": ".ai-scientist/runs/<run-id>/logs/workers/node-001/worker-node-001/assignment.json",
       "result_ref": ".ai-scientist/runs/<run-id>/logs/workers/node-001/worker-node-001/result.json"
     }
@@ -459,7 +462,7 @@ All examples use the active CLI shape: `ai-scientist --target-repo <target-repo>
 
 The orchestrator should know what each active research-loop command changes:
 
-- `ai-scientist --target-repo <target-repo> research start --run-id <run-id> --strictness-mode <mode> --json-file <run-config.json>`: creates `.ai-scientist/active-run.json`, `.ai-scientist/runs/<run-id>/config.json`, `.ai-scientist/runs/<run-id>/loop-state.json`, `.ai-scientist/runs/<run-id>/discovery-notes.md`, and a `journal.jsonl` start event. In campaign mode, the JSON payload contains `research_contract` and `idea_batch`; the command freezes arguments, idea batch, learning notes ref, discovery notes ref, prompt paths, mode, and resource caps. Legacy single-idea starts may still pass `--selected-idea-id`.
+- `ai-scientist --target-repo <target-repo> research start --run-id <run-id> --strictness-mode <mode> --json-file <run-config.json>`: creates `.ai-scientist/active-run.json`, `.ai-scientist/runs/<run-id>/config.json`, `.ai-scientist/runs/<run-id>/loop-state.json`, `.ai-scientist/runs/<run-id>/discovery-notes.md`, and a `journal.jsonl` start event. In campaign mode, the JSON payload contains `research_contract` and `idea_batch`; the command freezes arguments, idea batch, learning notes ref, discovery notes ref, agent types, prompt source refs, mode, and resource caps. Legacy single-idea starts may still pass `--selected-idea-id`.
 - `ai-scientist --target-repo <target-repo> research resume --run-id <run-id>`: reads `active-run.json`, `config.json`, and `loop-state.json`; returns the orchestrator cursor, selected node, optional open work records, resource summary, and resource queue summary. It only journals the resume event.
 - `ai-scientist --target-repo <target-repo> research checkpoint --run-id <run-id> --json-file <checkpoint.json>`: merges orchestrator-owned updates into `loop-state.json`, including `resource_queue`, and journals the checkpoint. Use it for Stop-hook continuation: after spawning a subagent, receiving a result, deciding the next action, or creating/releasing/completing a resource queue item, write enough state that a resumed orchestrator knows what to do next.
 - `ai-scientist --target-repo <target-repo> research select --run-id <run-id> --node-id <node-id> --summary "<summary>" --evidence-ref <path>`: updates the accepted node and final selection in `loop-state.json`, then writes `.ai-scientist/runs/<run-id>/selection.json`.

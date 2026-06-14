@@ -37,8 +37,10 @@
           "feasibility": 0.2,
           "repo_fit": 0.2
         },
-        "generator_prompt": "prompts/ideation/scientist/generator.md",
-        "critic_prompt": "prompts/ideation/scientist/critic.md",
+        "generator_agent": "ai-scientist-ideation-generator-scientist",
+        "generator_prompt_source": "prompts/ideation/scientist/generator.md",
+        "critic_agent": "ai-scientist-ideation-critic-scientist",
+        "critic_prompt_source": "prompts/ideation/scientist/critic.md",
         "ranker_prompt": "prompts/ideation/scientist/ranker.md"
       },
       "engineer": {
@@ -55,8 +57,10 @@
           "repo_fit": 0.2,
           "novelty": 0.05
         },
-        "generator_prompt": "prompts/ideation/engineer/generator.md",
-        "critic_prompt": "prompts/ideation/engineer/critic.md",
+        "generator_agent": "ai-scientist-ideation-generator-engineer",
+        "generator_prompt_source": "prompts/ideation/engineer/generator.md",
+        "critic_agent": "ai-scientist-ideation-critic-engineer",
+        "critic_prompt_source": "prompts/ideation/engineer/critic.md",
         "ranker_prompt": "prompts/ideation/engineer/ranker.md"
       },
       "custom": {
@@ -73,8 +77,10 @@
           "repo_fit": 0.2,
           "evidence": 0.1
         },
-        "generator_prompt": "prompts/ideation/custom/generator.md",
-        "critic_prompt": "prompts/ideation/custom/critic.md",
+        "generator_agent": "ai-scientist-ideation-generator-custom",
+        "generator_prompt_source": "prompts/ideation/custom/generator.md",
+        "critic_agent": "ai-scientist-ideation-critic-custom",
+        "critic_prompt_source": "prompts/ideation/custom/critic.md",
         "ranker_prompt": "prompts/ideation/custom/ranker.md"
       }
     }

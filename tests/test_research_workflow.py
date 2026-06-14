@@ -104,8 +104,8 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("create a bounded branch instead of over-repairing the same path", skill_text)
         self.assertIn("Do not branch for variety alone", skill_text)
         self.assertIn("custom criteria remain the acceptance standard", skill_text)
-        self.assertIn("allowed_rescue_scope", skill_text)
-        self.assertIn("kill_criteria", skill_text)
+        self.assertIn("failure_criteria", skill_text)
+        self.assertIn("DO NOT add details that user didn't specify", skill_text)
         self.assertIn("baseline/baseline.json` for the run-level authoritative", skill_text)
         self.assertIn(".ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/", skill_text)
         self.assertIn("git rev-parse HEAD", skill_text)
@@ -244,7 +244,11 @@ class ResearchWorkflowTests(unittest.TestCase):
             self.assertEqual(cfg["arguments"]["target_venue"], "fixture venue")
             self.assertEqual(cfg["arguments"]["target_idea"]["id"], "idea-001")
             self.assertEqual(cfg["research"]["orchestrator_prompt"], "skills/research-loop/SKILL.md")
-            self.assertEqual(cfg["research"]["baseline_worker_prompt"], "prompts/research-loop/baseline-worker.md")
+            self.assertEqual(cfg["research"]["baseline_worker_agent"], "ai-scientist-research-baseline-worker")
+            self.assertEqual(cfg["research"]["baseline_worker_prompt_source"], "prompts/research-loop/baseline-worker.md")
+            self.assertEqual(cfg["research"]["worker_agent"], "ai-scientist-research-worker")
+            self.assertEqual(cfg["research"]["critic_agent"], "ai-scientist-research-critic-scientist")
+            self.assertEqual(cfg["research"]["revision_worker_agent"], "ai-scientist-research-revision-worker-scientist")
             self.assertEqual(cfg["research"]["revision_brainstorm_skill"], "skills/revision-brainstorm/SKILL.md")
             self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "baseline").exists())
 
@@ -673,7 +677,8 @@ class ResearchWorkflowTests(unittest.TestCase):
                                 "kind": "revision-worker",
                                 "node_id": "node-002",
                                 "status": "completed",
-                                "prompt_path": "prompts/research-loop/engineer/revision-worker.md",
+                                "agent_type": "ai-scientist-research-revision-worker-engineer",
+                                "prompt_source": "prompts/research-loop/engineer/revision-worker.md",
                                 "skill_path": "skills/revision-brainstorm/SKILL.md",
                                 "result_ref": ".ai-scientist/runs/run-001/logs/revisions/node-002/revision-node-002/result.json",
                             },
@@ -681,7 +686,8 @@ class ResearchWorkflowTests(unittest.TestCase):
                                 "kind": "revision-critic",
                                 "node_id": "node-002",
                                 "status": "completed",
-                                "prompt_path": "prompts/research-loop/engineer/critic.md",
+                                "agent_type": "ai-scientist-research-critic-engineer",
+                                "prompt_source": "prompts/research-loop/engineer/critic.md",
                                 "result_ref": ".ai-scientist/runs/run-001/logs/critics/node-002/revision-critic-node-002/verdict.json",
                             },
                         },

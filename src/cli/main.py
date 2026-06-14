@@ -13,6 +13,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from core import agents as core_agents
 from core.state import (
     append_journal_event,
     audit_block_reason,
@@ -3215,6 +3216,24 @@ def cmd_evidence_semantic_scholar(args: argparse.Namespace) -> int:
     return evidence_main(argv)
 
 
+def cmd_agents_list(args: argparse.Namespace) -> int:
+    sys.stdout.write(json.dumps({"status": "ok", "agents": core_agents.list_agents()}, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+def cmd_agents_install(args: argparse.Namespace) -> int:
+    installed = core_agents.install_agents(codex_home=args.codex_home, target_repo=args.agent_target_repo, force=args.force)
+    agents_dir = core_agents.target_agents_dir(args.codex_home, args.agent_target_repo)
+    sys.stdout.write(json.dumps({"status": "ok", "agents_dir": str(agents_dir), "installed": installed}, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+def cmd_agents_check(args: argparse.Namespace) -> int:
+    result = core_agents.check_agents(codex_home=args.codex_home, target_repo=args.agent_target_repo)
+    sys.stdout.write(json.dumps({"status": "ok" if result["ok"] else "error", **result}, indent=2, sort_keys=True) + "\n")
+    return 0 if result["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-repo", type=Path, help="Target repository. Defaults to current working directory.")
@@ -3261,6 +3280,20 @@ def build_parser() -> argparse.ArgumentParser:
     s2.add_argument("--max-results", type=int, default=10)
     s2.add_argument("--fixture", type=Path)
     s2.set_defaults(func=cmd_evidence_semantic_scholar)
+
+    agents = sub.add_parser("agents")
+    agents_sub = agents.add_subparsers(dest="command", required=True)
+    agents_list = agents_sub.add_parser("list")
+    agents_list.set_defaults(func=cmd_agents_list)
+    agents_install = agents_sub.add_parser("install")
+    agents_install.add_argument("--codex-home", type=Path)
+    agents_install.add_argument("--target-repo", dest="agent_target_repo", type=Path)
+    agents_install.add_argument("--force", action="store_true")
+    agents_install.set_defaults(func=cmd_agents_install)
+    agents_check = agents_sub.add_parser("check")
+    agents_check.add_argument("--codex-home", type=Path)
+    agents_check.add_argument("--target-repo", dest="agent_target_repo", type=Path)
+    agents_check.set_defaults(func=cmd_agents_check)
 
     research = sub.add_parser("research")
     research_sub = research.add_subparsers(dest="command", required=True)
