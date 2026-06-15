@@ -10,6 +10,7 @@ src/cli/main.py
 src/cli/payload.py
 src/cli/response.py
 src/core/__init__.py
+src/core/agents.py
 src/core/journal.py
 src/core/paths.py
 src/core/plugin.py
@@ -49,6 +50,7 @@ src/validation/run.py
 src/writeup/__init__.py
 src/writeup/commands.py
 src/writeup/state.py
+tests/test_agents.py
 tests/test_codex_command_argv.py
 tests/test_continuation_state.py
 tests/test_ideation_hooks.py

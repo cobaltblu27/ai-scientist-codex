@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from cli.response import emit
+from core.agents import research_agent_name
 from core.state import (
     append_journal_event,
     atomic_write_json,
@@ -206,6 +207,7 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
         "idea_batch": idea_batch,
         "campaign_mode": len(idea_batch) > 1 or selected_idea is None,
         "learning_notes_ref": str(run_dir(target, args.run_id) / "learning-notes.jsonl"),
+        "discovery_notes_ref": str(run_dir(target, args.run_id) / "discovery-notes.md"),
         "arguments": frozen_arguments(target, args, payload, selected_idea, idea_batch, mode),
         "research_contract": research_contract,
         "custom_criteria": criteria,
@@ -214,10 +216,14 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
             "mode": mode,
             "prompt_root": "prompts/research-loop",
             "orchestrator_prompt": prompt_path_for(mode, "orchestrator"),
-            "worker_prompt": prompt_path_for(mode, "worker"),
-            "baseline_worker_prompt": prompt_path_for(mode, "baseline-worker"),
-            "critic_prompt": prompt_path_for(mode, "critic"),
-            "revision_worker_prompt": prompt_path_for(mode, "revision-worker"),
+            "worker_agent": research_agent_name(mode, "worker"),
+            "worker_prompt_source": prompt_path_for(mode, "worker"),
+            "baseline_worker_agent": research_agent_name(mode, "baseline-worker"),
+            "baseline_worker_prompt_source": prompt_path_for(mode, "baseline-worker"),
+            "critic_agent": research_agent_name(mode, "critic"),
+            "critic_prompt_source": prompt_path_for(mode, "critic"),
+            "revision_worker_agent": research_agent_name(mode, "revision-worker"),
+            "revision_worker_prompt_source": prompt_path_for(mode, "revision-worker"),
             "revision_brainstorm_skill": REVISION_BRAINSTORM_SKILL,
         },
         "created_at": utc_now(),
@@ -230,11 +236,19 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     cfg["idea_batch"] = idea_batch
     cfg["campaign_mode"] = len(idea_batch) > 1 or selected_idea is None
     cfg["learning_notes_ref"] = str(run_dir(target, args.run_id) / "learning-notes.jsonl")
+    cfg["discovery_notes_ref"] = str(run_dir(target, args.run_id) / "discovery-notes.md")
     cfg["selected_idea_id"] = selected_idea_id
     cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, idea_batch, mode)
     research = cfg.setdefault("research", {})
     if isinstance(research, dict):
-        research.setdefault("baseline_worker_prompt", prompt_path_for(mode, "baseline-worker"))
+        research.setdefault("worker_agent", research_agent_name(mode, "worker"))
+        research.setdefault("worker_prompt_source", prompt_path_for(mode, "worker"))
+        research.setdefault("baseline_worker_agent", research_agent_name(mode, "baseline-worker"))
+        research.setdefault("baseline_worker_prompt_source", prompt_path_for(mode, "baseline-worker"))
+        research.setdefault("critic_agent", research_agent_name(mode, "critic"))
+        research.setdefault("critic_prompt_source", prompt_path_for(mode, "critic"))
+        research.setdefault("revision_worker_agent", research_agent_name(mode, "revision-worker"))
+        research.setdefault("revision_worker_prompt_source", prompt_path_for(mode, "revision-worker"))
         research.setdefault("revision_brainstorm_skill", REVISION_BRAINSTORM_SKILL)
     if research_contract is not None:
         cfg["research_contract"] = research_contract
@@ -455,6 +469,40 @@ def resource_usage(leases: dict[str, dict[str, Any]]) -> dict[str, int]:
     return usage
 
 
+def empty_resource_queue() -> dict[str, list[Any]]:
+    return {"pending": [], "released": [], "completed": []}
+
+
+def normalize_resource_queue(value: Any) -> dict[str, list[Any]]:
+    queue = empty_resource_queue()
+    if isinstance(value, dict):
+        for bucket in queue:
+            entries = value.get(bucket)
+            if isinstance(entries, list):
+                queue[bucket] = entries
+    return queue
+
+
+def merge_resource_queue(current: Any, patch: Any) -> dict[str, list[Any]]:
+    queue = normalize_resource_queue(current)
+    if isinstance(patch, dict):
+        for bucket in queue:
+            entries = patch.get(bucket)
+            if isinstance(entries, list):
+                queue[bucket] = entries
+    return queue
+
+
+def resource_queue_summary(phase_state: dict[str, Any]) -> dict[str, Any]:
+    queue = normalize_resource_queue(phase_state.get("resource_queue"))
+    return {
+        "counts": {bucket: len(entries) for bucket, entries in queue.items()},
+        "pending": queue["pending"],
+        "released": queue["released"],
+        "completed": queue["completed"],
+    }
+
+
 def can_fit(caps: dict[str, int | None], usage: dict[str, int], request: dict[str, int]) -> bool:
     max_parallel = caps["max_parallel"]
     if isinstance(max_parallel, int) and usage["parallel"] + 1 > max_parallel:
@@ -479,7 +527,11 @@ def resource_summary(target: Path, run_id: str, state: dict[str, Any]) -> dict[s
     cfg = cfg if isinstance(cfg, dict) else {}
     phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
     leases = active_leases(phase_state)
-    summary: dict[str, Any] = {"active_leases": leases, "active_lease_count": len(leases)}
+    summary: dict[str, Any] = {
+        "active_leases": leases,
+        "active_lease_count": len(leases),
+        "resource_queue": resource_queue_summary(phase_state),
+    }
     caps = resource_caps_from_config(cfg)
     if isinstance(caps, dict):
         try:
@@ -579,6 +631,10 @@ def cmd_research_start(args: argparse.Namespace) -> int:
             "path": cfg.get("learning_notes_ref"),
             "status": "active",
         },
+        "discovery_notes": {
+            "path": cfg.get("discovery_notes_ref"),
+            "status": "active",
+        },
         "orchestrator": {
             "role": "main_codex_session",
             "next_action": "plan",
@@ -597,7 +653,7 @@ def cmd_research_start(args: argparse.Namespace) -> int:
             "repo_refs": [],
         },
         "nodes": {},
-        "resource_queue": {"pending": [], "released": [], "completed": []},
+        "resource_queue": empty_resource_queue(),
         "resources": {"caps": cfg.get("resources"), "leases": {}, "completed_leases": {}, "events": []},
         "selection": {"status": "pending", "selected_node": None},
     }
@@ -619,6 +675,32 @@ def cmd_research_start(args: argparse.Namespace) -> int:
         notes_path = Path(learning_notes_ref)
         notes_path.parent.mkdir(parents=True, exist_ok=True)
         notes_path.touch(exist_ok=True)
+    discovery_notes_ref = cfg.get("discovery_notes_ref")
+    if isinstance(discovery_notes_ref, str) and discovery_notes_ref:
+        notes_path = Path(discovery_notes_ref)
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        if not notes_path.exists():
+            notes_path.write_text(
+                "# Discovery Notes\n\n"
+                "## Current Best Understanding\n\n"
+                "No discovery synthesis recorded yet.\n\n"
+                "## What Worked\n\n"
+                "- TBD\n\n"
+                "## What Did Not Work\n\n"
+                "- TBD\n\n"
+                "## Data And Evaluation Findings\n\n"
+                "- TBD\n\n"
+                "## Model And Mechanism Hypotheses\n\n"
+                "- TBD\n\n"
+                "## Transferable Insights\n\n"
+                "- TBD\n\n"
+                "## Branch Seeds\n\n"
+                "- TBD\n\n"
+                "## Things To Avoid Repeating\n\n"
+                "- TBD\n\n"
+                "## Node Notes\n\n",
+                encoding="utf-8",
+            )
     append_journal_event(target, args.run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
     return emit("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)), mode=mode)
 
@@ -656,6 +738,8 @@ def cmd_research_checkpoint(args: argparse.Namespace) -> int:
             if isinstance(patch.get(key), dict):
                 current = phase_state.setdefault(key, {})
                 current.update(patch[key])
+        if isinstance(patch.get("resource_queue"), dict):
+            phase_state["resource_queue"] = merge_resource_queue(phase_state.get("resource_queue"), patch["resource_queue"])
         if isinstance(patch.get("nodes"), dict):
             nodes = phase_state.setdefault("nodes", {})
             for node_id, node_patch in patch["nodes"].items():

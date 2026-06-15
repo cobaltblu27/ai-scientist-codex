@@ -15,7 +15,7 @@ Options:
   --bin-dir PATH            Directory for ai-scientist launcher. Default: ~/.local/bin
 Environment:
   AI_SCIENTIST_PLUGIN_CACHE Optional Codex plugin cache directory to refresh.
-                            Default: ~/.codex/plugins/cache/ai-scientist-codex/ai-scientist/0.1.0
+                            Default: ~/.codex/plugins/cache/ai-scientist-codex/ai-scientist/0.1.2
   -h, --help                Show this help.
 EOF
 }
@@ -25,7 +25,7 @@ PYTHON_RUNTIME="${AI_SCIENTIST_PYTHON:-}"
 PYTHON_RUNTIME_EXPLICIT=0
 VENV_DIR="$ROOT/.venv-ai-scientist"
 BIN_DIR="$HOME/.local/bin"
-PLUGIN_CACHE_DIR="${AI_SCIENTIST_PLUGIN_CACHE:-$HOME/.codex/plugins/cache/ai-scientist-codex/ai-scientist/0.1.0}"
+PLUGIN_CACHE_DIR="${AI_SCIENTIST_PLUGIN_CACHE:-$HOME/.codex/plugins/cache/ai-scientist-codex/ai-scientist/0.1.2}"
 CACHE_BACKUP_ROOT="$HOME/.codex/tmp/plugin-cache-backups"
 
 while [ "$#" -gt 0 ]; do
@@ -116,7 +116,7 @@ if [ -d "$PLUGIN_CACHE_DIR" ]; then
     exit 1
   fi
   mkdir -p "$CACHE_BACKUP_ROOT"
-  backup_dir="$CACHE_BACKUP_ROOT/0.1.0.bak-$(date +%Y%m%d%H%M%S)"
+  backup_dir="$CACHE_BACKUP_ROOT/0.1.2.bak-$(date +%Y%m%d%H%M%S)"
   cp -a "$PLUGIN_CACHE_DIR" "$backup_dir"
   rsync -a --delete \
     --exclude '.git/' \
