@@ -328,16 +328,25 @@ Use this structure:
 ## Model And Mechanism Hypotheses
 ## Transferable Insights
 ## Branch Seeds
+## Data Insight Work
+### In Progress
+### Completed
+### Blocked Or Stale
 ## Things To Avoid Repeating
 ## Node Notes
 ```
 
+Use `Data Insight Work` as a soft coordination surface, not a hard state machine. When assigning or noticing data-insight work, add a concise natural-language entry under `In Progress` with `insight_id`, owner node/work id, question, evidence or artifact scope, expected artifact path, started time, and what other nodes or revisions could reuse it. When data-insight finishes, move or summarize it under `Completed` with artifact refs and a compact finding. If it is blocked or stale, record why under `Blocked Or Stale`.
+
+Before spawning another data-insight pass, check `Data Insight Work`. If an in-progress or completed insight asks a substantially similar question over the same dataset/split, prediction files, metric outputs, or revision evidence, avoid duplicate work. If the current decision depends on it, poll or wait briefly for the expected result path to be filled; otherwise continue unrelated node work and cite the pending insight. Start a new data-insight pass only when the question is materially different, the evidence/artifact version changed, or the existing item is stale, blocked, or too broad for the decision.
+
 Update discovery notes after meaningful integration points: worker result, data-insight result, critic verdict, revision plan, branch decision, and node acceptance/rejection. Summarize what worked, what failed, what data inspection found, which mechanism hypotheses changed, what should transfer to another node, and what should not be repeated. Do not turn it into a raw event log; link evidence refs and write the synthesis a future revision worker needs.
 
-Pass `discovery_notes_ref` to workers, critics, and revision workers. Revision workers must read it before planning and cite relevant sections, node notes, or headings when borrowing an insight or proposing a branch. Discovery notes are guidance memory, not a hard completion gate.
+Pass `discovery_notes_ref` to workers, critics, revision workers, and data-insight agents. Revision workers and data-insight agents must read it before planning and cite relevant sections, node notes, data-insight entries, or headings when borrowing an insight, polling related insight work, or proposing a branch. Discovery notes are guidance memory, not a hard completion gate.
 </Discovery_Notes>
 
 <Branching>
+Branching is the backbone driver of this research loop. As each node represents a single research direction, whenever a node has room for improvement through a change in methodology, mechanism, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol, the loop should produce a branch through the revision brainstorming process. Do not wait for same-node exhaustion before branching when data shows an approach-change opportunity.
 A branch is a new normal node with its own worker, workspace, evidence trail, resource records, and eventual critic review. Branching is orchestrator judgment, not a separate CLI command.
 
 The orchestrator may branch from any recorded node when evidence makes that node the best parent. Do not restrict branching to the current node, accepted nodes, or nodes marked with a special status. This matters after several experiments fail: the best branch may come from an older failed or partial node.

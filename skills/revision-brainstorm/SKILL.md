@@ -24,6 +24,8 @@ Choose exactly one action:
 - `branch_from_node`: create a new node from any recorded parent node whose evidence makes it the best starting point. The branch may borrow a recorded insight from another node when it remains inside the frozen contract.
 - `abandon_or_reject`: stop the direction because evidence meets failure/kill criteria or the cost is not justified.
 - `escalate`: ask the orchestrator or user for a decision because the next move changes reproducibility, benchmark meaning, data access, environment, or acceptance criteria.
+
+Branch aggressively when the data-insight evidence shows room for improvement that requires a changed approach, mechanism, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol. Do not wait for same-node exhaustion before choosing `branch_from_node`. Use `revise_same_node` only when the same approach remains appropriate and needs a bounded fix, debug pass, ablation, or implementation correction.
 </Protocol>
 
 <Integrity_Rules>

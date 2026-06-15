@@ -35,7 +35,7 @@ Use discovery notes to avoid repeating failed paths and to justify model-side re
 </Discovery_Notes>
 
 <Data_Insight>
-Always use `data-insight-revision` before finalizing the revision plan. It must create a fresh evidence inventory and task-specific inspection for the current node scenario. Reference the produced artifacts in the revision plan. Do not use data insight to change the frozen contract or bypass critic review.
+Always use `data-insight-revision` before finalizing the revision plan. Before starting new inspection work, check `discovery_notes_ref` for `Data Insight Work`. If a substantially similar insight is already in progress over the same evidence, poll or wait briefly for its expected artifact path when your plan depends on it; otherwise continue unrelated planning and cite the pending insight. If a completed insight is close enough and still matches the current evidence, reuse it with explicit refs. Start new inspection only when the question or evidence is materially different, stale, blocked, or too broad. Reference the produced or reused artifacts in the revision plan. Do not use data insight to change the frozen contract or bypass critic review.
 </Data_Insight>
 
 <Model_Improvement_Discipline>
@@ -48,6 +48,8 @@ If residual correction appears promising, convert it into an upstream implementa
 
 <Decision>
 The plan must choose exactly one action: revise the same node, branch from a node, abandon/reject, or escalate for a decision. A branch may start from any recorded node when its evidence makes it the best parent.
+
+Choose branch from node whenever the data-insight evidence shows room for improvement that requires a changed approach, model family, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol. Do not wait for the current node to be exhausted. Choose revise same node only when the same approach remains appropriate and needs a bounded fix, debug pass, ablation, or implementation correction.
 </Decision>
 
 <Stopping_Rule>

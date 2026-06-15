@@ -44,6 +44,8 @@ Your assignment may include `learning_notes_ref`, usually `.ai-scientist/runs/<r
 <Discovery_Notes>
 Your assignment may include `discovery_notes_ref`, usually `.ai-scientist/runs/<run-id>/discovery-notes.md`. Read it as the orchestrator-maintained run wiki for what worked, what failed, data/evaluation findings, mechanism hypotheses, branch seeds, and things to avoid repeating. Use it as context, but do not edit it directly.
 
+Check the `Data Insight Work` section when it exists. If an in-progress insight is asking a substantially similar question over the same dataset/split, prediction files, metric outputs, or node evidence, do not start duplicate inspection work. If your next decision depends on that insight, report that the orchestrator should poll the expected artifact path; otherwise continue unrelated assigned work and cite the pending insight in your result. If your evidence suggests a new data-insight question, include a concise `discovery_note_suggestions` entry with the natural-language question, artifact scope, expected usefulness, and why existing insight work is not close enough.
+
 When your work produces a reusable lesson, include `discovery_note_suggestions` in your result payload. Keep suggestions concise and evidence-linked: what worked, what failed, what data inspection or benchmark behavior revealed, and whether another node or revision should reuse or avoid the pattern.
 </Discovery_Notes>
 

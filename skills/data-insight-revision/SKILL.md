@@ -35,8 +35,14 @@ Expect some subset of:
 </Inputs>
 
 <Core_Rule>
-Do not merely reason from summary metrics. For each revision decision, perform a fresh diagnostic pass for the current node scenario. First inspect the repository, node evidence, and data interfaces, then write the smallest task-specific inspection script that can answer the revision question. Run it, keep its artifacts, and recommend only actions supported by those artifacts. Prior data-insight reports may be cited as evidence but must not replace the fresh pass.
+Do not merely reason from summary metrics. For each revision decision, use artifact-backed diagnostic evidence for the current node scenario. Prefer a fresh diagnostic pass, but first check `discovery_notes_ref` when provided for `Data Insight Work`. If an in-progress entry is substantially similar over the same dataset/split, prediction files, metric outputs, and revision question, poll or wait briefly for its expected artifact path instead of duplicating it. If a completed entry is close enough and still matches the current evidence version, reuse it with explicit refs. Write a new task-specific inspection only when the question is materially different, the evidence changed, or the existing insight is stale, blocked, or too broad. Recommend only actions supported by the produced or reused artifacts.
 </Core_Rule>
+
+<Soft_Coordination>
+`Data Insight Work` entries are natural-language coordination hints, not hard locks. Similar enough means the same dataset/split, same prediction or result artifacts, and the same decision question or failure mode. Different enough means a different node evidence version, different artifact version, different slice/failure hypothesis, or different decision need.
+
+When starting new insight work inside a run, include a suggested `Data Insight Work` `In Progress` entry in your result or brief with `insight_id`, owner node/work id, question, evidence/artifact scope, expected artifact path, started time, and useful-for notes. When finishing, include a suggested `Completed` update with artifact refs and the compact finding. If blocked or stale, say why so another agent can decide whether to reuse, poll, or start a different pass.
+</Soft_Coordination>
 
 <Model_Failure_Diagnosis>
 When prediction files, residuals, logits, scores, losses, or per-example outputs are available, the inspection must compare success cases against failure cases. If a residual corrector, calibration layer, ensemble, or other output-level patch exists or is tempting, treat it as a diagnostic probe: record where it helps, where it fails, and whether it appears to overfit a slice.
@@ -69,12 +75,15 @@ When no run id exists, use the output directory given by the user or assignment.
 
 <Workflow>
 1. Read workspace instructions and identify the correct Python launcher. Do not silently switch environments.
-2. Inventory node evidence, dataset/split refs, baseline refs, evaluator outputs, prediction files, and critic claims. Record missing evidence in `evidence_inventory.json`.
-3. Write a fresh `inspection.py` in the artifact directory for this `work_id` or assignment. The script must be specific to the available evidence and dataset interfaces rather than a generic EDA framework.
-4. Run `inspection.py` with the workspace Python launcher when enough artifacts exist to execute it. If executable inspection is impossible, write an explicit blocker in `evidence_inventory.json` and `revision_insights.json`; do not skip the data-insight step.
-5. Read the generated JSON/table/figure artifacts.
-6. Write `data_insight_revision_brief.md` for humans and `revision_insights.json` for downstream revision planning.
-7. If an assigned `result_path` exists, write a final JSON result there that references artifact paths.
+2. Read `discovery_notes_ref` when provided and inspect `Data Insight Work` for close in-progress, completed, blocked, or stale insight entries.
+3. Inventory node evidence, dataset/split refs, baseline refs, evaluator outputs, prediction files, and critic claims. Record missing evidence in `evidence_inventory.json` when creating a new pass.
+4. If close in-progress work exists and your decision depends on it, poll or wait briefly for its expected artifact path; otherwise return the pending ref or continue only if the assignment allows unrelated planning.
+5. If close completed work exists and still matches the current evidence version, reuse it and write a compact result pointing to the existing artifacts.
+6. If no close usable work exists, write a fresh `inspection.py` in the artifact directory for this `work_id` or assignment. The script must be specific to the available evidence and dataset interfaces rather than a generic EDA framework.
+7. Run `inspection.py` with the workspace Python launcher when enough artifacts exist to execute it. If executable inspection is impossible, write an explicit blocker in `evidence_inventory.json` and `revision_insights.json`; do not skip the data-insight step.
+8. Read the generated or reused JSON/table/figure artifacts.
+9. Write `data_insight_revision_brief.md` for humans and `revision_insights.json` for downstream revision planning.
+10. If an assigned `result_path` exists, write a final JSON result there that references artifact paths.
 </Workflow>
 
 <Inspection_Targets>
@@ -89,6 +98,7 @@ The inspection code should answer the relevant subset of these questions:
 - Baseline comparison: does the candidate fail where the baseline succeeds, succeed where the baseline fails, or merely shift errors?
 - Data quality: are suspicious failures explained by wrong labels, ambiguous targets, conflicting duplicates, missing context, impossible values, or systematic missingness?
 - Distribution and shortcut risk: is the node relying on source/device/time artifacts, train-only cues, leakage-like fields, or underrepresented groups?
+- Approach-change opportunities: does artifact-backed evidence show room for improvement that would require a different mechanism, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol rather than another same-node fix?
 - Revision decision: does evidence support revising the same node, branching from a better parent/insight, abandoning/rejecting, or escalating for contract/environment/data-access approval?
 - Missing evidence: if predictions, losses, split refs, or evaluator outputs are absent, is the correct recommendation to generate missing evidence, fix an implementation/logging bug, abandon an unsupported direction, or escalate?
 </Inspection_Targets>
@@ -134,6 +144,14 @@ The inspection code should answer the relevant subset of these questions:
     "where_output_correction_fails": []
   },
   "error_patterns": [],
+  "approach_change_opportunities": [
+    {
+      "summary": "",
+      "changed_approach": "",
+      "expected_improvement_path": "",
+      "evidence_ref": ""
+    }
+  ],
   "slice_metrics": [
     {
       "name": "",

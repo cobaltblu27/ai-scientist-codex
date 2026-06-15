@@ -33,7 +33,7 @@ Expect some subset of:
 </Inputs>
 
 <Core_Rule>
-Do not merely think about the data. Reuse a valid existing ideation data-insight report only after checking freshness against the current run and contract. Otherwise inspect the repository and data interfaces, write the smallest task-specific inspection script that can answer the assigned insight questions, run it, keep its artifacts, and summarize only insights supported by those artifacts.
+Do not merely think about the data. Reuse a valid existing ideation data-insight report only after checking freshness against the current run and contract. When `discovery_notes_ref` exists, also check `Data Insight Work` for a substantially similar in-progress or completed dataset-insight question before starting duplicate inspection work. Otherwise inspect the repository and data interfaces, write the smallest task-specific inspection script that can answer the assigned insight questions, run it, keep its artifacts, and summarize only insights supported by those artifacts.
 </Core_Rule>
 
 <Artifact_Location>
@@ -69,16 +69,23 @@ Before writing new inspection code, check for existing artifacts in the ideation
 If any check fails, write and run a new `inspection.py`. If data access is missing or the environment is unclear, produce a blocker instead of fabricating insight. Outside autonomous loops, ask the user. Inside AI Scientist loops, record the blocker and continue according to the loop protocol.
 </Reuse_Rule>
 
+<Soft_Coordination>
+`Data Insight Work` in `discovery-notes.md` is a natural-language coordination surface, not a hard lock. If an in-progress entry asks a close enough ideation data question over the same dataset/split/evaluator assumptions, avoid duplicate work and poll or wait briefly for the expected artifact path if generators depend on it. If a completed entry is close enough and fresh, reuse it. Start a new pass only when the question is materially different, the dataset/split/evaluator assumption changed, or the existing item is blocked, stale, or too broad.
+
+When starting or finishing insight work, include a concise `discovery_note_suggestions` update for `Data Insight Work` with the question, artifact scope, expected artifact path or artifact refs, useful-for notes, and whether the item is in progress, completed, blocked, or stale.
+</Soft_Coordination>
+
 <Workflow>
 1. Read workspace instructions and identify the correct Python launcher. Do not silently switch environments.
-2. Check whether a valid existing report can be reused under the reuse rule.
-3. If reusable, return the report refs and a compact generator note summary.
-4. If not reusable, locate dataset loading, split definitions, schema docs, benchmark scripts, and evaluator commands from the repo and assignment.
-5. Write `inspection.py` in the artifact directory. The script must be specific to the discovered dataset interfaces rather than a generic EDA framework.
-6. Run `inspection.py` with the workspace Python launcher. Keep stdout/stderr or command notes when useful for auditability.
-7. Read the generated JSON/figure/table artifacts.
-8. Write `data_insight_ideation_brief.md` for humans and `idea_seed_insights.json` for downstream agents.
-9. If an assigned `result_path` exists, write a final JSON result there that references the artifact paths.
+2. Check `discovery_notes_ref` when provided for close `Data Insight Work`, then check whether a valid existing report can be reused under the reuse rule.
+3. If close in-progress work exists and generators depend on it, poll or wait briefly for its expected artifact path rather than duplicating it.
+4. If reusable, return the report refs and a compact generator note summary.
+5. If not reusable, locate dataset loading, split definitions, schema docs, benchmark scripts, and evaluator commands from the repo and assignment.
+6. Write `inspection.py` in the artifact directory. The script must be specific to the discovered dataset interfaces rather than a generic EDA framework.
+7. Run `inspection.py` with the workspace Python launcher. Keep stdout/stderr or command notes when useful for auditability.
+8. Read the generated JSON/figure/table artifacts.
+9. Write `data_insight_ideation_brief.md` for humans and `idea_seed_insights.json` for downstream agents.
+10. If an assigned `result_path` exists, write a final JSON result there that references the artifact paths.
 </Workflow>
 
 <Inspection_Targets>
