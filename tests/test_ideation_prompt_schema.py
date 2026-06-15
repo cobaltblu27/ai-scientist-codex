@@ -14,6 +14,76 @@ from ideation.state import DEFAULT_IDEATION_CONFIG, IDEA_OUTPUT_SCHEMA
 
 
 class IdeationPromptSchemaTests(unittest.TestCase):
+    def test_create_contract_skill_contract_and_boundaries(self) -> None:
+        skill_path = PLUGIN_ROOT / "skills" / "create-contract" / "SKILL.md"
+        self.assertTrue(skill_path.exists())
+        skill = skill_path.read_text()
+        self.assertIn("name: create-contract", skill)
+        self.assertIn("Explicit-only", skill)
+        self.assertIn("Use this skill ONLY when the user explicitly asks", skill)
+        self.assertIn(".ai-scientist/contracts/<contract-id>/research-contract.json", skill)
+        self.assertIn("does not start ideation", skill)
+        self.assertIn("does not start research-loop", skill)
+        self.assertIn("does not create loop state", skill)
+        self.assertIn("does not spawn agents", skill)
+        for forbidden_command in [
+            "`ideation start`",
+            "`research start`",
+            "`resume`",
+            "`checkpoint`",
+        ]:
+            self.assertIn(forbidden_command, skill)
+        for forbidden_artifact in [
+            ".ai-scientist/active-run.json",
+            ".ai-scientist/runs/<run-id>/config.json",
+            ".ai-scientist/runs/<run-id>/loop-state.json",
+            ".ai-scientist/runs/<run-id>/journal.jsonl",
+        ]:
+            self.assertIn(forbidden_artifact, skill)
+        for field in [
+            "primary_hypothesis",
+            "goal_type",
+            "success_criteria",
+            "failure_criteria",
+            "allowed_rescue_scope",
+            "kill_criteria",
+            "non_drift_definition",
+            "metrics_that_matter",
+            "non_negotiable_comparisons",
+            "fixed_dataset",
+            "fixed_split",
+            "fixed_baseline",
+            "evaluator_command",
+            "baseline_reference",
+            "benchmark_plan",
+            "target_threshold",
+        ]:
+            self.assertIn(f'"{field}"', skill)
+        for contaminated_field in [
+            "prompt",
+            "raw_prompt",
+            "messages",
+            "conversation",
+            "transcript",
+            "instructions",
+            "system_prompt",
+            "developer_prompt",
+            "assignment_prompt",
+            "context_dump",
+        ]:
+            self.assertIn(f"`{contaminated_field}`", skill)
+        self.assertIn("Do not invent dataset, split, baseline, metric, threshold, evaluator command, success criteria, or failure criteria", skill)
+        self.assertIn("Keep `failure_criteria` limited to what the user specified", skill)
+
+    def test_ideation_and_research_loop_reference_create_contract(self) -> None:
+        ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
+        research_loop = (PLUGIN_ROOT / "skills" / "research-loop" / "SKILL.md").read_text()
+        self.assertIn("skills/create-contract/SKILL.md", ideation)
+        self.assertIn("Do not start ideation during contract creation", ideation)
+        self.assertIn("skills/create-contract/SKILL.md", research_loop)
+        self.assertIn("missing, ambiguous, incomplete, or likely contaminated", research_loop)
+        self.assertIn("Do not start the research loop until the contract is clean", research_loop)
+
     def test_subagent_prompts_have_persona_blocks(self) -> None:
         prompt_paths = sorted((PLUGIN_ROOT / "prompts").rglob("*.md"))
         self.assertTrue(prompt_paths)

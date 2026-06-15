@@ -39,6 +39,10 @@ Your higher duty is to seed genuine scientific or engineering discovery. The acc
 The ideation loop starts only after the user explicitly calls this skill with a research topic. First, initialize the run through `ai-scientist`, freezing the prompt, mode, run-owned `research_contract`, budgets, and artifact paths. Before asking agents to brainstorm, do a short preflight: scan for reference papers, run the Heiemeier question pass, and turn those findings into a compact shared assignment brief. Then record generator intents and spawn generator subagents; each generator proposes one idea draft under the fixed contract and writes JSON to its assigned result path. After drafts are recorded, spawn fresh critic subagents for the current draft versions, record their verdicts, and use the CLI cursor to decide whether each slot should be finalized, revised, rejected into a fresh attempt, or exhausted. Repeat the resume -> intent -> subagent -> record -> critic -> finalize/revise loop until the run has an accepted idea batch that satisfies the frozen mode config and minimum candidate policy, or until it is exhausted. Finally, complete the ideation run and validate the `ideation_to_research` handoff; do not start the research loop unless the user explicitly asks for that separate step.
 </Workflow_Overview>
 
+<Contract_First_Boundary>
+If the user asks to create, prepare, repair, or review the `research_contract` first, use `skills/create-contract/SKILL.md` for that separate explicit-only task. Do not start ideation during contract creation. Ideation starts only after the user explicitly asks to start this ideation skill with the finalized contract or a start payload that includes the contract.
+</Contract_First_Boundary>
+
 <Non_Negotiable_Rules>
 1. Treat the invocation text as the research topic.
 2. Do not mutate target repository source code during ideation. The only target-repository writes are under `.ai-scientist/`.

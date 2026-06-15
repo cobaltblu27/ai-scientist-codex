@@ -106,6 +106,8 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("custom criteria remain the acceptance standard", skill_text)
         self.assertIn("failure_criteria", skill_text)
         self.assertIn("DO NOT add details that user didn't specify", skill_text)
+        self.assertIn("skills/create-contract/SKILL.md", skill_text)
+        self.assertIn("likely contaminated by prompt text", skill_text)
         self.assertIn("baseline/baseline.json` for the run-level authoritative", skill_text)
         self.assertIn(".ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/", skill_text)
         self.assertIn("git rev-parse HEAD", skill_text)

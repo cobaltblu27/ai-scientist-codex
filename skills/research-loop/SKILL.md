@@ -158,6 +158,8 @@ The prompt for orchestrator (you) is this `skills/research-loop/SKILL.md`. Do no
 <Research_Contract>
 Scientist and engineer campaign runs expect a run-owned `research_contract` plus `idea_batch`. Treat the contract as the anti-drift contract for the whole run. Ideas are node seeds under that contract, not independent contracts. Custom runs require `custom_criteria`; if a `research_contract` is also present, freeze it and use it as additional context, but judge acceptance by the custom criteria.
 
+If the run-owned `research_contract` is missing, ambiguous, incomplete, or likely contaminated by prompt text, raw conversation, messages, transcript, instructions, system/developer prompt text, assignment text, or context dumps, stop before `research start` and use `skills/create-contract/SKILL.md` to create or repair the standalone contract artifact. Do not start the research loop until the contract is clean enough to freeze into the run config.
+
 Important fields:
 
 - `success_criteria`: the hard success rule for the run. This is separate from the starting thesis and may be more operational, for example: produce a scientifically novel framework that reaches a target score on a named metric.
