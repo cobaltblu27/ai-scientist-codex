@@ -52,8 +52,8 @@ IDEA_TERMINAL_STATUSES = {
 }
 NODE_RESOLVED_STATUSES = {"accepted", "invalid", "rejected"}
 NODE_UNRESOLVED_STATUSES = {"planning", "planned", "implementing", "running", "validating", "buggy", "repairing", "candidate"}
-NODE_TERMINAL_CRITIC_VERDICTS = {"accepted": "ACCEPT_FINAL", "invalid": "INVALID", "rejected": "KILL"}
-NODE_ACCEPTING_CRITIC_VERDICTS = {"ACCEPT_FINAL", "ACCEPT"}
+NODE_TERMINAL_CRITIC_VERDICTS = {"accepted": "ACCEPT", "invalid": "INVALID", "rejected": "KILL"}
+NODE_ACCEPTING_CRITIC_VERDICTS = {"ACCEPT"}
 NODE_EVIDENCE_ADMIN_KEYS = {
     "status",
     "updated_at",

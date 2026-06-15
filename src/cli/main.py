@@ -95,8 +95,15 @@ PAPER_MODES = {"scientist", "researcher"}
 PRACTICAL_MODES = {"balanced", "builder", "engineer"}
 NODE_STATUSES = {"planning", "planned", "implementing", "running", "buggy", "repairing", "candidate", "validating", "accepted", "invalid", "rejected"}
 NODE_TERMINAL_STATUSES = {"accepted", "invalid", "rejected"}
-CRITIC_VERDICTS = {"ACCEPT", "REVISE", "INVALID", "REJECT"}
-CRITIC_STATUS_BY_VERDICT = {"ACCEPT": "accepted", "REVISE": "repairing", "INVALID": "invalid", "REJECT": "rejected"}
+CRITIC_VERDICTS = {"ACCEPT", "CONTINUE", "REVISE", "BRANCH", "KILL", "INVALID"}
+CRITIC_STATUS_BY_VERDICT = {
+    "ACCEPT": "accepted",
+    "CONTINUE": "validating",
+    "REVISE": "repairing",
+    "BRANCH": "repairing",
+    "KILL": "rejected",
+    "INVALID": "invalid",
+}
 CRITIC_ROLES = {"evidence_auditor", "claim_critic", "performance_auditor"}
 DEFAULT_CRITIC_AGENT = {"model": "gpt-5.5", "reasoning_effort": "xhigh", "required": True}
 REQUIRED_CONTRACT_KEYS = {
@@ -118,8 +125,6 @@ OUTCOME_TYPES = {
 }
 PAPER_OUTCOME_TYPES = {
     "hypothesis_supported",
-    "hypothesis_failed_with_evidence",
-    "rescue_finding_with_failed_hypothesis",
 }
 REQUIRED_ACCEPTANCE_CHECKS = {
     "metric_contract_valid",
@@ -171,34 +176,34 @@ TARGET_VENUE_BARS = {
         "for a better idea instead of accepting drift or performance-only hacks."
     ),
 }
-REVISION_VERDICTS = {"CONTINUE_NODE", "BRANCH", "STOP_DRIFTED", "STOP_EXHAUSTED"}
+REVISION_VERDICTS = {"CONTINUE", "BRANCH", "KILL", "INVALID"}
 FINDING_KINDS = {"positive", "negative", "optimization", "bug", "drift", "exhaustion", "transferable"}
 
 RESEARCH_NODE_CRITIC_PROMPTS = {
     "scientist": (
         "You are an independent research-node critic in scientist mode. Review node {node_id} for novelty, evidence, ablations, leakage/split integrity, "
-        "reproducibility, publishability, and fidelity to the frozen research contract. Partial success, promising progress, quiet claim narrowing, "
-        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
+        "reproducibility, publishability, and fidelity to the frozen research contract. ACCEPT requires positive ending criteria met. "
+        "Promising but incomplete evidence should be CONTINUE; fixable flaws should be REVISE; valid negative results should be KILL."
     ),
     "researcher": (
         "You are an independent research-node critic in researcher mode. Review node {node_id} for research usefulness, evidence quality, ablations, leakage/split "
-        "integrity, reproducibility, publishability, and fidelity to the frozen research contract. Partial success, promising progress, quiet claim narrowing, "
-        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
+        "integrity, reproducibility, publishability, and fidelity to the frozen research contract. ACCEPT requires positive ending criteria met. "
+        "Promising but incomplete evidence should be CONTINUE; fixable flaws should be REVISE; valid negative results should be KILL."
     ),
     "balanced": (
         "You are an independent research-node critic in balanced mode. Review node {node_id} for benchmark integrity, evidence, implementation quality, leakage/split "
-        "integrity, reproducibility, practical value, risk, and whether cheap validation remains. Partial success, promising progress, or evidence needing validation "
-        "must be REVISE/repairing, not ACCEPT."
+        "integrity, reproducibility, practical value, risk, and whether cheap validation remains. ACCEPT requires positive ending criteria met. "
+        "Promising but incomplete evidence should be CONTINUE; fixable flaws should be REVISE; valid negative results should be KILL."
     ),
     "engineer": (
         "You are an independent research-node critic in engineer mode. Review node {node_id} for benchmark integrity, implementation quality, performance, "
-        "maintainability, reproducibility, risk, budget-backed tuning plateau, and missed high-expected-value improvements. Merely beating baseline is not enough. "
-        "If a cheap bounded improvement remains, return REVISE/repairing, not ACCEPT."
+        "maintainability, reproducibility, risk, budget-backed tuning plateau, and missed high-expected-value improvements. ACCEPT requires positive ending criteria met. "
+        "If a cheap bounded improvement or missing validation remains, return CONTINUE or REVISE, not ACCEPT."
     ),
     "builder": (
         "You are an independent research-node critic in builder mode. Review node {node_id} for benchmark integrity, implementation quality, performance, "
-        "maintainability, reproducibility, buildability, risk, and remaining cheap reliability/integration improvements. Partial success, promising progress, "
-        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
+        "maintainability, reproducibility, buildability, risk, and remaining cheap reliability/integration improvements. ACCEPT requires positive ending criteria met. "
+        "Promising but incomplete evidence should be CONTINUE; fixable flaws should be REVISE; valid negative results should be KILL."
     ),
 }
 
@@ -1133,7 +1138,7 @@ def record_payload_findings(target: Path, run_id: str, node_id: str | None, payl
 
 def node_has_lineage_stop(node: dict[str, Any]) -> bool:
     stop = node.get("lineage_stop")
-    return isinstance(stop, dict) and stop.get("verdict") in {"STOP_DRIFTED", "STOP_EXHAUSTED"}
+    return isinstance(stop, dict) and stop.get("verdict") in {"KILL", "INVALID"}
 
 def next_sequence_id(phase_state: dict[str, Any], collection_name: str, prefix: str) -> str:
     collection = phase_state.get(collection_name) if isinstance(phase_state.get(collection_name), dict) else {}
@@ -1353,7 +1358,7 @@ def build_node_critic_prompt(config: dict[str, Any], node_id: str, critic_id: st
         + "\n\nFrozen target venue bar:\n"
         + target_venue_summary(config)
         + "\n\nReturn JSON only to the assigned result_path with this schema:\n"
-        '{ "verdict": "ACCEPT|REVISE|INVALID|REJECT", "critic_role": "'
+        '{ "verdict": "ACCEPT|CONTINUE|REVISE|BRANCH|KILL|INVALID", "critic_role": "'
         + role
         + '", "mode": "'
         + mode
@@ -1365,10 +1370,12 @@ def build_node_critic_prompt(config: dict[str, Any], node_id: str, critic_id: st
         '"strengths": ["..."], "weaknesses": ["..."], "required_revisions": ["..."], "risk_flags": ["..."] }\n'
         f"Node evidence fingerprint: {fingerprint}\n"
         f"Result path: {result_path}\n"
-        "Do not assume the node is final or accepted. ACCEPT means this role's required evidence is complete under the frozen rubric. "
-        "REVISE means meaningful progress, partial success, incomplete implementation, missing validation, a plausible next approach, or cheap actionable improvement remains. "
-        "Do not treat an underperforming or half-built implementation as hypothesis_failed_with_evidence. That outcome requires evidence that the frozen hypothesis is fundamentally false under the current data/contract, not merely that this approach needs more work or a different node. "
-        "INVALID means the evidence cannot be trusted. REJECT means it is not worth continuing or not selected."
+        "Do not assume the node is final or accepted. ACCEPT means the positive ending criteria are met: success_criteria are satisfied, the result is positive under the frozen contract, evidence is trusted, and no cheap required improvement remains. "
+        "CONTINUE means the same node has positive signal but needs more validation, depth, ablations, confirmation, or framing before acceptance. "
+        "REVISE means the same node needs a bounded implementation or method fix before its result can be judged. "
+        "BRANCH means the current evidence points to a meaningfully different node direction worth trying. "
+        "KILL means valid evidence says this node or lineage should stop; a valid negative result belongs here, not in ACCEPT. "
+        "INVALID means the evidence cannot be trusted."
     )
 
 
@@ -1416,8 +1423,8 @@ def critic_acceptance_reason(critic: dict[str, Any], config: dict[str, Any], pen
         if contract_reason:
             return contract_reason
         outcome = node.get("outcome_type")
-        if outcome not in PAPER_OUTCOME_TYPES:
-            return "paper-mode ACCEPT requires paper outcome_type"
+        if outcome != "hypothesis_supported":
+            return "paper-mode ACCEPT requires positive outcome_type hypothesis_supported"
         for key in ("current_claim", "claim_equivalence", "contract_evidence", "paper_worthiness"):
             if not node.get(key):
                 return f"paper-mode ACCEPT requires node.{key}"
@@ -1425,26 +1432,12 @@ def critic_acceptance_reason(critic: dict[str, Any], config: dict[str, Any], pen
             return "paper-mode ACCEPT requires complete implementation evidence, not an incomplete worker result"
         if role == "claim_critic":
             verdict = critic.get("original_hypothesis_verdict")
-            if verdict not in {"supported", "failed", "rescue"}:
-                return "claim_critic ACCEPT requires original_hypothesis_verdict supported|failed|rescue"
+            if verdict != "supported":
+                return "claim_critic ACCEPT requires original_hypothesis_verdict supported"
             if critic.get("paper_worthy") is not True:
                 return "claim_critic ACCEPT requires paper_worthy=true"
-            if outcome == "hypothesis_supported" and critic.get("contract_success_met") is not True:
+            if critic.get("contract_success_met") is not True:
                 return "hypothesis_supported requires contract_success_met=true"
-            if outcome == "hypothesis_failed_with_evidence":
-                if critic.get("contract_failure_met") is not True or critic.get("fundamental_failure") is not True:
-                    return "hypothesis_failed_with_evidence requires contract_failure_met=true and fundamental_failure=true"
-                evidence = node.get("contract_evidence") if isinstance(node.get("contract_evidence"), dict) else {}
-                if evidence.get("routine_optimization_failure") is True or evidence.get("implementation_failure") is True:
-                    return "hypothesis_failed_with_evidence cannot be based on routine optimization or implementation failure"
-                if evidence.get("fundamental_failure_not_implementation_failure") is not True:
-                    return "hypothesis_failed_with_evidence requires fundamental_failure_not_implementation_failure=true"
-                alternatives = node.get("alternative_approaches_considered")
-                if not isinstance(alternatives, list) or not alternatives:
-                    return "hypothesis_failed_with_evidence requires alternative_approaches_considered"
-            if outcome == "rescue_finding_with_failed_hypothesis":
-                if critic.get("contract_failure_met") is not True or critic.get("rescue_scope_met") is not True:
-                    return "rescue_finding_with_failed_hypothesis requires failure and rescue scope evidence"
     elif mode in {"builder", "engineer"}:
         if node.get("outcome_type") not in {"practical_improvement"}:
             return "builder/engineer ACCEPT requires practical_improvement outcome_type"
@@ -1472,7 +1465,7 @@ def validate_critic_payload(payload: dict[str, Any], config: dict[str, Any], pen
         raise CliError("critic payload must be a JSON object")
     verdict = critic.get("verdict")
     if verdict not in CRITIC_VERDICTS:
-        raise CliError("critic verdict must be one of ACCEPT, REVISE, INVALID, REJECT")
+        raise CliError("critic verdict must be one of ACCEPT, CONTINUE, REVISE, BRANCH, KILL, INVALID")
     rationale = critic.get("rationale") or critic.get("reason")
     if not isinstance(rationale, str) or not rationale.strip():
         raise CliError("critic payload requires non-empty rationale")
@@ -1898,10 +1891,10 @@ def build_revision_critic_prompt(target: Path, run_id: str, critic_id: str, revi
     return (
         "You are the revision critic for an AI Scientist research lineage. Decide whether this node needs more same-direction work, may branch, or should stop.\n"
         "Use the frozen target venue as a hard threshold. Lower bars may accept honest incremental work; AAAI/IJCAI and top-ML bars require stronger novelty, mechanism, ablations, and less tolerance for tuning-only ideas.\n"
-        "Return CONTINUE_NODE if more debugging/tuning/ablations within the same mechanism are still required before revision.\n"
-        "Return BRANCH only for one to three approved alternatives that are viable and paper-worthy under the frozen venue bar.\n"
-        "Return STOP_DRIFTED if continued branching is mostly performance hacking, claim drift, or below the venue threshold.\n"
-        "Return STOP_EXHAUSTED if evidence indicates the goal is fundamentally unachievable under the current data/contract.\n\n"
+        "Return CONTINUE if more debugging/tuning/ablations within the same mechanism are still required before revision.\n"
+        "Return BRANCH whenever data-backed evidence supports one to three distinct alternatives that change the approach and could plausibly improve the result under the frozen contract; do not wait for same-node exhaustion.\n"
+        "Return KILL only if valid, trustworthy evidence says this node or lineage should stop, including a valid negative result or exhaustion without a positive path, after ruling out same-approach fixes and data-backed branches.\n"
+        "Return INVALID only if the revision evidence or plan cannot be trusted because it drifts, changes the benchmark, or violates integrity requirements; do not use INVALID for trustworthy negative results, low scores, or failed hypotheses.\n\n"
         f"Run id: {run_id}\nCritic id: {critic_id}\nRevision id: {revision.get('revision_id')}\nNode id: {revision.get('node_id')}\nTarget repo: {target}\nResult path: {result_path}\n\n"
         "Frozen target venue bar:\n"
         + target_venue_summary(config)
@@ -1910,7 +1903,7 @@ def build_revision_critic_prompt(target: Path, run_id: str, critic_id: str, revi
         + "\n\nRelevant run findings:\n"
         + findings_context(target, run_id, node_id=str(revision.get("node_id") or ""), limit=30)
         + "\n\nWrite JSON only to result_path with this schema:\n"
-        '{"verdict":"CONTINUE_NODE|BRANCH|STOP_DRIFTED|STOP_EXHAUSTED","rationale":"...",'
+        '{"verdict":"CONTINUE|BRANCH|KILL|INVALID","rationale":"...",'
         '"selected_alternative_ids":["alt-001"],"venue_bar_assessment":"...","paper_worthiness_assessment":"...",'
         '"drift_assessment":"...","required_same_node_work":["..."],"stop_reason":"..."}\n'
     )
@@ -2054,7 +2047,7 @@ def validate_revision_critic_payload(payload: dict[str, Any], revision: dict[str
         raise CliError("revision critic payload must be a JSON object")
     verdict = critic.get("verdict")
     if verdict not in REVISION_VERDICTS:
-        raise CliError("revision critic verdict must be one of CONTINUE_NODE, BRANCH, STOP_DRIFTED, STOP_EXHAUSTED")
+        raise CliError("revision critic verdict must be one of CONTINUE, BRANCH, KILL, INVALID")
     rationale = str(critic.get("rationale") or critic.get("reason") or "").strip()
     if not rationale:
         raise CliError("revision critic payload requires rationale")
@@ -2102,10 +2095,10 @@ def cmd_node_revision_critic_complete(args: argparse.Namespace) -> int:
     completed_at = utc_now()
     log_path = revision_critic_log_path(target, run_id, args.critic_id)
     status_by_verdict = {
-        "CONTINUE_NODE": "continue_node",
+        "CONTINUE": "continue_node",
         "BRANCH": "branch_approved",
-        "STOP_DRIFTED": "stopped_drifted",
-        "STOP_EXHAUSTED": "stopped_exhausted",
+        "KILL": "stopped_killed",
+        "INVALID": "stopped_invalid",
     }
     revision_update = {
         **revision_record,
@@ -2122,10 +2115,10 @@ def cmd_node_revision_critic_complete(args: argparse.Namespace) -> int:
     atomic_write_json(log_path, record)
     node_id = str(pending.get("node_id") or revision.get("node_id") or "")
     node = read_node(target, run_id, node_id) if node_id else {}
-    if verdict in {"STOP_DRIFTED", "STOP_EXHAUSTED"} and node_id:
+    if verdict in {"KILL", "INVALID"} and node_id:
         node["lineage_stop"] = {"verdict": verdict, "reason": critic["rationale"], "critic_ref": str(log_path), "stopped_at": completed_at}
         write_node(target, run_id, node_id, node)
-    elif verdict == "CONTINUE_NODE" and node_id:
+    elif verdict == "CONTINUE" and node_id:
         node["status"] = "implementing"
         node["revision_continue_reason"] = critic["rationale"]
         write_node(target, run_id, node_id, node)
@@ -2140,13 +2133,13 @@ def cmd_node_revision_critic_complete(args: argparse.Namespace) -> int:
             node_state["updated_at"] = utc_now()
             node_state["last_revision_id"] = pending.get("revision_id")
             node_state["last_revision_critic_ref"] = str(log_path)
-            if verdict == "CONTINUE_NODE":
+            if verdict == "CONTINUE":
                 node_state["status"] = "implementing"
                 node_state["revision_continue_reason"] = critic["rationale"]
-            elif verdict in {"STOP_DRIFTED", "STOP_EXHAUSTED"}:
+            elif verdict in {"KILL", "INVALID"}:
                 node_state["lineage_stop"] = {"verdict": verdict, "reason": critic["rationale"], "critic_ref": str(log_path), "stopped_at": completed_at}
         orchestrator = phase.setdefault("orchestrator", {})
-        if verdict == "CONTINUE_NODE":
+        if verdict == "CONTINUE":
             orchestrator["next_action"] = "node_implementation_step"
             details = {"reason": critic["rationale"], "node_id": node_id, "revision_id": pending.get("revision_id"), "required_same_node_work": critic.get("required_same_node_work", [])}
         elif verdict == "BRANCH":

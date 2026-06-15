@@ -163,7 +163,7 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("Every resume begins with durable resource queue triage", orchestrator)
         self.assertIn("state.resource_queue.pending` and `state.resource_queue.released` are empty", orchestrator)
         self.assertIn("parent_node_id", orchestrator)
-        self.assertIn("fresh accepting critic verdict", orchestrator)
+        self.assertIn("fresh `ACCEPT` critic verdict", orchestrator)
         self.assertIn("Research completion is two-stage", orchestrator)
         self.assertIn("custom criteria remain the acceptance standard", orchestrator)
         self.assertIn("revision_critic_ref", orchestrator)
@@ -273,7 +273,7 @@ class ResearchWorkflowTests(unittest.TestCase):
                                 "summary": "accepted fixture",
                                 "evidence_refs": ["journal"],
                                 "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
-                                "critic_verdict": "ACCEPT_FINAL",
+                                "critic_verdict": "ACCEPT",
                                 "critic_completed_at": "2026-01-01T00:00:00Z",
                             }
                         },
@@ -372,7 +372,7 @@ class ResearchWorkflowTests(unittest.TestCase):
                                 "status": "accepted",
                                 "summary": "accepted campaign node",
                                 "critic_ref": ".ai-scientist/runs/run-campaign/logs/critics/node-001/critic-001/verdict.json",
-                                "critic_verdict": "ACCEPT_FINAL",
+                                "critic_verdict": "ACCEPT",
                                 "critic_completed_at": "2026-01-01T00:00:00Z",
                             }
                         }
@@ -548,7 +548,7 @@ class ResearchWorkflowTests(unittest.TestCase):
                                     "status": "accepted",
                                     "summary": "accepted fixture",
                                     "critic_ref": ".ai-scientist/runs/run-001/logs/critics/node-001/critic-001/verdict.json",
-                                    "critic_verdict": "ACCEPT_FINAL",
+                                    "critic_verdict": "ACCEPT",
                                     "critic_completed_at": "2026-01-01T00:00:00Z",
                                 }
                             },

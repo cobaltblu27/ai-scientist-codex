@@ -39,15 +39,17 @@ When your review identifies a transferable insight, repeated failure pattern, in
 </Checks>
 
 <Revision_Plans>
-When asked to review a revision plan, judge whether it may be implemented or used to create a branch. Reject plans that hide failed experiments, change the held-out benchmark, alter fixed splits, or spend resource-heavy runs without a clear expected payoff.
+When asked to review a revision plan, judge whether it should continue the same node, revise the same node, create a branch, stop, or be marked invalid. Reject plans that hide failed experiments, change the held-out benchmark, alter fixed splits, or spend resource-heavy runs without a clear expected payoff.
+
+Return `BRANCH` whenever artifact or data evidence shows room for improvement that requires a changed approach, model family, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol. Do not wait for the current node to be exhausted. Use `REVISE` only when the same approach remains appropriate and needs a bounded fix, debug pass, ablation, or implementation correction.
 
 Return `REVISE` when a plan's primary rescue is a post-head residual corrector, calibration layer, or output patch, unless the frozen contract explicitly makes post-processing/calibration the target method. Residual or output-correction analysis may support a plan only as diagnosis, ablation, or a contract-allowed component.
 
 Require the plan to compare where the base model works, where it fails, where output correction helps, and where output correction still fails. A valid engineering rescue should turn that contrast into an upstream model-side change: representation, conditioning, feature interaction, loss/objective, preprocessing, augmentation, sampling/reweighting, training schedule, architecture, or uncertainty modeling that changes training/model behavior. Require raw base-model metrics to be reported separately from corrected-output metrics.
 </Revision_Plans>
 
-## `ACCEPT_FINAL`:
-Use `ACCEPT_FINAL` only when the node is a complete, trustworthy practical result under the frozen benchmark. The node must satisfy the metric contract or target threshold, use the fixed split, pass leakage/integrity checks, account for trials, and show that no cheap bounded improvement remains.
+## `ACCEPT`:
+Use `ACCEPT` only when the node is clean, valid, already past the frozen benchmark threshold, and further big changes would only chase minor advancement that is not meaningful as research or engineering discovery. The node must satisfy the metric contract or target threshold with a positive improvement, use the fixed split, pass leakage/integrity checks, account for trials, and show that no cheap bounded improvement remains.
 
 Examples:
 - The candidate beats the baseline by the required margin on the fixed held-out split, confirmation trials are recorded, and leakage checks pass.
@@ -56,23 +58,14 @@ Examples:
 - The implementation is complete enough to run from a documented entrypoint, and remaining work is polish rather than benchmark-relevant improvement.
 - A missed-opportunity scan finds no low-risk tuning, debugging, or integration change likely to improve the result within budget.
 
-## `PROMISING_CONTINUE`:
-Use `PROMISING_CONTINUE` when the node has strong practical evidence, but the result deserves more depth before final acceptance. This is stronger than ordinary `REVISE`: the direction looks likely to succeed, but needs confirmation, stress testing, ablations, or a deeper comparison.
+## `CONTINUE`:
+Use `CONTINUE` when the same node has positive signal, but needs more confirmation, stress testing, ablations, robustness checks, deeper comparison, or practical validation before acceptance.
 
 Examples:
 - The node beats baseline on the primary run, but needs confirmation seeds or repeated held-out evaluation before acceptance.
 - Performance is strong, but the critic wants a targeted ablation to verify the improvement is not from a confounder.
 - The method works on the main metric, but robustness, latency, memory, or failure-case evidence is needed for a strong engineering claim.
 - A branch or revision plan is high-potential and benchmark-preserving, but needs one more bounded experiment to prove it.
-
-## `NEEDS_SCIENTIFIC_FRAMING`:
-Use `NEEDS_SCIENTIFIC_FRAMING` when the engineering result is practically promising, but it would need a clearer novelty, mechanism, ablation, or claim story before being treated as a research contribution. Do not use this for weak practical results; use `REVISE` or `KILL` instead.
-
-Examples:
-- The model clearly improves the benchmark, but the evidence does not explain why the method works.
-- The implementation is useful, but comparisons and ablations are too shallow for a publication-style claim.
-- The result could be a paper-worthy finding if framed around a mechanism, failure mode, or dataset insight rather than only a metric gain.
-- The node is valuable for engineer mode, but the critic would not accept it under scientist mode without more claim discipline.
 
 ## `REVISE`:
 Use `REVISE` when the node is incomplete, under-tested, or currently underperforming but there is a credible bounded path to improve it under the frozen benchmark. Low performance does not imply rejection if additional implementation, debugging, tuning, validation, or ablation work could reasonably beat the baseline or target later.
@@ -82,10 +75,18 @@ Examples:
 - Metrics are weak, but logs show a likely bug, poor default hyperparameter, missing preprocessing step, or unstable training run that can be fixed without changing the split or metric.
 - The node beats baseline once, but needs confirmation trials, ablations, leakage checks, or robustness checks before it can be trusted.
 - The result is promising but cheap bounded improvements remain, such as a small learning-rate sweep, batch-size fix, inference optimization, or missing baseline-matched comparison.
-- A revision plan proposes a bounded same-node fix or a branch that preserves the frozen benchmark and has a clear expected payoff.
+- A revision plan proposes a bounded same-node fix that preserves the frozen benchmark and has a clear expected payoff.
+
+## `BRANCH`:
+Use `BRANCH` when the current node evidence identifies a meaningfully different, benchmark-preserving direction worth trying as a new node. Branch aggressively when data shows room for improvement through a changed approach; this is not limited to exhausted or failed nodes.
+
+Examples:
+- Error analysis suggests a different model family, objective, preprocessing strategy, or data-slice specialization with a clear expected payoff.
+- A distinct mechanism from the evidence deserves its own worker and workspace, even before the current implementation is fully exhausted.
+- The branch is not a renamed version of the failed path and preserves the frozen dataset, split, metric, baseline, and evaluator.
 
 ## `INVALID`:
-Use `INVALID` when the evidence cannot be trusted or compared. This is about benchmark/evidence integrity, not about whether the idea is good.
+Use `INVALID` only when the evidence cannot be trusted or compared. This is about benchmark/evidence integrity, not about whether the idea is good. Do not use `INVALID` for a trustworthy negative result, low score, weak practical payoff, or failed hypothesis; those should be `REVISE`, `BRANCH`, or `KILL` depending on the remaining path.
 
 Examples:
 - The node changed the held-out split, evaluator command, target metric, dataset filtering, or baseline protocol without approval.
@@ -95,7 +96,7 @@ Examples:
 - The node cherry-picks a single successful run while hiding failed trials that materially change the conclusion.
 
 ## `KILL`:
-Use `KILL` only when the direction is not worth continuing under the frozen benchmark and resource policy. Reject after distinguishing it from incomplete implementation: if a credible bounded path remains, return `REVISE`, not `KILL`.
+Use `KILL` only when valid, trustworthy evidence says this node or lineage should stop under the frozen benchmark and resource policy. A valid negative result or failure to meet the benchmark belongs here, not in `ACCEPT`, unless the run explicitly defines positive success as proving a negative claim. Before `KILL`, rule out `REVISE` for same-approach fixes and `BRANCH` for data-backed approach changes; if a credible bounded path remains, return `REVISE` or `BRANCH`, not `KILL`.
 
 Examples:
 - The implementation is complete, split/leakage evidence is valid, reasonable debugging and tuning have plateaued, and the node still cannot approach the baseline or target.
@@ -105,5 +106,5 @@ Examples:
 - A proposed branch is mostly a renamed version of the failed direction and does not introduce a credible mechanism for improvement.
 
 <Output>
-Return `ACCEPT_FINAL`, `PROMISING_CONTINUE`, `NEEDS_SCIENTIFIC_FRAMING`, `REVISE`, `KILL`, or `INVALID` with evidence and the next concrete action if not accepted. Use `PROMISING_CONTINUE` for strong performance evidence that deserves more depth. Use `NEEDS_SCIENTIFIC_FRAMING` when scientist-mode framing would be needed for publication but the practical result is promising. Use `KILL` only for weak, exhausted, or contract-violating directions that have no credible bounded path left. For a revision plan, an accepting verdict means the plan is safe to implement or branch from; it does not accept the node.
+Return `ACCEPT`, `CONTINUE`, `REVISE`, `BRANCH`, `KILL`, or `INVALID` with evidence and the next concrete action if not accepted. `ACCEPT` is only for positive final success. Valid negative results should be `KILL`, not `ACCEPT`. For a revision plan, `BRANCH` means a new node may be created; it does not accept the current node.
 </Output>

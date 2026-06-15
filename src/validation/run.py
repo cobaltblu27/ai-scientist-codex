@@ -22,7 +22,7 @@ ALLOWED_DEP_STATUSES = {"approved", "rejected", "not_needed"}
 MODES = {"scientist", "engineer", "custom"}
 PAPER_MODES = {"scientist"}
 PRACTICAL_MODES = {"engineer"}
-PAPER_OUTCOME_TYPES = {"hypothesis_supported", "hypothesis_failed_with_evidence", "rescue_finding_with_failed_hypothesis"}
+PAPER_OUTCOME_TYPES = {"hypothesis_supported"}
 OUTCOME_TYPES = PAPER_OUTCOME_TYPES | {"practical_improvement"}
 REQUIRED_CONTRACT_KEYS = {
     "primary_hypothesis",
@@ -382,10 +382,8 @@ def check_critic_accept_payload(critic: dict[str, Any], *, mode: str, role: str,
         outcome = node.get("outcome_type")
         if outcome == "hypothesis_supported" and critic.get("contract_success_met") is not True:
             raise ValidationError("claim_critic must confirm contract success")
-        if outcome == "hypothesis_failed_with_evidence" and (critic.get("contract_failure_met") is not True or critic.get("fundamental_failure") is not True):
-            raise ValidationError("claim_critic must confirm fundamental contract failure")
-        if outcome == "rescue_finding_with_failed_hypothesis" and (critic.get("contract_failure_met") is not True or critic.get("rescue_scope_met") is not True):
-            raise ValidationError("claim_critic must confirm failed hypothesis and rescue scope")
+        if outcome != "hypothesis_supported":
+            raise ValidationError("ACCEPT requires positive outcome_type hypothesis_supported")
 
 
 def check_required_critic_roles(run: Path, cfg: dict[str, Any], node_id: str, node: dict[str, Any]) -> None:
@@ -448,22 +446,6 @@ def check_outcome_and_metric(
                 raise ValidationError("hypothesis_supported selected node must beat baseline")
             if evidence.get("success_criteria_met") is not True:
                 raise ValidationError("hypothesis_supported requires success_criteria_met")
-        elif outcome == "hypothesis_failed_with_evidence":
-            if (
-                evidence.get("failure_criteria_met") is not True
-                or evidence.get("routine_optimization_failure") is True
-                or evidence.get("implementation_failure") is True
-                or evidence.get("fundamental_failure_not_implementation_failure") is not True
-            ):
-                raise ValidationError("hypothesis_failed_with_evidence requires fundamental failure evidence distinct from implementation failure")
-            if not node.get("fundamental_failure_reason"):
-                raise ValidationError("hypothesis_failed_with_evidence requires fundamental_failure_reason")
-            alternatives = node.get("alternative_approaches_considered")
-            if not isinstance(alternatives, list) or not alternatives:
-                raise ValidationError("hypothesis_failed_with_evidence requires alternative_approaches_considered")
-        elif outcome == "rescue_finding_with_failed_hypothesis":
-            if evidence.get("failure_criteria_met") is not True or evidence.get("rescue_scope_met") is not True:
-                raise ValidationError("rescue finding requires failed hypothesis and rescue scope evidence")
     else:
         if not beats:
             raise ValidationError("selected node must beat baseline under declared benchmark")
