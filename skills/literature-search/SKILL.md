@@ -1,12 +1,12 @@
 ---
 name: literature-search
-description: Query literature evidence for ideation using OpenAlex first, with Semantic Scholar as fallback.
+description: Query literature evidence for ideation or research-loop revision brainstorming using OpenAlex first, with Semantic Scholar as fallback.
 ---
 
 # Literature Search
 
 <Purpose>
-Use this skill when the ideation loop needs paper evidence, baseline references, novelty checks, or related-work raw material. The agent using this skill chooses queries and evidence relevance; the CLI executes API calls, caching, provenance, and state updates.
+Use this skill when an ideation loop needs paper evidence, baseline references, novelty checks, or related-work raw material, or when a research-loop revision worker needs literature/source motivation for overcoming a diagnosed bottleneck. In revision brainstorming, use it alongside `skills/local-literature-search/SKILL.md` so external evidence is paired with the target repo's curated local paper corpus. The agent using this skill chooses queries and evidence relevance; the CLI executes API calls, caching, provenance, and state updates.
 </Purpose>
 
 <Use_When>
@@ -15,10 +15,11 @@ Use this skill when the ideation loop needs paper evidence, baseline references,
 - A generator needs papers before drafting or revising an idea.
 - A critic asks for reference/baseline evidence.
 - A performance idea needs a comparable paper, model, or benchmark source.
+- A research-loop revision brainstorm has a bottleneck diagnosis and needs approach families, priors, mechanisms, baselines, or implementation examples for getting past that bottleneck. In that case, also use `local-literature-search` when the target repo has `papers/`.
 </Use_When>
 
 <Who_Uses_It>
-Generator subagents should use this skill directly when they need literature raw material for an idea. The main ideation orchestrator may also use it as a backstop when the cursor still reports missing literature evidence.
+Generator subagents should use this skill directly when they need literature raw material for an idea. Research-loop revision workers must use it before finalizing enhance/branch candidates. The main ideation orchestrator may also use it as a backstop when the cursor still reports missing literature evidence.
 </Who_Uses_It>
 
 <Provider_Order>
@@ -36,6 +37,18 @@ ai-scientist \
 ```
 
 Despite the historical command name, `--provider auto` means OpenAlex first, then Semantic Scholar fallback.
+
+For research-loop revision brainstorming, use the research command so evidence is attached to the run/node/work instead of an ideation idea:
+
+```bash
+ai-scientist \
+  --target-repo <target-repo> \
+  research literature-search \
+  --run-id <run-id> \
+  --node-id <node-id> \
+  --work-id <revision-work-id> \
+  --query "<bottleneck and approach-family query>"
+```
 </Provider_Order>
 
 <Generator_Workflow>
@@ -48,6 +61,18 @@ When used by a generator subagent:
 5. Use the evidence to choose or reject baseline references, benchmark plans, and novelty claims.
 6. Return the final idea JSON to the assigned generator result path.
 </Generator_Workflow>
+
+<Revision_Workflow>
+When used by a research-loop revision worker:
+
+1. Start from the bottleneck diagnosis, data-insight report, learning notes, and critic verdict.
+2. Form 1-3 targeted queries that search for approach families, priors, architectures, objectives, data strategies, or diagnostics that could overcome the bottleneck.
+3. Run `research literature-search` for the current run/node/work; do not use the ideation `idea_id` command for research-loop revision work.
+4. Use papers and source repos as motivation, not as an exact end-to-end recipe to copy as the claimed contribution.
+5. It is allowed to download papers, clone source code, and borrow implementation components when useful. Record paper/source refs, repository URL or commit when available, visible license/provenance, and any local adaptation.
+6. Preserve the frozen contract: do not change split, evaluator, target, acceptance criteria, or benchmark meaning to match a paper.
+7. Carry evidence refs into the brainstorm report's literature/source scan and into any candidate materially motivated by the search.
+</Revision_Workflow>
 
 <OpenAlex_Query_Guide>
 OpenAlex search works best with concise paper-topic queries:
@@ -74,12 +99,15 @@ The literature search does not write the idea for the agent. Use returned papers
 - identify plausible baseline/reference papers;
 - check whether the idea is already obvious or saturated;
 - extract benchmark protocols and comparable metrics;
+- identify mechanism families, priors, code patterns, or diagnostics that could address a diagnosed research-loop bottleneck;
 - identify evidence that supports or challenges the run-owned baseline, benchmark plan, and target threshold; report contract concerns to the orchestrator instead of editing the contract;
 - reject ideas whose only support is a weak title match.
 
 Preflight references found before generator subagents exist are advisory only. Once a generator relies on a reference for novelty, baseline, benchmark, or contract support, the generator should record canonical evidence through the CLI for its assigned idea id.
+
+For revision brainstorming, literature/source evidence is also advisory: it can motivate a branch, justify a prior, identify a missing capability, or supply implementation pieces, but it must not replace local evidence, split-safe validation, or a run-owned scientific claim.
 </Evidence_Use>
 
 <Boundaries>
-Do not call APIs directly with `curl` or ad hoc scripts. Subagents may run the `ai-scientist` CLI literature command. The CLI owns provider calls, cache files, logs, budgets, fallback, and provenance; the subagent owns query choice and interpretation.
+Do not call APIs directly with `curl` or ad hoc scripts. Subagents may run the `ai-scientist` CLI literature command. The CLI owns provider calls, cache files, logs, budgets, fallback, and provenance; the subagent owns query choice and interpretation. Paper downloads and source-code clones are allowed when they support implementation or understanding, but record provenance and do not silently import a paper's benchmark, split policy, or claim.
 </Boundaries>

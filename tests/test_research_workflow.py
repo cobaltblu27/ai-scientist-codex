@@ -98,6 +98,8 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("Do not load or rely on a separate orchestrator prompt file", skill_text)
         self.assertIn("Critic_Revision_Flow", skill_text)
         self.assertIn("Branching", skill_text)
+        self.assertIn("Scheduling_Guide", skill_text)
+        self.assertIn("Portfolio_Management", skill_text)
         self.assertIn("Research completion is two-stage", skill_text)
         self.assertIn("<Persona>", skill_text)
         self.assertIn("You are strategically restless", skill_text)
@@ -128,9 +130,33 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertTrue(revision_skill.exists())
         revision_text = revision_skill.read_text()
         self.assertIn("branch_from_node", revision_text)
-        self.assertIn("Branch aggressively when the data-insight evidence shows room for improvement", revision_text)
+        self.assertIn("Rank branch candidates highly when the data-insight evidence shows room for improvement", revision_text)
+        self.assertIn("compatible option bundle", revision_text)
+        self.assertIn("skills/literature-search/SKILL.md", revision_text)
+        self.assertIn("skills/local-literature-search/SKILL.md", revision_text)
+        self.assertIn("local `papers/` query terms and tag filters", revision_text)
+        self.assertIn("research literature-search", revision_text)
+        self.assertIn("Literature And Source Scan", revision_text)
+        self.assertIn("clone source code", revision_text)
+        self.assertIn("not as an exact end-to-end approach", revision_text)
+        self.assertIn("Enhance_Brainstorming_Guide", revision_text)
+        self.assertIn("Branch_Brainstorming_Guide", revision_text)
+        self.assertIn("Decompose the full method pipeline", revision_text)
+        self.assertIn("split-safe prior knowledge", revision_text)
+        self.assertIn("pipeline stage targeted", revision_text)
         self.assertIn("post-head residual corrector", revision_text)
         self.assertIn("raw base-model metrics", revision_text)
+        local_literature_skill = REPO_ROOT / "skills" / "local-literature-search" / "SKILL.md"
+        self.assertTrue(local_literature_skill.exists())
+        local_literature_text = local_literature_skill.read_text()
+        self.assertIn("name: local-literature-search", local_literature_text)
+        self.assertIn("Use alongside `skills/literature-search/SKILL.md`", local_literature_text)
+        self.assertIn("papers/tag_vocab.json", local_literature_text)
+        self.assertIn("papers/index.jsonl", local_literature_text)
+        self.assertIn("papers/details/<paper-id>.json", local_literature_text)
+        self.assertIn("metadata.full.json", local_literature_text)
+        self.assertIn("pdf_local_path", local_literature_text)
+        self.assertIn("original PDFs", local_literature_text)
         data_insight_revision = (REPO_ROOT / "skills" / "data-insight-revision" / "SKILL.md").read_text()
         self.assertIn("Success/failure contrast", data_insight_revision)
         self.assertIn("Output correction probe", data_insight_revision)
@@ -148,12 +174,13 @@ class ResearchWorkflowTests(unittest.TestCase):
             self.assertIn("it does not accept the current node", critic_text)
             self.assertIn("post-head residual", critic_text)
             self.assertIn("raw base-model metrics", critic_text)
-            self.assertIn("discovery_note_suggestions", critic_text)
+            self.assertIn("Discovery Note Suggestions", critic_text)
             self.assertIn("Branch aggressively when data shows room for improvement", critic_text)
             self.assertIn("clean, valid, already past", critic_text)
             self.assertIn("Do not use `INVALID` for a trustworthy negative result", critic_text)
             self.assertIn("revision-brainstorm", revision_text)
             self.assertIn("Model_Improvement_Discipline", revision_text)
+            self.assertIn("compatible candidate bundle", revision_text)
             self.assertIn("discovery_notes_ref", revision_text)
             self.assertIn("raw base-model metrics", revision_text)
             self.assertIn("Do not wait for the current node to be exhausted", revision_text)
@@ -173,12 +200,27 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("Checkpoint the worker assignment", orchestrator)
         self.assertIn("Queue_Triage", orchestrator)
         self.assertIn("Every resume begins with durable resource queue triage", orchestrator)
+        self.assertIn("orchestrator dispatch policy, not the local/Slurm execution backend", orchestrator)
+        self.assertIn("Build a runnable task list", orchestrator)
+        self.assertIn("Fill available safe slots", orchestrator)
+        self.assertIn("Dispatch a compatible batch", orchestrator)
+        self.assertIn("multiple non-duplicative branches", orchestrator)
+        self.assertIn("Only wait when no independent runnable task exists", orchestrator)
+        self.assertIn("two consecutive scheduling decisions have been same-node enhancements", orchestrator)
+        self.assertIn("portfolio_rationale", orchestrator)
+        self.assertIn("Before each scheduling decision, read the relevant recent learning notes", orchestrator)
+        self.assertIn("learning-note refs", orchestrator)
+        self.assertIn("one or more safe branch candidates", orchestrator)
+        self.assertIn("selected_candidate_id", orchestrator)
+        self.assertIn("Escalation can also be batched", orchestrator)
         self.assertIn("state.resource_queue.pending` and `state.resource_queue.released` are empty", orchestrator)
         self.assertIn("parent_node_id", orchestrator)
         self.assertIn("fresh `ACCEPT` critic verdict", orchestrator)
         self.assertIn("Research completion is two-stage", orchestrator)
         self.assertIn("custom criteria remain the acceptance standard", orchestrator)
         self.assertIn("revision_critic_ref", orchestrator)
+        self.assertIn("revision literature/source evidence", orchestrator)
+        self.assertIn("research literature-search", orchestrator)
         self.assertIn("Residual/error analysis is useful diagnosis", orchestrator)
         self.assertIn("raw base-model metrics", orchestrator)
         self.assertIn("Discovery_Notes", orchestrator)
@@ -193,7 +235,7 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("job_id", worker)
         self.assertIn("blocked_resource_unavailable", worker)
         self.assertIn("discovery_notes_ref", worker)
-        self.assertIn("discovery_note_suggestions", worker)
+        self.assertIn("Discovery Note Suggestions", worker)
         self.assertIn("fixed_split_dir", worker)
         self.assertIn("target_threshold", worker)
         self.assertIn("custom_criteria", worker)
@@ -405,6 +447,57 @@ class ResearchWorkflowTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(validate.returncode, 0, validate.stdout + validate.stderr)
+
+    def test_research_literature_search_records_node_and_work_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            start = run_cli(
+                target,
+                "research",
+                "start",
+                "--run-id",
+                "run-001",
+                "--strictness-mode",
+                "scientist",
+                "--selected-idea-id",
+                "idea-001",
+                "--json",
+                json.dumps({"resources": {"max_parallel": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
+            )
+            self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
+            evidence = {"data": [{"id": "https://openalex.org/W1", "display_name": "Fixture bottleneck paper"}]}
+            search = run_cli(
+                target,
+                "research",
+                "literature-search",
+                "--run-id",
+                "run-001",
+                "--node-id",
+                "node-001",
+                "--work-id",
+                "revision-node-001",
+                "--query",
+                "drug response bottleneck graph prior",
+                "--json",
+                json.dumps(evidence),
+            )
+            self.assertEqual(search.returncode, 0, search.stdout + search.stderr)
+            out = json_out(search)
+            self.assertEqual(out["provider"], "openalex")
+            self.assertEqual(out["result_count"], 1)
+            evidence_ref = Path(out["evidence_ref"])
+            self.assertTrue(evidence_ref.exists())
+            state = read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
+            record = state["state"]["literature_evidence"][0]
+            self.assertEqual(record["command"], "research literature-search")
+            self.assertEqual(record["node_id"], "node-001")
+            self.assertEqual(record["work_id"], "revision-node-001")
+            self.assertEqual(record["query"], "drug response bottleneck graph prior")
+            self.assertEqual(record["result_count"], 1)
+            self.assertEqual(state["state"]["nodes"]["node-001"]["literature_evidence"][0]["search_id"], out["search_id"])
+            self.assertEqual(state["state"]["work"]["revision-node-001"]["literature_evidence"][0]["search_id"], out["search_id"])
+            journal = (target / ".ai-scientist" / "runs" / "run-001" / "journal.jsonl").read_text()
+            self.assertIn("research literature-search", journal)
 
     def test_checkpoint_work_records_are_resume_and_completion_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

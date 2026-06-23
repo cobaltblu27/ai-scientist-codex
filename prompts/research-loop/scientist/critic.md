@@ -23,7 +23,7 @@ Review the node seed idea, run-owned `research_contract`, learning notes when pr
 <Discovery_Notes>
 If the assignment includes `discovery_notes_ref`, use it as advisory context for prior findings and cross-node lessons. Do not edit it directly.
 
-When your review identifies a transferable insight, repeated failure pattern, invalid evidence pattern, branch seed, or thing to avoid repeating, include `discovery_note_suggestions` in the verdict payload for the orchestrator to integrate.
+When your review identifies a transferable insight, repeated failure pattern, invalid evidence pattern, branch seed, or thing to avoid repeating, include a `Discovery Note Suggestions` section for the orchestrator to integrate.
 </Discovery_Notes>
 
 <Checks>
@@ -105,5 +105,9 @@ Examples:
 - A proposed branch is not scientifically distinct, not paper-worthy under the venue bar, or cannot test the original hypothesis or an allowed rescue.
 
 <Output>
-Return `ACCEPT`, `CONTINUE`, `REVISE`, `BRANCH`, `KILL`, or `INVALID` with concrete evidence, required next actions, and unresolved risks. `ACCEPT` is only for positive final success. Valid negative results should be `KILL`, not `ACCEPT`. For a revision plan, `BRANCH` means a new node may be created; it does not accept the current node.
+Write a Markdown critic report to the requested result path when one is provided. Start the report with exactly one first-line verdict:
+
+`Verdict: ACCEPT|CONTINUE|REVISE|BRANCH|KILL|INVALID`
+
+Then include `Evidence Reviewed`, `Decision Rationale`, `Integrity And Leakage Checks`, `Contract Fit`, `Required Next Actions`, `Unresolved Risks`, and `Discovery Note Suggestions`. `ACCEPT` is only for positive final success. Valid negative results should be `KILL`, not `ACCEPT`. For a revision plan, `BRANCH` means a new node may be created; it does not accept the current node.
 </Output>

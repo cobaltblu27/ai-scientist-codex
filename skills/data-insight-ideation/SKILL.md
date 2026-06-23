@@ -49,9 +49,8 @@ Use these names unless the assignment provides different paths:
 inspection.py
 profile.json
 split_audit.json
-idea_seed_insights.json
 figures/
-data_insight_ideation_brief.md
+data_insight_ideation_report.md
 ```
 
 When no run id exists, use the output directory given by the user or assignment. If none is provided and the task is outside an autonomous loop, ask before writing artifacts.
@@ -60,8 +59,8 @@ When no run id exists, use the output directory given by the user or assignment.
 <Reuse_Rule>
 Before writing new inspection code, check for existing artifacts in the ideation data-insight directory. Reuse them only when all of these are true:
 
-- `idea_seed_insights.json` and `data_insight_ideation_brief.md` both exist;
-- artifact refs named in `idea_seed_insights.json` still exist;
+- `data_insight_ideation_report.md` exists;
+- artifact refs named in the report still exist;
 - the report matches the current `run_id`, research prompt or `research_contract`, dataset refs, split refs, evaluator refs, and benchmark assumptions;
 - the report has no blocking `split_and_leakage_warnings` that make generator assignments invalid;
 - the assignment does not explicitly request a fresh pass.
@@ -72,7 +71,7 @@ If any check fails, write and run a new `inspection.py`. If data access is missi
 <Soft_Coordination>
 `Data Insight Work` in `discovery-notes.md` is a natural-language coordination surface, not a hard lock. If an in-progress entry asks a close enough ideation data question over the same dataset/split/evaluator assumptions, avoid duplicate work and poll or wait briefly for the expected artifact path if generators depend on it. If a completed entry is close enough and fresh, reuse it. Start a new pass only when the question is materially different, the dataset/split/evaluator assumption changed, or the existing item is blocked, stale, or too broad.
 
-When starting or finishing insight work, include a concise `discovery_note_suggestions` update for `Data Insight Work` with the question, artifact scope, expected artifact path or artifact refs, useful-for notes, and whether the item is in progress, completed, blocked, or stale.
+When starting or finishing insight work, include a concise `Data Insight Work Note` with the question, artifact scope, expected artifact path or artifact refs, useful-for notes, and whether the item is in progress, completed, blocked, or stale.
 </Soft_Coordination>
 
 <Workflow>
@@ -84,8 +83,8 @@ When starting or finishing insight work, include a concise `discovery_note_sugge
 6. Write `inspection.py` in the artifact directory. The script must be specific to the discovered dataset interfaces rather than a generic EDA framework.
 7. Run `inspection.py` with the workspace Python launcher. Keep stdout/stderr or command notes when useful for auditability.
 8. Read the generated JSON/figure/table artifacts.
-9. Write `data_insight_ideation_brief.md` for humans and `idea_seed_insights.json` for downstream agents.
-10. If an assigned `result_path` exists, write a final JSON result there that references the artifact paths.
+9. Write `data_insight_ideation_report.md` as the downstream generator context. Use sustained prose for dataset bottlenecks, leakage risks, and concrete idea seeds.
+10. If an assigned `result_path` exists, write the Markdown report there.
 </Workflow>
 
 <Inspection_Targets>
@@ -109,67 +108,8 @@ The inspection code should answer the relevant subset of these questions:
 - Do not present plots as evidence unless they produce a reproducible slice definition, metric, table, or artifact-backed observation.
 </Boundaries>
 
-<Insight_Output>
-`idea_seed_insights.json` should use this shape:
-
-```json
-{
-  "mode": "ideation",
-  "source_context": {
-    "run_id": "",
-    "prompt_or_contract_ref": "",
-    "dataset_refs": [],
-    "split_refs": [],
-    "evaluator_refs": [],
-    "benchmark_assumptions": []
-  },
-  "artifact_refs": {
-    "inspection_script": "...",
-    "profile": "...",
-    "split_audit": "...",
-    "brief": "..."
-  },
-  "prediction_contract": {
-    "unit": "",
-    "target": "",
-    "allowed_information": [],
-    "split_policy": "",
-    "metrics": [],
-    "unknowns": []
-  },
-  "dataset_summary": {
-    "n_examples": null,
-    "modalities": [],
-    "target_distribution": {},
-    "notable_quality_issues": []
-  },
-  "split_and_leakage_warnings": [],
-  "observed_data_bottlenecks": [],
-  "slice_candidates": [
-    {
-      "name": "",
-      "definition": "",
-      "evidence_ref": "",
-      "why_it_matters": ""
-    }
-  ],
-  "promising_idea_seeds": [
-    {
-      "research_opportunity": "",
-      "dataset_evidence": "",
-      "baseline_requirement": "",
-      "risk_to_avoid": ""
-    }
-  ],
-  "directions_to_avoid": [],
-  "required_baselines_or_checks": [],
-  "confidence": "low|medium|high"
-}
-```
-</Insight_Output>
-
-<Brief_Format>
-Write the Markdown brief in this order:
+<Report_Format>
+Write the Markdown report in this order:
 
 1. `Dataset Contract`: unit, target, allowed information, split, metric, unknowns.
 2. `Inspection Code`: script path, command run, produced artifact refs.
@@ -178,8 +118,9 @@ Write the Markdown brief in this order:
 5. `Research Opportunities`: concrete idea seeds tied to dataset evidence.
 6. `Directions To Avoid`: ideas likely to be invalid, saturated, or unsupported.
 7. `Generator Assignment Notes`: compact bullets that the ideation orchestrator can paste into generator prompts.
-</Brief_Format>
+8. `Data Insight Work Note`: suggested discovery-note update for in-progress, completed, blocked, or stale insight work.
+</Report_Format>
 
 <Final_Response>
-When invoked directly, report the artifact paths, the strongest supported ideation insights, and any blocker. When invoked by an orchestrator with `result_path`, write JSON only to that path and keep prose minimal in the conversation.
+When invoked directly, report the artifact paths, the strongest supported ideation insights, and any blocker. When invoked by an orchestrator with `result_path`, write the Markdown report to that path and keep conversation prose minimal.
 </Final_Response>

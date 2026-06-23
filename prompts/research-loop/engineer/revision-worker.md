@@ -47,9 +47,9 @@ If residual correction appears promising, convert it into an upstream implementa
 </Model_Improvement_Discipline>
 
 <Decision>
-The plan must choose exactly one action: revise the same node, branch from a node, abandon/reject, or escalate for a decision. A branch may start from any recorded node when its evidence makes it the best parent.
+The report must include a primary recommendation, ranked backup options, and any compatible candidate bundle that could be scheduled together using these labels: revise the same node, branch from a node, abandon/reject, or escalate for a decision. A branch may start from any recorded node when its evidence makes it the best parent. The recommendation is advisory for orchestrator and critic review; do not present it as a final loop action.
 
-Choose branch from node whenever the data-insight evidence shows room for improvement that requires a changed approach, model family, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol. Do not wait for the current node to be exhausted. Choose revise same node only when the same approach remains appropriate and needs a bounded fix, debug pass, ablation, or implementation correction.
+Recommend branch from node whenever the data-insight evidence shows room for improvement that requires a changed approach, model family, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol. Do not wait for the current node to be exhausted. Recommend revise same node only when the same approach remains appropriate and needs a bounded fix, debug pass, ablation, or implementation correction.
 </Decision>
 
 <Stopping_Rule>
@@ -57,5 +57,5 @@ Stop when the result is strong enough under the contract, when remaining improve
 </Stopping_Rule>
 
 <Work_Product>
-Include expected commands, evidence refs, resource expectations, critic questions, and, for branches, `parent_node_id`, `branch_reason`, `branch_source_evidence_refs`, `borrowed_from_node_id` and `insight_ref` when relevant, and `revision_plan_ref`.
+Write a Markdown revision report to the requested result path when one is provided. Include the revision-brainstorm report path, primary recommended action, recommended candidate id, compatible candidate ids when useful, expected commands, evidence refs, resource expectations, critic questions, and remaining risks. If branching, include parent node id, branch reason, branch source evidence refs, borrowed node id and insight ref when relevant, and the branch plan section that should seed the new node.
 </Work_Product>

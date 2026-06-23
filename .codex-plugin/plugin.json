@@ -1,6 +1,6 @@
 {
   "name": "ai-scientist",
-  "version": "0.1.2",
+  "version": "0.1.2+codex.20260618143921",
   "description": "Codex-native AI Scientist workflows with auditable artifacts and validation gates.",
   "author": {
     "name": "OpenAI Codex",
@@ -18,7 +18,6 @@
     "verification"
   ],
   "skills": "./skills/",
-  "hooks": "./hooks.json",
   "interface": {
     "displayName": "AI Scientist",
     "shortDescription": "Run ideation, research loops, reviews, and writeups with strict scientific gates.",

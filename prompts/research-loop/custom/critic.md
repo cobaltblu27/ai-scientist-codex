@@ -23,7 +23,7 @@ Review the node seed idea, `custom_criteria`, run-owned `research_contract` when
 <Discovery_Notes>
 If the assignment includes `discovery_notes_ref`, use it as advisory context for prior findings and cross-node lessons. Do not edit it directly.
 
-When your review identifies a transferable insight, repeated failure pattern, invalid evidence pattern, branch seed, or thing to avoid repeating, include `discovery_note_suggestions` in the verdict payload for the orchestrator to integrate.
+When your review identifies a transferable insight, repeated failure pattern, invalid evidence pattern, branch seed, or thing to avoid repeating, include a `Discovery Note Suggestions` section for the orchestrator to integrate.
 </Discovery_Notes>
 
 <Universal_Integrity_Rules>
@@ -49,7 +49,11 @@ Require the plan to compare where the base model works, where it fails, where ou
 </Revision_Plans>
 
 <Output>
-Return `ACCEPT`, `CONTINUE`, `REVISE`, `BRANCH`, `KILL`, or `INVALID` with evidence and required next actions.
+Write a Markdown critic report to the requested result path when one is provided. Start the report with exactly one first-line verdict:
+
+`Verdict: ACCEPT|CONTINUE|REVISE|BRANCH|KILL|INVALID`
+
+Then include `Evidence Reviewed`, `Decision Rationale`, `Integrity And Leakage Checks`, `Custom Criteria Fit`, `Required Next Actions`, `Unresolved Risks`, and `Discovery Note Suggestions`.
 
 - `ACCEPT`: only when the user-defined positive ending criteria are met with trustworthy evidence.
 - `CONTINUE`: same node has positive signal but needs more validation, depth, comparison, or framing.

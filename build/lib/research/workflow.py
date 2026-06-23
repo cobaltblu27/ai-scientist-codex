@@ -38,6 +38,7 @@ from core.state import (
     validate_active_run_contract,
     write_loop_state,
 )
+from ideation.state import literature_evidence, literature_evidence_record
 
 ACTIVE_MODES = {"scientist", "engineer", "custom"}
 WORK_TERMINAL_STATUSES = {"completed", "cancelled", "failed", "abandoned", "accepted", "rejected"}
@@ -266,6 +267,11 @@ def phase_state_or_error(state: dict[str, Any] | None, run_id: str) -> dict[str,
     if not isinstance(phase_state, dict):
         raise ResearchError("loop-state.json state must be an object")
     return phase_state
+
+
+def safe_log_name(value: str | None, default: str = "item") -> str:
+    clean = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "-" for ch in str(value or "").strip()).strip("-")
+    return clean or default
 
 
 def resource_caps_from_config(cfg: dict[str, Any]) -> dict[str, Any] | None:
@@ -766,6 +772,83 @@ def cmd_research_checkpoint(args: argparse.Namespace) -> int:
 
     mutate_loop_state(target, run_id, "state_transition", {"command": "research checkpoint", "payload": payload}, mutator)
     return emit("ok", run_id=run_id)
+
+
+def cmd_research_literature_search(args: argparse.Namespace) -> int:
+    target = target_repo(args)
+    run_id, state = active_run(target, args.run_id)
+    phase_state_or_error(state, run_id)
+    payload = load_payload(args)
+    if not payload and not args.query:
+        raise ResearchError("research literature-search requires --query or a JSON evidence payload")
+    result = literature_evidence(target, args.query, args.limit, payload or None, args.provider)
+    search_id = f"lit-{uuid.uuid4().hex[:12]}"
+    node_label = safe_log_name(args.node_id, "run")
+    work_label = safe_log_name(args.work_id, "revision")
+    evidence_ref = run_dir(target, run_id) / "logs" / "literature" / node_label / f"{work_label}-{search_id}-{result['provider']}.json"
+    atomic_write_json(evidence_ref, result["evidence"])
+    evidence_record = literature_evidence_record(args.query, evidence_ref, result)
+    record = {
+        "search_id": search_id,
+        "command": "research literature-search",
+        "node_id": args.node_id,
+        "work_id": args.work_id,
+        "purpose": args.purpose,
+        "requested_provider": args.provider,
+        "created_at": utc_now(),
+        **evidence_record,
+    }
+
+    def mutator(state: dict[str, Any]) -> None:
+        phase_state = state.setdefault("state", {})
+        phase_state.setdefault("literature_evidence", []).append(record)
+        if args.node_id:
+            node = phase_state.setdefault("nodes", {}).setdefault(args.node_id, {})
+            node.setdefault("node_id", args.node_id)
+            node.setdefault("literature_evidence", []).append(record)
+            node["updated_at"] = utc_now()
+        if args.work_id:
+            work = phase_state.setdefault("work", {}).setdefault(args.work_id, {})
+            work.setdefault("work_id", args.work_id)
+            work.setdefault("literature_evidence", []).append(record)
+            work["updated_at"] = utc_now()
+        phase_state.setdefault("orchestrator", {})["last_checkpoint_at"] = utc_now()
+
+    mutate_loop_state(
+        target,
+        run_id,
+        "api_call",
+        {
+            "command": "research literature-search",
+            "node_id": args.node_id,
+            "work_id": args.work_id,
+            "query": args.query,
+            "service": result["provider"],
+            "provider": result["provider"],
+            "requested_provider": args.provider,
+            "provenance": result["provenance"],
+            "fallback_from": result.get("fallback_from"),
+            "fallback_reason": result.get("fallback_reason"),
+            "evidence_ref": str(evidence_ref),
+            "search_id": search_id,
+        },
+        mutator,
+        node_id=args.node_id,
+    )
+    return emit(
+        "ok",
+        run_id=run_id,
+        search_id=search_id,
+        node_id=args.node_id,
+        work_id=args.work_id,
+        provider=result["provider"],
+        provenance=result["provenance"],
+        fallback_from=result.get("fallback_from"),
+        fallback_reason=result.get("fallback_reason"),
+        evidence_ref=str(evidence_ref),
+        cache_ref=str(result["cache_path"]) if result.get("cache_path") is not None else None,
+        result_count=evidence_record.get("result_count"),
+    )
 
 
 def cmd_research_select(args: argparse.Namespace) -> int:

@@ -117,7 +117,7 @@ Use `skills/heiemeier-question/SKILL.md` on the original topic plus the prefligh
 <Required_Data_Insight_Ideation_Pass>
 Use `skills/data-insight-ideation/SKILL.md` before generator assignment synthesis. Serious AI/ML ideation must be grounded in dataset evidence, not only literature or abstract reasoning.
 
-First check whether `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/idea_seed_insights.json` and `data_insight_ideation_brief.md` already exist. Reuse them only when they match the current run id, prompt/contract, dataset refs, split refs, evaluator refs, and artifact paths. If they are missing, stale, incomplete, or tied to a different contract, rerun the data-insight pass.
+First check whether `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/data_insight_ideation_report.md` already exists. Reuse it only when it matches the current run id, prompt/contract, dataset refs, split refs, evaluator refs, and artifact paths. If it is missing, stale, incomplete, or tied to a different contract, rerun the data-insight pass.
 
 If there is no concrete data path, the required environment is unclear, or the pass would require dependency/environment changes, record a data-insight blocker. Outside autonomous loops, stop and ask the user. Inside the ideation loop, record a clear failure-with-reason and follow the loop protocol rather than silently continuing with paper-only ideation.
 

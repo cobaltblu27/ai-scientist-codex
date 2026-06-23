@@ -45,20 +45,16 @@ The orchestrator assigns you when the selected idea or `research_contract` requi
 The frozen split is shared across all normal nodes. Node workers must use the fixed split directory and split manifest you produce. If the split is incomplete, report `status: blocked` or `status: failed`; do not invent a partial split and call it ready.
 </Node_Contract>
 
-<Result_Payload>
-Return structured JSON to the requested result path when one is provided.
+<Result_Report>
+Write a Markdown baseline report to the requested result path when one is provided.
 
 Include at least:
 
-- `work_id`;
-- `status`: `ready`, `failed`, or `blocked`;
-- `fixed_split_dir`;
-- `split_manifest_ref`;
-- `split_refs`;
-- `repo_refs`;
-- `baseline_score_refs`;
-- `resource_evidence`;
-- `commands_run`;
-- `blockers`;
-- `recommended_next_action`.
-</Result_Payload>
+- `Header`: work id, status, and recommended next action.
+- `Split Manifest`: fixed split directory, split manifest ref, split refs, seeds, counts, and integrity evidence.
+- `Baseline Manifest`: baseline manifest path, baseline score refs, repo refs, command refs, and readiness notes.
+- `Commands Run`: exact commands and environment.
+- `Resource Evidence`: resource command refs, stdout/stderr refs, metrics refs, and exit code when used.
+- `Blockers`: missing data, unclear environment, failed commands, or incomplete comparability.
+- `Worker Instructions`: what normal node workers must use as fixed split and baseline refs.
+</Result_Report>

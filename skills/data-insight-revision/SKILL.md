@@ -65,9 +65,8 @@ evidence_inventory.json
 error_table.csv
 slice_metrics.json
 failure_patterns.json
-revision_insights.json
 figures/
-data_insight_revision_brief.md
+data_insight_revision_report.md
 ```
 
 When no run id exists, use the output directory given by the user or assignment. If none is provided and the task is outside an autonomous loop, ask before writing artifacts.
@@ -80,10 +79,10 @@ When no run id exists, use the output directory given by the user or assignment.
 4. If close in-progress work exists and your decision depends on it, poll or wait briefly for its expected artifact path; otherwise return the pending ref or continue only if the assignment allows unrelated planning.
 5. If close completed work exists and still matches the current evidence version, reuse it and write a compact result pointing to the existing artifacts.
 6. If no close usable work exists, write a fresh `inspection.py` in the artifact directory for this `work_id` or assignment. The script must be specific to the available evidence and dataset interfaces rather than a generic EDA framework.
-7. Run `inspection.py` with the workspace Python launcher when enough artifacts exist to execute it. If executable inspection is impossible, write an explicit blocker in `evidence_inventory.json` and `revision_insights.json`; do not skip the data-insight step.
+7. Run `inspection.py` with the workspace Python launcher when enough artifacts exist to execute it. If executable inspection is impossible, write an explicit blocker in `evidence_inventory.json` and the Markdown report; do not skip the data-insight step.
 8. Read the generated or reused JSON/table/figure artifacts.
-9. Write `data_insight_revision_brief.md` for humans and `revision_insights.json` for downstream revision planning.
-10. If an assigned `result_path` exists, write a final JSON result there that references artifact paths.
+9. Write `data_insight_revision_report.md` as the downstream revision-planning artifact. Use sustained prose for failure explanation, root-cause hypotheses, and action recommendation.
+10. If an assigned `result_path` exists, write the Markdown report there.
 </Workflow>
 
 <Inspection_Targets>
@@ -115,71 +114,8 @@ The inspection code should answer the relevant subset of these questions:
 - Do not act as the final critic. This skill informs revision planning; critic review still gates accepted plans and outcomes.
 </Boundaries>
 
-<Insight_Output>
-`revision_insights.json` should use this shape:
-
-```json
-{
-  "mode": "revision",
-  "run_id": "",
-  "node_id": "",
-  "work_id": "",
-  "artifact_refs": {
-    "inspection_script": "...",
-    "evidence_inventory": "...",
-    "error_table": "...",
-    "slice_metrics": "...",
-    "brief": "..."
-  },
-  "evidence_summary": {
-    "available_refs": [],
-    "missing_refs": [],
-    "usable_for_revision": true
-  },
-  "failure_summary": "",
-  "success_failure_contrast": {
-    "where_base_model_works": [],
-    "where_base_model_fails": [],
-    "where_output_correction_helps": [],
-    "where_output_correction_fails": []
-  },
-  "error_patterns": [],
-  "approach_change_opportunities": [
-    {
-      "summary": "",
-      "changed_approach": "",
-      "expected_improvement_path": "",
-      "evidence_ref": ""
-    }
-  ],
-  "slice_metrics": [
-    {
-      "name": "",
-      "definition": "",
-      "metric": "",
-      "global_value": null,
-      "slice_value": null,
-      "gap": null,
-      "evidence_ref": ""
-    }
-  ],
-  "suspected_root_causes": [
-    "label_noise|underrepresented_slice|distribution_shift|shortcut|missing_context|metric_mismatch|implementation_bug|insufficient_evidence|unknown"
-  ],
-  "recommended_action": "revise_same_node|branch_from_node|abandon_or_reject|escalate",
-  "revision_hypothesis": "",
-  "model_improvement_target": "representation|conditioning|feature_interaction|loss_objective|preprocessing|augmentation|sampling|training_schedule|architecture|uncertainty_modeling|implementation_bug|insufficient_evidence|other",
-  "post_head_correction_role": "not_used|diagnostic_only|ablation_only|contract_allowed_primary",
-  "validation_plan": [],
-  "risk_to_contract": [],
-  "critic_questions": [],
-  "confidence": "low|medium|high"
-}
-```
-</Insight_Output>
-
-<Brief_Format>
-Write the Markdown brief in this order:
+<Report_Format>
+Write the Markdown report in this order:
 
 1. `Revision Question`: the exact decision being informed.
 2. `Evidence Inventory`: usable refs and missing refs.
@@ -193,12 +129,13 @@ Write the Markdown brief in this order:
 10. `Recommended Revision Action`: one of revise, branch, abandon/reject, or escalate.
 11. `Validation Plan`: the smallest check that would confirm the revision hypothesis.
 12. `Critic Questions`: what the revision-plan critic should scrutinize.
-</Brief_Format>
+13. `Data Insight Work Note`: suggested discovery-note update for in-progress, completed, blocked, or stale insight work.
+</Report_Format>
 
 <Revision_Brainstorm_Hand_Off>
-Feed the compact result into `revision-brainstorm`. The handoff should include `revision_insights.json`, the brief path, the recommended action, the revision hypothesis, validation plan, contract risks, and critic questions. `revision-brainstorm` still owns the final revise/branch/abandon/escalate plan.
+Feed the Markdown report into `revision-brainstorm`. The handoff should include the report path, artifact paths, recommended action, revision hypothesis, validation plan, contract risks, and critic questions. `revision-brainstorm` still owns final idea generation, ranking, and the revise/branch/abandon/escalate recommendation.
 </Revision_Brainstorm_Hand_Off>
 
 <Final_Response>
-When invoked directly, report the artifact paths, the strongest supported failure insight, the recommended revision action, and any blocker. When invoked by an orchestrator with `result_path`, write JSON only to that path and keep prose minimal in the conversation.
+When invoked directly, report the artifact paths, the strongest supported failure insight, the recommended revision action, and any blocker. When invoked by an orchestrator with `result_path`, write the Markdown report to that path and keep conversation prose minimal.
 </Final_Response>
