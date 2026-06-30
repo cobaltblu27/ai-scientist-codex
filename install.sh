@@ -14,8 +14,9 @@ Options:
   --venv-dir PATH           Venv directory. Default: <repo>/.venv-ai-scientist
   --bin-dir PATH            Directory for ai-scientist launcher. Default: ~/.local/bin
 Environment:
-  AI_SCIENTIST_PLUGIN_CACHE Optional Codex plugin cache directory to refresh.
-                            Default: ~/.codex/plugins/cache/ai-scientist-codex/ai-scientist/0.1.2
+  AI_SCIENTIST_PLUGIN_CACHE Optional explicit Codex plugin cache directory to refresh.
+                            Default: <codex-home>/plugins/cache/<marketplace>/<plugin>/<manifest-version>
+                            The manifest version includes any suffix, such as +codex.<timestamp>.
   -h, --help                Show this help.
 EOF
 }
@@ -25,8 +26,9 @@ PYTHON_RUNTIME="${AI_SCIENTIST_PYTHON:-}"
 PYTHON_RUNTIME_EXPLICIT=0
 VENV_DIR="$ROOT/.venv-ai-scientist"
 BIN_DIR="$HOME/.local/bin"
-PLUGIN_CACHE_DIR="${AI_SCIENTIST_PLUGIN_CACHE:-$HOME/.codex/plugins/cache/ai-scientist-codex/ai-scientist/0.1.2}"
 CACHE_BACKUP_ROOT="$HOME/.codex/tmp/plugin-cache-backups"
+PLUGIN_MANIFEST="$ROOT/.codex-plugin/plugin.json"
+MARKETPLACE_MANIFEST="$ROOT/.agents/plugins/marketplace.json"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -62,6 +64,19 @@ run_python() {
   sh -c "$PYTHON_RUNTIME \"\$@\"" sh "$@"
 }
 
+json_get() {
+  "$VENV_DIR/bin/python" -c '
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    value = json.load(f)
+for key in sys.argv[2].split("."):
+    value = value[key]
+print(value)
+' "$1" "$2"
+}
+
 runtime_record_path() {
   printf '%s\n' "$VENV_DIR/.ai-scientist-python-runtime"
 }
@@ -77,11 +92,8 @@ fi
 if ! run_python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)'; then
   cat >&2 <<EOF
 Blocker: Python runtime is missing or older than 3.12.
-Evidence: Tried: $PYTHON_RUNTIME
-Recommended action: Re-run with --python-runtime "/path/to/python3.12" or --python-runtime "conda run -n base python".
-Alternative action: Install Python 3.12+ and re-run install.sh.
-Impact: ai-scientist currently declares Python >=3.12 in pyproject.toml.
-Question: Proceed with option 1 or 2?
+Tried: $PYTHON_RUNTIME
+Re-run with --python-runtime "/path/to/python3.12" or --python-runtime "conda run -n base python".
 EOF
   exit 1
 fi
@@ -92,6 +104,10 @@ fi
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 "$VENV_DIR/bin/python" -m pip install --upgrade "$ROOT"
 printf '%s\n' "$PYTHON_RUNTIME" > "$(runtime_record_path)"
+
+PLUGIN_NAME="$(json_get "$PLUGIN_MANIFEST" name)"
+PLUGIN_VERSION="$(json_get "$PLUGIN_MANIFEST" version)"
+MARKETPLACE_NAME="$(json_get "$MARKETPLACE_MANIFEST" name)"
 
 mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/ai-scientist" <<EOF
@@ -104,34 +120,63 @@ CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 "$VENV_DIR/bin/ai-scientist" agents install --codex-home "$CODEX_HOME_DIR" >/dev/null
 agents_message="agents:   installed $CODEX_HOME_DIR/agents"
 
-cache_message="plugin cache: not installed; skipped"
-if [ -d "$PLUGIN_CACHE_DIR" ]; then
-  if ! command -v rsync >/dev/null 2>&1; then
-    echo "Blocker: rsync is required to refresh existing Codex plugin cache." >&2
-    echo "Evidence: cache exists at $PLUGIN_CACHE_DIR, but rsync was not found on PATH." >&2
-    echo "Recommended action: Install rsync, or set AI_SCIENTIST_PLUGIN_CACHE to an empty/nonexistent path to skip cache refresh." >&2
-    echo "Alternative action: Manually copy the repository into the plugin cache after backing it up." >&2
-    echo "Impact: CLI launcher is installed, but Codex may keep using stale cached skills/prompts." >&2
-    echo "Question: Proceed with option 1 or 2?" >&2
-    exit 1
-  fi
-  mkdir -p "$CACHE_BACKUP_ROOT"
-  backup_dir="$CACHE_BACKUP_ROOT/0.1.2.bak-$(date +%Y%m%d%H%M%S)"
-  cp -a "$PLUGIN_CACHE_DIR" "$backup_dir"
-  rsync -a --delete \
-    --exclude '.git/' \
-    --exclude '.venv-ai-scientist/' \
-    --exclude '__pycache__/' \
-    --exclude '.pytest_cache/' \
-    "$ROOT/" "$PLUGIN_CACHE_DIR"
-  cache_message="plugin cache: refreshed $PLUGIN_CACHE_DIR (backup: $backup_dir)"
+if ! command -v codex >/dev/null 2>&1; then
+  cat >&2 <<EOF
+Blocker: codex CLI was not found on PATH.
+Evidence: install.sh needs codex plugin add to install $PLUGIN_NAME@$MARKETPLACE_NAME.
+Recommended action: Put the Codex CLI on PATH, then rerun ./install.sh. (Recommended)
+Alternative action: Install the Python CLI only by running the pip/venv commands manually.
+Impact: CLI launcher and agents may be installed, but Codex will keep using the previous plugin cache.
+Question: Proceed with option 1 or 2?
+EOF
+  exit 1
 fi
+
+codex plugin add "$PLUGIN_NAME@$MARKETPLACE_NAME"
+plugin_message="plugin:  installed $PLUGIN_NAME@$MARKETPLACE_NAME ($PLUGIN_VERSION)"
+
+PLUGIN_CACHE_DIR="${AI_SCIENTIST_PLUGIN_CACHE:-$CODEX_HOME_DIR/plugins/cache/$MARKETPLACE_NAME/$PLUGIN_NAME/$PLUGIN_VERSION}"
+if [ ! -d "$PLUGIN_CACHE_DIR" ]; then
+  cat >&2 <<EOF
+Blocker: Codex did not create the expected plugin cache directory.
+Evidence: expected cache path does not exist: $PLUGIN_CACHE_DIR
+Recommended action: Check codex plugin list and rerun ./install.sh with AI_SCIENTIST_PLUGIN_CACHE set to the installed cache path. (Recommended)
+Alternative action: Bump .codex-plugin/plugin.json version suffix and rerun ./install.sh.
+Impact: Codex may keep using a stale cached skill even though the source checkout was updated.
+Question: Proceed with option 1 or 2?
+EOF
+  exit 1
+fi
+
+if ! command -v rsync >/dev/null 2>&1; then
+  cat >&2 <<EOF
+Blocker: rsync is required to refresh the Codex plugin cache.
+Evidence: cache exists at $PLUGIN_CACHE_DIR, but rsync was not found on PATH.
+Recommended action: Install rsync, then rerun ./install.sh. (Recommended)
+Alternative action: Rely only on codex plugin add without the post-install cache refresh.
+Impact: Codex may keep using stale cached skills/prompts when the manifest version did not change.
+Question: Proceed with option 1 or 2?
+EOF
+  exit 1
+fi
+
+mkdir -p "$CACHE_BACKUP_ROOT"
+backup_dir="$CACHE_BACKUP_ROOT/$PLUGIN_NAME-$PLUGIN_VERSION.bak-$(date +%Y%m%d%H%M%S)"
+cp -a "$PLUGIN_CACHE_DIR" "$backup_dir"
+rsync -a --delete \
+  --exclude '.git/' \
+  --exclude '.venv-ai-scientist/' \
+  --exclude '__pycache__/' \
+  --exclude '.pytest_cache/' \
+  "$ROOT/" "$PLUGIN_CACHE_DIR"
+cache_message="plugin cache: refreshed $PLUGIN_CACHE_DIR (backup: $backup_dir)"
 
 cat <<EOF
 Installed ai-scientist.
   venv:     $VENV_DIR
   launcher: $BIN_DIR/ai-scientist
   python:   $PYTHON_RUNTIME
+  $plugin_message
   $agents_message
   $cache_message
 
