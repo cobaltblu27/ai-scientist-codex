@@ -8,7 +8,8 @@ Usage: ./install.sh [--python-runtime COMMAND] [--venv-dir PATH] [--bin-dir PATH
 Options:
   --python-runtime COMMAND  Python command used to create/update the venv.
                             Default: reuse existing venv Python when present,
-                            then the remembered runtime, then python3.
+                            then the remembered runtime, then ./.venv or ./venv,
+                            then python3.
                             Examples: python3.12, /opt/homebrew/bin/python3.12,
                             "conda run -n base python"
   --venv-dir PATH           Venv directory. Default: <repo>/.venv-ai-scientist
@@ -85,6 +86,10 @@ if [ "$PYTHON_RUNTIME_EXPLICIT" -eq 0 ] && [ -x "$VENV_DIR/bin/python" ]; then
   PYTHON_RUNTIME="$VENV_DIR/bin/python"
 elif [ "$PYTHON_RUNTIME_EXPLICIT" -eq 0 ] && [ -f "$(runtime_record_path)" ]; then
   PYTHON_RUNTIME="$(cat "$(runtime_record_path)")"
+elif [ "$PYTHON_RUNTIME_EXPLICIT" -eq 0 ] && [ -x "$ROOT/.venv/bin/python" ]; then
+  PYTHON_RUNTIME="$ROOT/.venv/bin/python"
+elif [ "$PYTHON_RUNTIME_EXPLICIT" -eq 0 ] && [ -x "$ROOT/venv/bin/python" ]; then
+  PYTHON_RUNTIME="$ROOT/venv/bin/python"
 elif [ -z "$PYTHON_RUNTIME" ]; then
   PYTHON_RUNTIME="python3"
 fi

@@ -27,6 +27,9 @@ When your review identifies a transferable insight, repeated failure pattern, in
 </Discovery_Notes>
 
 <Checks>
+When recieving a node's work, first check if the implementation is implemented and tested enough, to meet the plan. Check for any underimplemented details. Also check if there's any incomplete testings, if it could utilize a hyperparameter sweep or any minor tweaks that stick to the plan but is worth testing.
+If there's any evidence shows the work is incomplete, exit with `CONTINUE` and notify orchestrator that node worker should continue implementing according to the plan.
+When the node seems ready for evaluation, check:  
 - Hypothesis fidelity and anti-drift discipline.
 - Split and leakage integrity.
 - If a baseline manifest exists, verify that node evidence used the frozen split exactly.

@@ -48,7 +48,7 @@ def _specs() -> list[AgentSpec]:
                 name=f"ai-scientist-ideation-critic-{mode}",
                 description=f"AI Scientist ideation critic for {mode} mode.",
                 prompt_source=f"prompts/ideation/{mode}/critic.md",
-                model_reasoning_effort="high",
+                model_reasoning_effort="xhigh",
             )
         )
         specs.append(
@@ -56,7 +56,7 @@ def _specs() -> list[AgentSpec]:
                 name=f"ai-scientist-research-critic-{mode}",
                 description=f"AI Scientist research critic for {mode} mode.",
                 prompt_source=f"prompts/research-loop/{mode}/critic.md",
-                model_reasoning_effort="high",
+                model_reasoning_effort="xhigh",
             )
         )
         specs.append(
@@ -64,7 +64,7 @@ def _specs() -> list[AgentSpec]:
                 name=f"ai-scientist-research-revision-worker-{mode}",
                 description=f"AI Scientist research revision worker for {mode} mode.",
                 prompt_source=f"prompts/research-loop/{mode}/revision-worker.md",
-                model_reasoning_effort="high",
+                model_reasoning_effort="xhigh",
             )
         )
     specs.extend(
@@ -79,7 +79,7 @@ def _specs() -> list[AgentSpec]:
                 name="ai-scientist-research-worker",
                 description="AI Scientist research node worker.",
                 prompt_source="prompts/research-loop/worker.md",
-                model_reasoning_effort="high",
+                model_reasoning_effort="xhigh",
             ),
         ]
     )
