@@ -11,7 +11,6 @@ from typing import Any
 
 from ideation.finalize import finalize_ideation
 from ideation.state import (
-    advance_after_search,
     add_finalized_idea,
     extract_prompt,
     initialize_ideation,
@@ -29,7 +28,6 @@ from ideation.state import (
     snapshot_reflection,
     run_dir,
 )
-from ideation.evidence import search_and_record
 from ideation.validate import validate_idea
 
 
@@ -96,30 +94,13 @@ def action_name(parsed: dict[str, Any]) -> str:
     return str(parsed.get("action", "")).strip().lower()
 
 
-def handle_search(target_repo: Path, state: dict[str, Any], parsed: dict[str, Any]) -> dict[str, Any]:
-    arguments = parsed.get("arguments") or {}
-    query = str(arguments.get("query", "")).strip()
-    if not query:
-        return register_stop_block(target_repo, state, "search_action_missing_query")
-    _, cache_path = search_and_record(
-        target_repo,
-        state["run_id"],
-        query,
-        state["current_idea_id"],
-        int(state.get("reflection_round", 0)) + 1,
-    )
-    return advance_after_search(target_repo, state, cache_path)
-
-
 def handle_finalize(target_repo: Path, state: dict[str, Any], parsed: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     arguments = parsed.get("arguments") or {}
     idea = arguments.get("idea")
     if not isinstance(idea, dict):
         return register_stop_block(target_repo, state, "finalize_action_missing_idea"), None
     state, _ = save_draft(target_repo, state, idea)
-    search_root = run_dir(target_repo, state["run_id"]) / "semantic-scholar-cache"
-    search_files = sorted(search_root.glob("*.json")) if search_root.exists() else []
-    errors = validate_idea(idea, search_files)
+    errors = validate_idea(idea, [])
     if errors:
         state["next_action"] = {"type": "reflect_or_finalize", "validator_errors": errors}
         state = register_stop_block(target_repo, state, "idea_validation_failed:" + "|".join(errors))
@@ -155,9 +136,7 @@ def handle_stop(payload: dict[str, Any]) -> int:
 
     name = action_name(parsed)
     extra: dict[str, Any] = {}
-    if name == "searchsemanticscholar":
-        state = handle_search(target_repo, state, parsed)
-    elif name == "finalizeidea":
+    if name == "finalizeidea":
         state, extra = handle_finalize(target_repo, state, parsed)
         extra = extra or {}
     elif name == "skipidea":

@@ -9,9 +9,8 @@ TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from test_support import PLUGIN_ROOT, read_json, read_jsonl, write_json
+from test_support import PLUGIN_ROOT, read_json, write_json
 
-from ideation import evidence as semantic_scholar_search
 from ideation import finalize as finalize_ideation
 from ideation import state as ideation_state
 from ideation import validate as validate_idea
@@ -43,7 +42,7 @@ def proposal_grade_idea() -> dict:
         "related_work": "Benchmark-Preserving Experiment Design motivates fixed split comparisons, while Leakage-Aware Model Evaluation shows why leakage checks must accompany held-out metrics. This proposal differs by requiring both papers' controls in the ideation acceptance criteria.",
         "abstract": "This proposal tests a small benchmark-preserving intervention under fixed data access and evaluation rules. It compares the existing baseline, the proposed method, and a matched ablation on held-out accuracy while logging split integrity and leakage evidence. The expected result is not only a metric gain but a pattern of failures that supports or weakens the hypothesized mechanism. The work is intentionally narrow so a later research-loop agent can implement and audit it without inventing new scientific assumptions.",
         "novelty_rationale": "The novelty is the paired mechanism and leakage-aware evaluation contract, not a generic attempt to tune the benchmark.",
-        "required_data": "The target benchmark dataset, fixed train/validation/test split manifest, baseline command logs, and cached Semantic Scholar search summaries.",
+        "required_data": "The target benchmark dataset, fixed train/validation/test split manifest, baseline command logs, and cited literature/source evidence.",
         "expected_metric": "Held-out accuracy on the declared benchmark split, compared against baseline and matched ablation.",
         "execution_plan": [
             {
@@ -98,7 +97,7 @@ def proposal_grade_idea() -> dict:
             "The matched ablation must be compared against the intervention.",
             "Split integrity and leakage validation artifacts must pass.",
         ],
-        "semantic_scholar_queries": ["benchmark preserving experiment leakage evaluation"],
+        "evidence_refs": ["https://example.test/benchmark-preserving", "https://example.test/leakage-aware"],
     }
 
 
@@ -123,42 +122,13 @@ class IdeationValidatorTests(unittest.TestCase):
         idea["hypothesis"] = "This might be better."
         errors = validate_idea.validate_idea(idea, [])
         self.assertIn("hypothesis must name a measurable dependent variable or metric", errors)
-        self.assertIn("related_work must cite at least 2 papers from the Semantic Scholar search cache", errors)
-
-    def test_semantic_scholar_fixture_writes_cache_and_ledger(self) -> None:
-        with TemporaryDirectory() as td:
-            target = Path(td)
-            state = ideation_state.initialize_ideation(target, "study ideas", run_id="ideation-test")
-            results, cache_path = semantic_scholar_search.search_and_record(
-                target,
-                state["run_id"],
-                "fixture query",
-                state["current_idea_id"],
-                1,
-                fixture_path=PLUGIN_ROOT / "tests" / "fixtures" / "semantic-scholar" / "minimal-results.json",
-            )
-
-            self.assertEqual(len(results), 2)
-            self.assertTrue(cache_path.exists())
-            self.assertTrue((target / ".ai-scientist" / "logs" / "ideation-test" / "semantic-scholar-cache" / cache_path.name).exists())
-            ledger = read_jsonl(target / ".ai-scientist" / "runs" / "ideation-test" / "api-ledger.jsonl")
-            self.assertEqual(ledger[0]["provider"], "semantic_scholar")
-            self.assertFalse(ledger[0]["cached"])
+        self.assertNotIn("Semantic Scholar", "|".join(errors))
 
     def test_legacy_finalize_ideation_fails_modern_gate(self) -> None:
         with TemporaryDirectory() as td:
             target = Path(td)
             (target / "README.md").write_text("fixture target\n")
             state = ideation_state.initialize_ideation(target, "study ideas", run_id="ideation-test", target_num_ideas=1)
-            _, cache_path = semantic_scholar_search.search_and_record(
-                target,
-                state["run_id"],
-                "fixture query",
-                state["current_idea_id"],
-                1,
-                fixture_path=PLUGIN_ROOT / "tests" / "fixtures" / "semantic-scholar" / "minimal-results.json",
-            )
-            state = ideation_state.advance_after_search(target, state, cache_path)
             state = ideation_state.add_finalized_idea(target, state, proposal_grade_idea())
             result = finalize_ideation.finalize_ideation(target, state, PLUGIN_ROOT)
 

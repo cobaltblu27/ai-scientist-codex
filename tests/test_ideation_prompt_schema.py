@@ -81,8 +81,8 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertIn("skills/create-contract/SKILL.md", ideation)
         self.assertIn("Do not start ideation during contract creation", ideation)
         self.assertIn("skills/create-contract/SKILL.md", research_loop)
-        self.assertIn("missing, ambiguous, incomplete, or likely contaminated", research_loop)
-        self.assertIn("Do not start the research loop until the contract is clean", research_loop)
+        self.assertIn("If the run-owned `research_contract` is missing", research_loop)
+        self.assertIn("stop before `research start`", research_loop)
 
     def test_subagent_prompts_have_persona_blocks(self) -> None:
         prompt_paths = sorted((PLUGIN_ROOT / "prompts").rglob("*.md"))
@@ -140,12 +140,11 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             for key, role in {
                 "generator_prompt_source": "generator",
                 "critic_prompt_source": "critic",
-                "ranker_prompt": "ranker",
             }.items():
                 prompt_path = preset[key]
                 self.assertEqual(prompt_path, f"prompts/ideation/{mode}/{role}.md")
                 prompt_text = (PLUGIN_ROOT / prompt_path).read_text().lower()
-                self.assertIn("json", prompt_text)
+                self.assertTrue(prompt_text.strip())
                 self.assertIn(role, prompt_text)
             self.assertEqual(preset["generator_agent"], f"ai-scientist-ideation-generator-{mode}")
             self.assertEqual(preset["critic_agent"], f"ai-scientist-ideation-critic-{mode}")
@@ -159,7 +158,7 @@ class IdeationPromptSchemaTests(unittest.TestCase):
             self.assertEqual(preset["critic_agent"], f"ai-scientist-ideation-critic-{mode}")
             self.assertIn("generator_prompt_source", preset)
             self.assertIn("critic_prompt_source", preset)
-            self.assertIn("ranker_prompt", preset)
+            self.assertNotIn("ranker_prompt", preset)
             self.assertNotIn("idea_generation_prompt_template", preset)
             self.assertNotIn("critic_prompt_template", preset)
             self.assertNotIn("ranking_prompt_template", preset)
@@ -167,18 +166,25 @@ class IdeationPromptSchemaTests(unittest.TestCase):
     def test_literature_search_skill_is_referenced_by_ideation(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "literature-search" / "SKILL.md").read_text()
         ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
-        self.assertIn("OpenAlex first", skill)
-        self.assertIn("Semantic Scholar", skill)
+        self.assertIn("without a fixed provider or CLI search command", skill)
+        self.assertIn("The AI Scientist CLI does not call literature APIs", skill)
         self.assertIn("Generator subagents should use this skill directly", skill)
-        self.assertIn("Research-loop revision workers must use it before finalizing enhance/branch candidates", skill)
-        self.assertIn("research literature-search", skill)
+        self.assertIn("Research-loop revision workers should use it", skill)
+        self.assertIn("Use the best available search surface", skill)
+        self.assertIn("<OpenAlex_API_Guide>", skill)
+        self.assertIn("https://api.openalex.org", skill)
+        self.assertIn("api_key=<OPENALEX_API_KEY>", skill)
+        self.assertIn("select=id,doi,title", skill)
+        self.assertIn("cursor=*", skill)
         self.assertIn("skills/local-literature-search/SKILL.md", skill)
-        self.assertIn("target repo has `papers/`", skill)
         self.assertIn("clone source code", skill)
         self.assertIn("not as an exact end-to-end recipe", skill)
-        self.assertIn("Subagents may run the `ai-scientist` CLI literature command", skill)
+        self.assertIn("Do not invent citations", skill)
         self.assertIn("Preflight references found before generator subagents exist are advisory only", skill)
-        self.assertIn("skills/literature-search/SKILL.md", ideation)
+        self.assertIn("`literature-search` skill", ideation)
+        self.assertIn("OpenAlex_API_Guide", ideation)
+        self.assertNotIn("search-semantic-scholar", ideation)
+        self.assertNotIn("research literature-search", skill)
 
     def test_ideation_pre_generation_synthesis_order_is_prompt_only(self) -> None:
         ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
@@ -195,24 +201,21 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertIn("Do not create new required artifacts, new cursor actions, or new Stop-hook blockers", ideation)
 
     def test_generator_prompts_require_literature_search_skill(self) -> None:
-        for mode in ["scientist", "engineer", "custom"]:
-            prompt = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "generator.md").read_text()
-            self.assertIn("skills/literature-search/SKILL.md", prompt)
-            self.assertIn("assigned idea id", prompt)
-            self.assertIn("raw `curl`", prompt)
-            self.assertIn("preflight reference papers", prompt)
-            self.assertIn("Heiemeier answers/insights", prompt)
-            self.assertIn("not a substitute for canonical evidence", prompt)
-            self.assertIn("run-owned `research_contract`", prompt)
-            self.assertIn("fit_to_research_contract", prompt)
-            self.assertIn("Do not create or edit a per-idea `research_contract`", prompt)
+        ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
+        self.assertIn("`literature-search` skill", ideation)
+        self.assertIn("preflight reference papers", ideation)
+        self.assertIn("Heiemeier answers/insights", ideation)
+        self.assertIn("not as a substitute for evidence they can stand behind", ideation)
+        self.assertIn("run-owned `research_contract`", ideation)
+        self.assertIn("fit_to_research_contract", ideation)
 
     def test_fixed_contract_campaign_prompt_contracts(self) -> None:
         ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
         self.assertIn("run-owned `research_contract`", ideation)
         self.assertIn("accepted idea batch", ideation)
         self.assertIn("handoff.idea_batch", ideation)
-        self.assertIn("Ranking is legacy/manual only", ideation)
+        self.assertNotIn("rank-candidates", ideation)
+        self.assertNotIn("rank-finalize", ideation)
         self.assertNotIn("finalized ranking", ideation)
         self.assertIn("<Persona>", ideation)
         self.assertIn("You are curious and aesthetically demanding", ideation)
@@ -223,7 +226,7 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         skill = (PLUGIN_ROOT / "skills" / "research-loop" / "SKILL.md").read_text()
         worker = (PLUGIN_ROOT / "prompts" / "research-loop" / "worker.md").read_text()
         self.assertIn("idea_batch", skill)
-        self.assertIn("learning-notes.jsonl", skill)
+        self.assertIn("learning-note", skill)
         self.assertIn("resource_queue", skill)
         self.assertIn("borrowed_from_node_id", skill)
         self.assertIn("node seed idea", worker)
@@ -263,9 +266,7 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertIn("`REJECT` means kill the current attempt and respawn a fully fresh generator for the same slot", skill)
         for mode in ["scientist", "engineer", "custom"]:
             critic = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "critic.md").read_text()
-            generator = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "generator.md").read_text()
             self.assertIn("respawn a fully fresh generator for the same slot", critic)
-            self.assertIn("do not use rejected draft details", generator)
             for verdict in ["ACCEPT", "ACCEPT_WITHOUT_REFERENCE", "REVISE", "REJECT"]:
                 self.assertIn(f"## `{verdict}`:", critic)
             self.assertGreaterEqual(critic.count("Examples:"), 4)

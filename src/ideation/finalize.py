@@ -51,16 +51,7 @@ def write_gate_artifacts(target_repo: Path, run_id: str, strictness_mode: str, v
 
 
 def cache_files_for_state(target_repo: Path, state: dict[str, Any]) -> list[Path]:
-    files: list[Path] = []
-    current_run = run_dir(target_repo, state["run_id"])
-    if state.get("last_search_file"):
-        candidate = current_run / state["last_search_file"]
-        if candidate.exists():
-            files.append(candidate)
-    cache_dir = ai_dir(target_repo) / "logs" / state["run_id"] / "semantic-scholar-cache"
-    if cache_dir.exists():
-        files.extend(sorted(path for path in cache_dir.glob("*.json") if path not in files))
-    return files
+    return []
 
 
 def run_validator(plugin_root: Path, target_repo: Path, run_id: str) -> int:

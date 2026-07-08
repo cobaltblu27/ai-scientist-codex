@@ -135,7 +135,6 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("skills/literature-search/SKILL.md", revision_text)
         self.assertIn("skills/local-literature-search/SKILL.md", revision_text)
         self.assertIn("local `papers/` query terms and tag filters", revision_text)
-        self.assertIn("research literature-search", revision_text)
         self.assertIn("Literature And Source Scan", revision_text)
         self.assertIn("clone source code", revision_text)
         self.assertIn("not as an exact end-to-end approach", revision_text)
@@ -220,7 +219,7 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("custom criteria remain the acceptance standard", orchestrator)
         self.assertIn("revision_critic_ref", orchestrator)
         self.assertIn("revision literature/source evidence", orchestrator)
-        self.assertIn("research literature-search", orchestrator)
+        self.assertNotIn("research literature-search", orchestrator)
         self.assertIn("Residual/error analysis is useful diagnosis", orchestrator)
         self.assertIn("raw base-model metrics", orchestrator)
         self.assertIn("Discovery_Notes", orchestrator)
@@ -448,7 +447,7 @@ class ResearchWorkflowTests(unittest.TestCase):
             )
             self.assertEqual(validate.returncode, 0, validate.stdout + validate.stderr)
 
-    def test_research_literature_search_records_node_and_work_evidence(self) -> None:
+    def test_research_literature_search_command_is_trimmed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             start = run_cli(
@@ -465,7 +464,6 @@ class ResearchWorkflowTests(unittest.TestCase):
                 json.dumps({"resources": {"max_parallel": 1}, "selected_idea": {"id": "idea-001", "title": "Fixture"}}),
             )
             self.assertEqual(start.returncode, 0, start.stdout + start.stderr)
-            evidence = {"data": [{"id": "https://openalex.org/W1", "display_name": "Fixture bottleneck paper"}]}
             search = run_cli(
                 target,
                 "research",
@@ -476,28 +474,9 @@ class ResearchWorkflowTests(unittest.TestCase):
                 "node-001",
                 "--work-id",
                 "revision-node-001",
-                "--query",
-                "drug response bottleneck graph prior",
-                "--json",
-                json.dumps(evidence),
             )
-            self.assertEqual(search.returncode, 0, search.stdout + search.stderr)
-            out = json_out(search)
-            self.assertEqual(out["provider"], "openalex")
-            self.assertEqual(out["result_count"], 1)
-            evidence_ref = Path(out["evidence_ref"])
-            self.assertTrue(evidence_ref.exists())
-            state = read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
-            record = state["state"]["literature_evidence"][0]
-            self.assertEqual(record["command"], "research literature-search")
-            self.assertEqual(record["node_id"], "node-001")
-            self.assertEqual(record["work_id"], "revision-node-001")
-            self.assertEqual(record["query"], "drug response bottleneck graph prior")
-            self.assertEqual(record["result_count"], 1)
-            self.assertEqual(state["state"]["nodes"]["node-001"]["literature_evidence"][0]["search_id"], out["search_id"])
-            self.assertEqual(state["state"]["work"]["revision-node-001"]["literature_evidence"][0]["search_id"], out["search_id"])
-            journal = (target / ".ai-scientist" / "runs" / "run-001" / "journal.jsonl").read_text()
-            self.assertIn("research literature-search", journal)
+            self.assertNotEqual(search.returncode, 0)
+            self.assertIn("invalid choice", search.stderr)
 
     def test_checkpoint_work_records_are_resume_and_completion_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

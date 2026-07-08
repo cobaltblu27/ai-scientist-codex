@@ -268,8 +268,6 @@ def check_ideation_to_research(root: Path, run: Path) -> None:
             raise ValidationError(f"ACCEPTED idea must include positive rank: {idea.get('id')}")
         if not isinstance(idea.get("score"), int):
             raise ValidationError(f"terminal idea must include integer score: {idea.get('id')}")
-        if preset.get("s2_required") and idea.get("evaluation") == "ACCEPTED" and int(idea.get("literature_search_count") or 0) <= 0:
-            raise ValidationError(f"ACCEPTED idea missing required literature evidence: {idea.get('id')}")
         if idea.get("evaluation") in {"ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"} and not idea.get("fit_to_research_contract"):
             raise ValidationError(f"accepted idea missing fit_to_research_contract: {idea.get('id')}")
     if isinstance(cfg.get("dependency_plan"), dict):
@@ -285,8 +283,6 @@ def check_ideation_to_research(root: Path, run: Path) -> None:
         if dep.get("status") not in ALLOWED_DEP_STATUSES:
             raise ValidationError(f"dependency {dep.get('name')} missing approved/rejected/not_needed status")
     journal = load_jsonl(run / "journal.jsonl")
-    if preset.get("s2_required") and not any(record.get("event_type") == "api_call" for record in journal):
-        raise ValidationError("journal.jsonl must contain at least one ideation api_call record")
     handoff = phase_state.get("handoff") if isinstance(phase_state.get("handoff"), dict) else {}
     batch_ids = handoff.get("idea_batch")
     if not isinstance(batch_ids, list) or not batch_ids:

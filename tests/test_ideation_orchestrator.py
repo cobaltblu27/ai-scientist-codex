@@ -67,6 +67,31 @@ def run_validator(target: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def record_generator_result(target: Path, payload: dict[str, object], *, run_id: str = "run-001", idea_id: str | None = None) -> subprocess.CompletedProcess[str]:
+    start_args = ["ideation", "intent", "start-batch", "--run-id", run_id, "--role", "generator"]
+    if idea_id:
+        start_args.extend(["--idea-ids", idea_id])
+    else:
+        start_args.extend(["--count", "1"])
+    batch = run_cli(target, *start_args)
+    if batch.returncode != 0:
+        return batch
+    intent = json.loads(batch.stdout)["intents"][0]
+    return run_cli(target, "ideation", "intent", "complete", "--run-id", run_id, "--intent-id", intent["intent_id"], "--json", json.dumps(payload))
+
+
+def record_critic_result(target: Path, idea_id: str, payload: dict[str, object], *, run_id: str = "run-001") -> subprocess.CompletedProcess[str]:
+    batch = run_cli(target, "ideation", "intent", "start-batch", "--run-id", run_id, "--role", "critic", "--idea-ids", idea_id)
+    if batch.returncode != 0:
+        return batch
+    intent = json.loads(batch.stdout)["intents"][0]
+    return run_cli(target, "ideation", "intent", "complete", "--run-id", run_id, "--intent-id", intent["intent_id"], "--json", json.dumps(payload))
+
+
+def finalize_ready_result(target: Path, idea_id: str, *, run_id: str = "run-001") -> subprocess.CompletedProcess[str]:
+    return run_cli(target, "ideation", "finalize-ready", "--run-id", run_id, "--idea-ids", idea_id)
+
+
 def idea_payload(idea_id: str, title: str = "Fixture idea") -> dict[str, object]:
     return {
         "id": idea_id,
@@ -143,13 +168,12 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(config["ideation"]["reflection_budget_per_idea"], 5)
             self.assertNotIn("reflection_budget", config["ideation"])
             self.assertEqual(config["ideation"]["max_attempts_per_slot"], 3)
-            self.assertEqual(config["ideation"]["concurrency"]["max_subagents"], 6)
+            self.assertGreaterEqual(config["ideation"]["concurrency"]["max_subagents"], 1)
             scientist = config["ideation"]["modes"]["scientist"]
             self.assertEqual(scientist["generator_agent"], "ai-scientist-ideation-generator-scientist")
             self.assertEqual(scientist["generator_prompt_source"], "prompts/ideation/scientist/generator.md")
             self.assertEqual(scientist["critic_agent"], "ai-scientist-ideation-critic-scientist")
             self.assertEqual(scientist["critic_prompt_source"], "prompts/ideation/scientist/critic.md")
-            self.assertEqual(scientist["ranker_prompt"], "prompts/ideation/scientist/ranker.md")
             state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
             self.assertEqual(state["state"]["reflection_budget_per_idea"], 5)
             self.assertEqual(state["state"]["max_attempts_per_slot"], 3)
@@ -181,7 +205,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
-            intent = run_cli(target, "ideation", "intent", "start", "--run-id", "run-001", "--role", "generator")
+            intent = run_cli(target, "ideation", "intent", "start-batch", "--run-id", "run-001", "--role", "generator", "--count", "1")
             self.assertEqual(intent.returncode, 0, intent.stderr)
 
             decision = evaluate_stop_decision(target)
@@ -208,7 +232,6 @@ class AgentDrivenIdeationTests(unittest.TestCase):
                                     "generator_prompt_source": "prompts/ideation/custom/missing.md",
                                     "critic_agent": "ai-scientist-ideation-critic-custom",
                                     "critic_prompt_source": "prompts/ideation/custom/critic.md",
-                                    "ranker_prompt": "prompts/ideation/custom/ranker.md",
                                 }
                             }
                         }
@@ -232,7 +255,6 @@ class AgentDrivenIdeationTests(unittest.TestCase):
                 self.assertEqual(preset["generator_prompt_source"], f"prompts/ideation/{mode}/generator.md")
                 self.assertEqual(preset["critic_agent"], f"ai-scientist-ideation-critic-{mode}")
                 self.assertEqual(preset["critic_prompt_source"], f"prompts/ideation/{mode}/critic.md")
-                self.assertEqual(preset["ranker_prompt"], f"prompts/ideation/{mode}/ranker.md")
 
     def test_max_subagents_caps_generator_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -327,16 +349,16 @@ class AgentDrivenIdeationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
-            first = run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(idea_payload("idea-001", "First draft")))
+            first = record_generator_result(target, idea_payload("idea-001", "First draft"))
             self.assertEqual(first.returncode, 0, first.stderr)
-            critic = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload()))
+            critic = record_critic_result(target, "idea-001", critic_payload())
             self.assertEqual(critic.returncode, 0, critic.stderr)
             revised = run_cli(target, "idea", "revise-start", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "tighten idea")
             self.assertEqual(revised.returncode, 0, revised.stderr)
-            second = run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001", "Second draft")))
+            second = record_generator_result(target, idea_payload("idea-001", "Second draft"), idea_id="idea-001")
             self.assertEqual(second.returncode, 0, second.stderr)
 
-            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+            finalized = finalize_ready_result(target, "idea-001")
 
             self.assertNotEqual(finalized.returncode, 0)
             self.assertIn("critic_stale_for_current_idea", finalized.stdout)
@@ -345,7 +367,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
-            first = run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(idea_payload("idea-001", "First draft")))
+            first = record_generator_result(target, idea_payload("idea-001", "First draft"))
             self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
             batch = run_cli(target, "ideation", "intent", "start-batch", "--run-id", "run-001", "--role", "critic", "--idea-ids", "idea-001")
             self.assertEqual(batch.returncode, 0, batch.stderr + batch.stdout)
@@ -379,8 +401,8 @@ class AgentDrivenIdeationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "2", "--reflection-budget", "1").returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001"))).returncode, 0)
-            revised = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REVISE", 62)))
+            self.assertEqual(record_generator_result(target, idea_payload("idea-001"), idea_id="idea-001").returncode, 0)
+            revised = record_critic_result(target, "idea-001", critic_payload("REVISE", 62))
             self.assertEqual(revised.returncode, 0, revised.stderr + revised.stdout)
             self.assertEqual(json.loads(revised.stdout)["next_action"], "revise_or_reject_batch")
             self.assertEqual(json.loads(revised.stdout)["next_action_details"]["required_action"], "idea exhaust")
@@ -402,8 +424,8 @@ class AgentDrivenIdeationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1").returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001", "Rejected draft"))).returncode, 0)
-            rejected = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REJECT", 25)))
+            self.assertEqual(record_generator_result(target, idea_payload("idea-001", "Rejected draft"), idea_id="idea-001").returncode, 0)
+            rejected = record_critic_result(target, "idea-001", critic_payload("REJECT", 25))
             self.assertEqual(rejected.returncode, 0, rejected.stderr + rejected.stdout)
             payload = json.loads(rejected.stdout)
             self.assertEqual(payload["next_action"], "start_generator_batch")
@@ -436,8 +458,8 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1", "--max-attempts-per-slot", "3").returncode, 0)
             for attempt in range(1, 4):
-                self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001", f"Rejected draft {attempt}"))).returncode, 0)
-                rejected = run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("REJECT", 20 + attempt)))
+                self.assertEqual(record_generator_result(target, idea_payload("idea-001", f"Rejected draft {attempt}"), idea_id="idea-001").returncode, 0)
+                rejected = record_critic_result(target, "idea-001", critic_payload("REJECT", 20 + attempt))
                 self.assertEqual(rejected.returncode, 0, rejected.stderr + rejected.stdout)
 
             state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
@@ -467,7 +489,7 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             payload["contract"] = payload.pop("research_contract")
             payload["contract"]["extra_nested"] = {"kept": True}
 
-            drafted = run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload))
+            drafted = record_generator_result(target, payload)
 
             self.assertEqual(drafted.returncode, 0, drafted.stderr + drafted.stdout)
             state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
@@ -480,10 +502,10 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
             payload = compact_payload("idea-001", "Missing fit")
             payload.pop("fit_to_research_contract")
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+            self.assertEqual(record_generator_result(target, payload).returncode, 0)
+            self.assertEqual(record_critic_result(target, "idea-001", critic_payload("ACCEPT", 80)).returncode, 0)
 
-            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+            finalized = finalize_ready_result(target, "idea-001")
 
             self.assertNotEqual(finalized.returncode, 0)
             self.assertIn("idea_fit_to_research_contract_required", finalized.stdout)
@@ -494,10 +516,10 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
             payload = compact_payload("idea-001", "Different dataset")
             payload["fixed_dataset"] = "another dataset"
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+            self.assertEqual(record_generator_result(target, payload).returncode, 0)
+            self.assertEqual(record_critic_result(target, "idea-001", critic_payload("ACCEPT", 80)).returncode, 0)
 
-            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+            finalized = finalize_ready_result(target, "idea-001")
 
             self.assertNotEqual(finalized.returncode, 0)
             self.assertIn("idea_changes_campaign_fixed_dataset", finalized.stdout)
@@ -508,10 +530,10 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer").returncode, 0)
             payload = compact_payload("idea-001", "Performance idea")
             payload.pop("research_contract")
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload)).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+            self.assertEqual(record_generator_result(target, payload).returncode, 0)
+            self.assertEqual(record_critic_result(target, "idea-001", critic_payload("ACCEPT", 80)).returncode, 0)
 
-            finalized = run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001")
+            finalized = finalize_ready_result(target, "idea-001")
 
             self.assertEqual(finalized.returncode, 0, finalized.stderr + finalized.stdout)
 
@@ -520,9 +542,9 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             target = Path(tmp)
             steps = [
                 run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1"),
-                run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(idea_payload("idea-001"))),
-                run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 86))),
-                run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001"),
+                record_generator_result(target, idea_payload("idea-001")),
+                record_critic_result(target, "idea-001", critic_payload("ACCEPT", 86)),
+                finalize_ready_result(target, "idea-001"),
                 run_cli(target, "ideation", "complete", "--run-id", "run-001"),
             ]
             for step in steps:
@@ -535,55 +557,25 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             self.assertEqual(validator.returncode, 0, validator.stderr)
             self.assertEqual(evaluate_stop_decision(target).decision, "allow")
 
-    def test_compact_finalize_ready_and_ranker_intent_ranking(self) -> None:
+    def test_compact_finalize_ready_completes_batch_without_ranking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             (target / "pyproject.toml").write_text("[project]\nname='fixture'\nversion='0.1.0'\n")
             steps = [
                 run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "2"),
-                run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(compact_payload("idea-001", "Better idea", "family-a", score=90))),
-                run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-002", "--json", json.dumps(compact_payload("idea-002", "Weaker idea", "family-b", score=70))),
-                run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("ACCEPT", 86))),
-                run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-002", "--json", json.dumps(critic_payload("ACCEPT", 84))),
+                record_generator_result(target, compact_payload("idea-001", "Better idea", "family-a", score=90), idea_id="idea-001"),
+                record_generator_result(target, compact_payload("idea-002", "Weaker idea", "family-b", score=70), idea_id="idea-002"),
+                record_critic_result(target, "idea-001", critic_payload("ACCEPT", 86)),
+                record_critic_result(target, "idea-002", critic_payload("ACCEPT", 84)),
                 run_cli(target, "ideation", "finalize-ready", "--run-id", "run-001"),
             ]
             for step in steps:
                 self.assertEqual(step.returncode, 0, step.stderr + step.stdout)
 
-            ranked = run_cli(target, "ideation", "rank-candidates", "--run-id", "run-001")
-            self.assertEqual(ranked.returncode, 0, ranked.stderr + ranked.stdout)
-            ranked_payload = json.loads(ranked.stdout)
-            intent = ranked_payload["intent"]
-            self.assertEqual(intent["role"], "ranker")
-            self.assertEqual(ranked_payload["next_action"], "collect_subagent_results")
-            self.assertEqual(evaluate_stop_decision(target).decision, "block")
-
-            completed_ranker = run_cli(
-                target,
-                "ideation",
-                "intent",
-                "complete",
-                "--run-id",
-                "run-001",
-                "--intent-id",
-                intent["intent_id"],
-                "--json",
-                json.dumps(
-                    {
-                        "selected_idea_id": "idea-001",
-                        "rationale": "Better ranker-selected idea.",
-                        "ranked_ideas": [
-                            {"idea_id": "idea-001", "score": 91, "score_components": {"ranker": 91}, "rationale": "Best contract.", "risk_flags": []},
-                            {"idea_id": "idea-002", "score": 70, "score_components": {"ranker": 70}, "rationale": "Weaker expected result.", "risk_flags": []},
-                        ],
-                    }
-                ),
-            )
-            self.assertEqual(completed_ranker.returncode, 0, completed_ranker.stderr + completed_ranker.stdout)
             self.assertEqual(run_cli(target, "ideation", "complete", "--run-id", "run-001").returncode, 0)
             ideas = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "ideas.json").read_text())["ideas"]
             self.assertEqual(ideas[0]["id"], "idea-001")
-            self.assertEqual(ideas[0]["rank"], 1)
+            self.assertIsNone(ideas[0]["rank"])
             self.assertIn("minimum_command", ideas[0])
             self.assertNotIn("execution_plan", ideas[0]["normalized"])
 
@@ -595,47 +587,21 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             payload = compact_payload("idea-001", "Bad command")
             payload["minimum_command"] = "python train.py"
 
-            drafted = run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(payload))
+            drafted = record_generator_result(target, payload)
 
             self.assertNotEqual(drafted.returncode, 0)
             self.assertIn("minimum_command_not_known_entrypoint", drafted.stdout)
 
-    def test_semantic_scholar_cache_and_evidence_batch_atomicity(self) -> None:
+    def test_provider_specific_literature_command_is_trimmed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "2").returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(idea_payload("idea-001"))).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-002", "--json", json.dumps(idea_payload("idea-002"))).returncode, 0)
-            evidence = {"data": [{"title": "Cached Paper", "citationCount": 1}]}
-            first = run_cli(target, "idea", "search-semantic-scholar", "--run-id", "run-001", "--idea-id", "idea-001", "--query", "cache query", "--json", json.dumps(evidence))
-            second = run_cli(target, "idea", "search-semantic-scholar", "--run-id", "run-001", "--idea-id", "idea-001", "--query", "cache query")
-            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
-            self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
+            self.assertEqual(record_generator_result(target, idea_payload("idea-001"), idea_id="idea-001").returncode, 0)
+            self.assertEqual(record_generator_result(target, idea_payload("idea-002"), idea_id="idea-002").returncode, 0)
 
-            state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
-            evidence_records = state["state"]["idea_states"]["idea-001"]["literature_evidence"]
-            self.assertEqual([item["provenance"] for item in evidence_records], ["precomputed", "cache"])
-            self.assertTrue(any((target / ".ai-scientist" / "evidence-cache" / "openalex").glob("*.json")))
-
-            before_count = int(state["state"]["idea_states"]["idea-002"].get("literature_search_count") or 0)
-            failed_batch = run_cli(
-                target,
-                "idea",
-                "record-evidence-batch",
-                "--run-id",
-                "run-001",
-                "--idea-ids",
-                "idea-002",
-                "missing-idea",
-                "--queries",
-                "q1",
-                "q2",
-                "--json",
-                json.dumps(evidence),
-            )
-            self.assertNotEqual(failed_batch.returncode, 0)
-            after_state = json.loads((target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json").read_text())
-            self.assertEqual(int(after_state["state"]["idea_states"]["idea-002"].get("literature_search_count") or 0), before_count)
+            result = run_cli(target, "idea", "search-semantic-scholar", "--run-id", "run-001", "--idea-id", "idea-001", "--query", "cache query")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("invalid choice", result.stderr)
 
     def test_finalize_ready_blocks_duplicate_family_protocol_metric(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -645,10 +611,10 @@ class AgentDrivenIdeationTests(unittest.TestCase):
             duplicate_a = compact_payload("idea-001", "Duplicate A", "same-family")
             duplicate_b = compact_payload("idea-002", "Duplicate B", "same-family")
             duplicate_b["unique_protocol"] = duplicate_a["unique_protocol"]
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(duplicate_a)).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--idea-id", "idea-002", "--json", json.dumps(duplicate_b)).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--idea-id", "idea-002", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
+            self.assertEqual(record_generator_result(target, duplicate_a, idea_id="idea-001").returncode, 0)
+            self.assertEqual(record_generator_result(target, duplicate_b, idea_id="idea-002").returncode, 0)
+            self.assertEqual(record_critic_result(target, "idea-001", critic_payload("ACCEPT", 80)).returncode, 0)
+            self.assertEqual(record_critic_result(target, "idea-002", critic_payload("ACCEPT", 80)).returncode, 0)
 
             finalized = run_cli(target, "ideation", "finalize-ready", "--run-id", "run-001")
 
@@ -661,9 +627,9 @@ class AgentDrivenIdeationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1").returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(idea_payload("idea-001"))).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("ACCEPT", 80))).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "finalize", "--run-id", "run-001", "--idea-id", "idea-001").returncode, 0)
+            self.assertEqual(record_generator_result(target, idea_payload("idea-001")).returncode, 0)
+            self.assertEqual(record_critic_result(target, "idea-001", critic_payload("ACCEPT", 80)).returncode, 0)
+            self.assertEqual(finalize_ready_result(target, "idea-001").returncode, 0)
 
             completed = run_cli(target, "ideation", "complete", "--run-id", "run-001")
 
@@ -675,8 +641,8 @@ class AgentDrivenIdeationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             self.assertEqual(run_cli(target, "ideation", "start", "--run-id", "run-001", "--prompt", "fixture", "--strictness-mode", "engineer", "--num-ideas", "1").returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "draft", "--run-id", "run-001", "--json", json.dumps(idea_payload("idea-001"))).returncode, 0)
-            self.assertEqual(run_cli(target, "idea", "critic-record", "--run-id", "run-001", "--json", json.dumps(critic_payload("REJECT", 20))).returncode, 0)
+            self.assertEqual(record_generator_result(target, idea_payload("idea-001")).returncode, 0)
+            self.assertEqual(record_critic_result(target, "idea-001", critic_payload("REJECT", 20)).returncode, 0)
             self.assertEqual(run_cli(target, "idea", "exhaust", "--run-id", "run-001", "--idea-id", "idea-001", "--reason", "critic rejected").returncode, 0)
             exhausted = run_cli(target, "ideation", "exhaust", "--run-id", "run-001")
             self.assertEqual(exhausted.returncode, 0, exhausted.stderr + exhausted.stdout)

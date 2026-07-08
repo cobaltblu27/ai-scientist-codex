@@ -9,9 +9,6 @@
     "impact_factor_multiplier": 2,
     "unknown_venue_score": 2
   },
-  "ranking": {
-    "max_evidence_papers_per_idea": 10
-  },
   "ideation": {
     "default_mode": "scientist",
     "num_ideas_required": 10,
@@ -25,7 +22,6 @@
     },
     "modes": {
       "scientist": {
-        "s2_required": true,
         "allow_accepted_without_reference": false,
         "allow_selection_without_reference": false,
         "candidate_evaluations": [
@@ -40,11 +36,9 @@
         "generator_agent": "ai-scientist-ideation-generator-scientist",
         "generator_prompt_source": "prompts/ideation/scientist/generator.md",
         "critic_agent": "ai-scientist-ideation-critic-scientist",
-        "critic_prompt_source": "prompts/ideation/scientist/critic.md",
-        "ranker_prompt": "prompts/ideation/scientist/ranker.md"
+        "critic_prompt_source": "prompts/ideation/scientist/critic.md"
       },
       "engineer": {
-        "s2_required": false,
         "allow_accepted_without_reference": true,
         "allow_selection_without_reference": true,
         "candidate_evaluations": [
@@ -60,11 +54,9 @@
         "generator_agent": "ai-scientist-ideation-generator-engineer",
         "generator_prompt_source": "prompts/ideation/engineer/generator.md",
         "critic_agent": "ai-scientist-ideation-critic-engineer",
-        "critic_prompt_source": "prompts/ideation/engineer/critic.md",
-        "ranker_prompt": "prompts/ideation/engineer/ranker.md"
+        "critic_prompt_source": "prompts/ideation/engineer/critic.md"
       },
       "custom": {
-        "s2_required": false,
         "allow_accepted_without_reference": true,
         "allow_selection_without_reference": true,
         "candidate_evaluations": [
@@ -80,8 +72,7 @@
         "generator_agent": "ai-scientist-ideation-generator-custom",
         "generator_prompt_source": "prompts/ideation/custom/generator.md",
         "critic_agent": "ai-scientist-ideation-critic-custom",
-        "critic_prompt_source": "prompts/ideation/custom/critic.md",
-        "ranker_prompt": "prompts/ideation/custom/ranker.md"
+        "critic_prompt_source": "prompts/ideation/custom/critic.md"
       }
     }
   },

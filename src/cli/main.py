@@ -53,18 +53,10 @@ from ideation.state import (
     exhaust_idea,
     exhaust_ideation,
     finalize_ready,
-    finalize_idea,
-    finalize_ranking,
     nested_value,
-    rank_candidates,
-    record_critic,
-    record_draft,
-    record_evidence_batch,
-    record_semantic_scholar_search,
     reject_idea,
     resume_ideation,
     start_ideation,
-    start_intent,
     start_intent_batch,
     start_revision,
     validate_max_subagents,
@@ -808,7 +800,7 @@ def default_config(
             target_venue=target_venue,
             token_budget_percent=token_budget_percent,
         ),
-        "api_budgets": payload.get("api_budgets", {"semantic_scholar": {"max_calls": 100}}),
+        "api_budgets": payload.get("api_budgets", {}),
         "workspace": payload.get("workspace", {"mode": "copy", "baseline_workspace": f".ai-scientist/runs/{run_id}/baseline-workspace"}),
         "dependency_plan": payload.get("dependency_plan", {"mode": "frozen", "planned_dependencies": []}),
         "benchmark_contract": payload.get("benchmark_contract", {"version": "v1", "command": payload.get("benchmark_command")}),
@@ -2895,29 +2887,10 @@ def cmd_ideation_exhaust(args: argparse.Namespace) -> int:
     return ideation_response(target, run_id)
 
 
-def cmd_ideation_rank_finalize(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    finalize_ranking(target, run_id, payload)
-    return ideation_response(target, run_id)
-
-
-def cmd_ideation_rank_candidates(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    result = rank_candidates(target, run_id)
-    return ideation_response(target, run_id, **result)
-
-
 def cmd_ideation_finalize_ready(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
     finalize_ready(target, run_id, idea_ids=args.idea_ids)
     return ideation_response(target, run_id)
-
-
-def cmd_ideation_intent_start(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    intent = start_intent(target, run_id, args.role, idea_id=args.idea_id, agent_thread_id=args.agent_thread_id)
-    return ideation_response(target, run_id, intent=intent)
 
 
 def cmd_ideation_intent_start_batch(args: argparse.Namespace) -> int:
@@ -2946,63 +2919,9 @@ def cmd_ideation_intent_cancel(args: argparse.Namespace) -> int:
     return ideation_response(target, run_id)
 
 
-def cmd_idea_draft(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    idea_payload = payload.get("idea") if isinstance(payload.get("idea"), dict) else payload
-    record_draft(target, run_id, idea_payload, idea_id=args.idea_id)
-    return ideation_response(target, run_id)
-
-
 def cmd_idea_revise_start(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
     start_revision(target, run_id, args.idea_id, args.reason)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_critic_record(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    critic_payload = payload.get("critic") if isinstance(payload.get("critic"), dict) else payload
-    record_critic(target, run_id, critic_payload, idea_id=args.idea_id)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_search_semantic_scholar(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    if not payload and not args.query:
-        raise CliError("search-semantic-scholar requires --query or a JSON evidence payload")
-    record_semantic_scholar_search(
-        target,
-        run_id,
-        idea_id=args.idea_id,
-        query=args.query,
-        evidence_payload=payload or None,
-        limit=args.limit,
-        provider=args.provider,
-    )
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_record_evidence_batch(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    record_evidence_batch(
-        target,
-        run_id,
-        idea_ids=args.idea_ids,
-        queries=args.queries,
-        evidence_payload=payload or None,
-        limit=args.limit,
-        provider=args.provider,
-    )
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_finalize(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    finalize_idea(target, run_id, idea_id=args.idea_id)
     return ideation_response(target, run_id)
 
 
@@ -3172,12 +3091,6 @@ def cmd_hooks_check(args: argparse.Namespace) -> int:
     return install_main(["--project-root", str(args.project_root), "--python", args.python, "--check"])
 
 
-def cmd_hooks_codex_event(args: argparse.Namespace) -> int:
-    from ideation.hooks import main as hooks_main
-
-    return hooks_main([args.event])
-
-
 def cmd_hooks_stop_gate(args: argparse.Namespace) -> int:
     from hooks.stop_gate import main as stop_gate_main
 
@@ -3185,28 +3098,6 @@ def cmd_hooks_stop_gate(args: argparse.Namespace) -> int:
     if args.target_repo:
         argv.extend(["--target-repo", str(args.target_repo)])
     return stop_gate_main(argv)
-
-
-def cmd_evidence_semantic_scholar(args: argparse.Namespace) -> int:
-    from ideation.evidence import main as evidence_main
-
-    argv = [
-        "--target-repo",
-        str(args.target_repo or Path.cwd()),
-        "--run-id",
-        args.run_id,
-        "--query",
-        args.query,
-        "--idea-id",
-        args.idea_id,
-        "--reflection-round",
-        str(args.reflection_round),
-        "--max-results",
-        str(args.max_results),
-    ]
-    if args.fixture:
-        argv.extend(["--fixture", str(args.fixture)])
-    return evidence_main(argv)
 
 
 def cmd_agents_list(args: argparse.Namespace) -> int:
@@ -3255,24 +3146,9 @@ def build_parser() -> argparse.ArgumentParser:
     hooks_check.add_argument("--project-root", type=Path, default=Path.cwd())
     hooks_check.add_argument("--python", default=sys.executable)
     hooks_check.set_defaults(func=cmd_hooks_check)
-    codex_event = hooks_sub.add_parser("codex-event")
-    codex_event.add_argument("event", choices=["SessionStart", "UserPromptSubmit", "Stop", "PreToolUse", "PostToolUse"])
-    codex_event.set_defaults(func=cmd_hooks_codex_event)
     stop_gate = hooks_sub.add_parser("stop-gate")
     stop_gate.add_argument("--target-repo", type=Path)
     stop_gate.set_defaults(func=cmd_hooks_stop_gate)
-
-    evidence = sub.add_parser("evidence")
-    evidence_sub = evidence.add_subparsers(dest="command", required=True)
-    s2 = evidence_sub.add_parser("semantic-scholar")
-    s2.add_argument("--target-repo", type=Path)
-    s2.add_argument("--run-id", required=True)
-    s2.add_argument("--query", required=True)
-    s2.add_argument("--idea-id", required=True)
-    s2.add_argument("--reflection-round", type=int, required=True)
-    s2.add_argument("--max-results", type=int, default=10)
-    s2.add_argument("--fixture", type=Path)
-    s2.set_defaults(func=cmd_evidence_semantic_scholar)
 
     agents = sub.add_parser("agents")
     agents_sub = agents.add_subparsers(dest="command", required=True)
@@ -3306,16 +3182,6 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("--run-id")
     add_json_args(checkpoint)
     checkpoint.set_defaults(func=research_workflow.cmd_research_checkpoint)
-    literature = research_sub.add_parser("literature-search")
-    literature.add_argument("--run-id")
-    literature.add_argument("--node-id")
-    literature.add_argument("--work-id")
-    literature.add_argument("--purpose", default="revision brainstorm")
-    literature.add_argument("--query")
-    literature.add_argument("--limit", type=int, default=10)
-    literature.add_argument("--provider", choices=["auto", "semantic_scholar", "openalex"], default="auto")
-    add_json_args(literature)
-    literature.set_defaults(func=research_workflow.cmd_research_literature_search)
     select = research_sub.add_parser("select")
     select.add_argument("--run-id")
     select.add_argument("--node-id", required=True)
@@ -3361,25 +3227,12 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_exhaust = ideation_sub.add_parser("exhaust")
     ideation_exhaust.add_argument("--run-id")
     ideation_exhaust.set_defaults(func=cmd_ideation_exhaust)
-    ideation_rank = ideation_sub.add_parser("rank-finalize")
-    ideation_rank.add_argument("--run-id")
-    add_json_args(ideation_rank)
-    ideation_rank.set_defaults(func=cmd_ideation_rank_finalize)
-    ideation_rank_candidates = ideation_sub.add_parser("rank-candidates")
-    ideation_rank_candidates.add_argument("--run-id")
-    ideation_rank_candidates.set_defaults(func=cmd_ideation_rank_candidates)
     ideation_finalize_ready = ideation_sub.add_parser("finalize-ready")
     ideation_finalize_ready.add_argument("--run-id")
     ideation_finalize_ready.add_argument("--idea-ids", nargs="+")
     ideation_finalize_ready.set_defaults(func=cmd_ideation_finalize_ready)
     ideation_intent = ideation_sub.add_parser("intent")
     ideation_intent_sub = ideation_intent.add_subparsers(dest="intent_command", required=True)
-    intent_start = ideation_intent_sub.add_parser("start")
-    intent_start.add_argument("--run-id")
-    intent_start.add_argument("--role", required=True, choices=sorted({"generator", "critic", "ranker"}))
-    intent_start.add_argument("--idea-id")
-    intent_start.add_argument("--agent-thread-id")
-    intent_start.set_defaults(func=cmd_ideation_intent_start)
     intent_start_batch = ideation_intent_sub.add_parser("start-batch")
     intent_start_batch.add_argument("--run-id")
     intent_start_batch.add_argument("--role", required=True, choices=sorted({"generator", "critic"}))
@@ -3440,41 +3293,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     idea = sub.add_parser("idea")
     idea_sub = idea.add_subparsers(dest="command", required=True)
-    idea_draft = idea_sub.add_parser("draft")
-    idea_draft.add_argument("--run-id")
-    idea_draft.add_argument("--idea-id")
-    add_json_args(idea_draft)
-    idea_draft.set_defaults(func=cmd_idea_draft)
     idea_revise = idea_sub.add_parser("revise-start")
     idea_revise.add_argument("--run-id")
     idea_revise.add_argument("--idea-id", required=True)
     idea_revise.add_argument("--reason")
     idea_revise.set_defaults(func=cmd_idea_revise_start)
-    idea_critic = idea_sub.add_parser("critic-record")
-    idea_critic.add_argument("--run-id")
-    idea_critic.add_argument("--idea-id")
-    add_json_args(idea_critic)
-    idea_critic.set_defaults(func=cmd_idea_critic_record)
-    idea_search = idea_sub.add_parser("search-semantic-scholar")
-    idea_search.add_argument("--run-id")
-    idea_search.add_argument("--idea-id")
-    idea_search.add_argument("--query")
-    idea_search.add_argument("--limit", type=int, default=10)
-    idea_search.add_argument("--provider", choices=["auto", "semantic_scholar", "openalex"], default="auto")
-    add_json_args(idea_search)
-    idea_search.set_defaults(func=cmd_idea_search_semantic_scholar)
-    idea_record_evidence_batch = idea_sub.add_parser("record-evidence-batch")
-    idea_record_evidence_batch.add_argument("--run-id")
-    idea_record_evidence_batch.add_argument("--idea-ids", nargs="+", required=True)
-    idea_record_evidence_batch.add_argument("--queries", nargs="+", required=True)
-    idea_record_evidence_batch.add_argument("--limit", type=int, default=10)
-    idea_record_evidence_batch.add_argument("--provider", choices=["auto", "semantic_scholar", "openalex"], default="auto")
-    add_json_args(idea_record_evidence_batch)
-    idea_record_evidence_batch.set_defaults(func=cmd_idea_record_evidence_batch)
-    idea_finalize = idea_sub.add_parser("finalize")
-    idea_finalize.add_argument("--run-id")
-    idea_finalize.add_argument("--idea-id")
-    idea_finalize.set_defaults(func=cmd_idea_finalize)
     idea_reject = idea_sub.add_parser("reject")
     idea_reject.add_argument("--run-id")
     idea_reject.add_argument("--idea-id")

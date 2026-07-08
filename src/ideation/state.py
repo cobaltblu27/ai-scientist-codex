@@ -8,13 +8,9 @@ validate transitions, and compute the next cursor action for the Stop hook.
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 import re
 import tomllib
-import urllib.error
-import urllib.parse
-import urllib.request
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -39,8 +35,8 @@ from core.state import (
 )
 
 MODES = {"scientist", "engineer", "custom"}
-INTENT_ROLES = {"generator", "critic", "ranker"}
-PROMPT_ROLES = ("generator", "critic", "ranker")
+INTENT_ROLES = {"generator", "critic"}
+PROMPT_ROLES = ("generator", "critic")
 TERMINAL_IDEA_STATUSES = {"accepted", "accepted_without_reference", "error", "exhausted"}
 TERMINAL_IDEATION_STATUSES = {"COMPLETED", "COMPLETED_BUDGET_EXHAUSTED", "EXHAUSTED_NO_CANDIDATE", "CANCELLED"}
 SUCCESS_TERMINAL_STATUSES = {"COMPLETED", "COMPLETED_BUDGET_EXHAUSTED"}
@@ -100,13 +96,11 @@ def default_prompt_refs(mode: str) -> dict[str, str]:
         "generator_prompt_source": prompt_path_for(mode, "generator"),
         "critic_agent": ideation_agent_name(mode, "critic"),
         "critic_prompt_source": prompt_path_for(mode, "critic"),
-        "ranker_prompt": prompt_path_for(mode, "ranker"),
     }
 
 
 DEFAULT_MODE_PRESETS: dict[str, dict[str, Any]] = {
     "scientist": {
-        "s2_required": True,
         "allow_accepted_without_reference": False,
         "allow_selection_without_reference": False,
         "candidate_evaluations": ["ACCEPTED"],
@@ -114,7 +108,6 @@ DEFAULT_MODE_PRESETS: dict[str, dict[str, Any]] = {
         **default_prompt_refs("scientist"),
     },
     "engineer": {
-        "s2_required": False,
         "allow_accepted_without_reference": True,
         "allow_selection_without_reference": True,
         "candidate_evaluations": ["ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"],
@@ -122,7 +115,6 @@ DEFAULT_MODE_PRESETS: dict[str, dict[str, Any]] = {
         **default_prompt_refs("engineer"),
     },
     "custom": {
-        "s2_required": False,
         "allow_accepted_without_reference": True,
         "allow_selection_without_reference": True,
         "candidate_evaluations": ["ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"],
@@ -172,36 +164,6 @@ def ideation_contract_path(target_repo: Path, run_id: str) -> Path:
 
 def pending_result_path(target_repo: Path, run_id: str, intent_id: str) -> Path:
     return run_logs_dir(target_repo, run_id) / "pending" / f"{intent_id}.json"
-
-
-LITERATURE_PROVIDER_CACHE_DIRS = {
-    "semantic_scholar": "semantic-scholar",
-    "openalex": "openalex",
-}
-LITERATURE_PROVIDER_LOG_DIRS = {
-    "semantic_scholar": "semantic-scholar",
-    "openalex": "openalex",
-}
-LITERATURE_PROVIDERS = frozenset({"auto", "semantic_scholar", "openalex"})
-
-
-def normalize_literature_provider(provider: str | None) -> str:
-    normalized = (provider or "auto").strip().lower().replace("-", "_")
-    if normalized not in LITERATURE_PROVIDERS:
-        raise IdeationStateError(f"invalid literature provider: {provider}")
-    return normalized
-
-
-def evidence_cache_dir(target_repo: Path, provider: str = "semantic_scholar") -> Path:
-    normalized = normalize_literature_provider(provider)
-    if normalized == "auto":
-        normalized = "openalex"
-    return ai_root(target_repo) / "evidence-cache" / LITERATURE_PROVIDER_CACHE_DIRS[normalized]
-
-
-def evidence_cache_path(target_repo: Path, query: str, limit: int, provider: str = "semantic_scholar") -> Path:
-    key = hashlib.sha256(json.dumps({"query": query.strip(), "limit": limit}, sort_keys=True).encode("utf-8")).hexdigest()[:24]
-    return evidence_cache_dir(target_repo, provider) / f"{key}.json"
 
 
 def load_payload_from_args(json_value: str | None = None, path: Path | None = None) -> dict[str, Any]:
@@ -288,7 +250,7 @@ def validate_mode_preset(config: dict[str, Any], mode: str) -> dict[str, Any]:
     preset = modes.get(mode)
     if not isinstance(preset, dict):
         raise IdeationStateError(f"missing ideation preset for mode: {mode}")
-    for key in ("generator_agent", "critic_agent", "ranker_prompt"):
+    for key in ("generator_agent", "critic_agent"):
         if not isinstance(preset.get(key), str) or not preset[key].strip():
             raise IdeationStateError(f"ideation preset {mode} missing {key}")
     return preset
@@ -297,7 +259,7 @@ def validate_mode_preset(config: dict[str, Any], mode: str) -> dict[str, Any]:
 def validate_ideation_prompt_files(config: dict[str, Any], mode: str) -> None:
     preset = validate_mode_preset(config, mode)
     root = plugin_root()
-    for key in ("generator_prompt_source", "critic_prompt_source", "ranker_prompt"):
+    for key in ("generator_prompt_source", "critic_prompt_source"):
         value = str(preset.get(key) or preset.get(key.replace("_source", "")) or "")
         if not value:
             raise IdeationStateError(f"ideation preset {mode} missing {key}")
@@ -322,7 +284,7 @@ def frozen_config(
     base = {
         "schema_version": 1,
         "ideation": DEFAULT_IDEATION_CONFIG,
-        "api_budgets": {"semantic_scholar": {"max_calls": 100, "max_results_per_query": 10}},
+        "api_budgets": {},
         "workspace": {"mode": "copy"},
         "dependency_plan": {"mode": "frozen", "planned_dependencies": []},
         "benchmark_contract": {"version": "ideation-v1", "command": None},
@@ -692,15 +654,6 @@ def researchable_candidates(state: dict[str, Any], config: dict[str, Any]) -> li
     return [idea for idea in terminal_ideas(state) if is_researchable_idea(idea, config)]
 
 
-def has_literature_evidence(idea: dict[str, Any]) -> bool:
-    evidence = idea.get("literature_evidence")
-    if isinstance(evidence, list) and evidence:
-        return True
-    if isinstance(evidence, dict) and evidence:
-        return True
-    return int(idea.get("literature_search_count") or 0) > 0
-
-
 def latest_critic_matches(idea: dict[str, Any]) -> bool:
     critic = idea.get("latest_critic")
     if not isinstance(critic, dict):
@@ -797,8 +750,6 @@ def clear_current_attempt_state(idea: dict[str, Any]) -> None:
         "rank",
         "manual_selection_only",
         "researchable",
-        "literature_evidence",
-        "literature_search_count",
         "revision_reason",
         "rejection_reason",
         "exhaustion_reason",
@@ -950,9 +901,6 @@ def cursor_for_state(state: dict[str, Any], config: dict[str, Any] | None = None
         needs_draft = [idea["id"] for idea in active_ideas if not isinstance(idea.get("latest_draft"), dict)]
         if needs_draft:
             return {"next_action": "start_generator_batch", "next_action_details": {"reason": "active ideas need drafts", "idea_ids": needs_draft, "count": len(needs_draft)}}
-        needs_s2 = [idea["id"] for idea in active_ideas if preset.get("s2_required") and not has_literature_evidence(idea)]
-        if needs_s2:
-            return {"next_action": "search_semantic_scholar", "next_action_details": {"reason": "mode requires literature evidence", "idea_ids": needs_s2, "idea_id": needs_s2[0]}}
         needs_critic = [idea["id"] for idea in active_ideas if not latest_critic_matches(idea)]
         if needs_critic:
             return {"next_action": "start_critic_batch", "next_action_details": {"reason": "latest drafts need fresh critics", "idea_ids": needs_critic, "count": len(needs_critic)}}
@@ -1025,7 +973,6 @@ def public_idea_record(idea: dict[str, Any]) -> dict[str, Any]:
         "researchable": idea.get("researchable") is True,
         "source_run_id": idea.get("source_run_id"),
         "reflection_count": reflection_count,
-        "literature_search_count": int(idea.get("literature_search_count") or 0),
         "draft_version": idea.get("draft_version"),
         "idea_hash": idea.get("idea_hash"),
         "manual_selection_only": idea.get("manual_selection_only"),
@@ -1160,7 +1107,6 @@ def orchestration_prompt(state: dict[str, Any], config: dict[str, Any], cursor: 
         lines.append(f"Generator agent_type: {preset['generator_agent']}")
     elif next_action == "start_critic_batch":
         lines.append(f"Critic agent_type: {preset['critic_agent']}")
-    lines.append(f"Legacy/manual ranker prompt file: {preset['ranker_prompt']}")
     lines.append(f"Original topic: {phase_state.get('prompt')}")
     return "\n".join(lines)
 
@@ -1267,15 +1213,6 @@ def start_intent_batch(
             if len(idea_ids) > limit:
                 raise IdeationStateError(f"batch size {len(idea_ids)} exceeds max_subagents {limit}")
             resolved_idea_ids = list(idea_ids)
-        elif role == "ranker":
-            if count not in (None, 1) or idea_ids:
-                raise IdeationStateError("ranker intent is single-agent")
-            candidates = researchable_candidates(state, cfg)
-            if not candidates:
-                raise IdeationStateError("ranker intent requires at least one researchable candidate")
-            if not terminal_attempts_complete(state) or active_idea_ids(phase_state):
-                raise IdeationStateError("ranker intent requires all generator/critic/revision work to be terminal")
-            resolved_idea_ids = [None]
         else:
             raise IdeationStateError(f"invalid intent role: {role}")
         batch_id = next_batch_id(phase_state)
@@ -1357,8 +1294,6 @@ def start_intent(target_repo: Path, run_id: str, role: str, *, idea_id: str | No
             phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
             idea_id = resolve_idea_id(phase_state, None, "critic intent")
         return start_intent_batch(target_repo, run_id, role, idea_ids=[idea_id], agent_thread_id=agent_thread_id)["intents"][0]
-    if role == "ranker":
-        return start_intent_batch(target_repo, run_id, role, count=1, agent_thread_id=agent_thread_id)["intents"][0]
     raise IdeationStateError(f"invalid intent role: {role}")
 
 
@@ -1413,9 +1348,6 @@ def complete_intent(target_repo: Path, run_id: str, payload: dict[str, Any], *, 
     if role == "critic":
         verdict_payload = payload.get("critic") if isinstance(payload.get("critic"), dict) else payload
         return record_critic(target_repo, run_id, verdict_payload, idea_id=pending.get("idea_id"), intent_id=pending.get("intent_id"))
-    if role == "ranker":
-        ranking_payload = payload.get("ranking") if isinstance(payload.get("ranking"), dict) else payload
-        return finalize_ranking(target_repo, run_id, ranking_payload)
     raise IdeationStateError(f"unknown pending intent role: {role}")
 
 
@@ -1502,7 +1434,7 @@ def record_draft(target_repo: Path, run_id: str, payload: dict[str, Any], *, ide
         increment_iteration(phase_state)
         update_cursor(state, cfg)
 
-    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "idea draft", "idea_id": idea_id}, mutator)
+    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "ideation intent complete", "role": "generator", "idea_id": idea_id}, mutator)
     sync_ideas_archive(target_repo, run_id, updated)
     return updated
 
@@ -1551,14 +1483,14 @@ def record_critic(target_repo: Path, run_id: str, payload: dict[str, Any], *, id
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
-        resolved_id = resolve_idea_id(phase_state, idea_id, "critic-record")
+        resolved_id = resolve_idea_id(phase_state, idea_id, "critic intent complete")
         ideas = phase_state.setdefault("idea_states", {})
         idea = ideas.get(resolved_id)
         if not isinstance(idea, dict):
             raise IdeationStateError(f"unknown idea_id: {resolved_id}")
         ensure_idea_slot_defaults(phase_state, idea)
         if not isinstance(idea.get("latest_draft"), dict):
-            raise IdeationStateError("critic-record requires a latest draft")
+            raise IdeationStateError("critic intent completion requires a latest draft")
         if intent_id:
             pending = resolve_pending_intent(phase_state, intent_id)
             if pending.get("draft_version") != idea.get("draft_version") or pending.get("idea_hash") != idea.get("idea_hash"):
@@ -1590,300 +1522,10 @@ def record_critic(target_repo: Path, run_id: str, payload: dict[str, Any], *, id
         increment_iteration(phase_state)
         update_cursor(state, cfg)
 
-    updated = mutate_loop_state(target_repo, run_id, "critic_event", {"command": "idea critic-record", "idea_id": idea_id, "verdict": critic["verdict"]}, mutator)
+    updated = mutate_loop_state(target_repo, run_id, "critic_event", {"command": "ideation intent complete", "role": "critic", "idea_id": idea_id, "verdict": critic["verdict"]}, mutator)
     sync_ideas_archive(target_repo, run_id, updated)
     return updated
 
-
-def normalize_semantic_scholar_evidence(payload: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data")
-    if data is None:
-        data = []
-    if not isinstance(data, list):
-        raise ValueError("Semantic Scholar response field data must be a list")
-    normalized = dict(payload)
-    normalized["data"] = data
-    return normalized
-
-
-def semantic_scholar_request(query: str, limit: int) -> dict[str, Any]:
-    params = urllib.parse.urlencode({"query": query, "limit": str(limit), "fields": "title,year,citationCount,venue,url,authors"})
-    request = urllib.request.Request(f"https://api.semanticscholar.org/graph/v1/paper/search?{params}")
-    api_key = os.environ.get("S2_API_KEY")
-    if api_key:
-        request.add_header("x-api-key", api_key)
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed public API URL.
-        payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("Semantic Scholar response must be a JSON object")
-    return normalize_semantic_scholar_evidence(payload)
-
-
-def openalex_abstract(inverted_index: Any) -> str:
-    if not isinstance(inverted_index, dict):
-        return ""
-    positions: list[tuple[int, str]] = []
-    for word, indexes in inverted_index.items():
-        if not isinstance(indexes, list):
-            continue
-        for index in indexes:
-            if isinstance(index, int):
-                positions.append((index, str(word)))
-    return " ".join(word for _, word in sorted(positions))
-
-
-def normalize_openalex_work(work: dict[str, Any]) -> dict[str, Any]:
-    authorships = work.get("authorships") if isinstance(work.get("authorships"), list) else []
-    authors: list[str] = []
-    for authorship in authorships:
-        if not isinstance(authorship, dict):
-            continue
-        author = authorship.get("author") if isinstance(authorship.get("author"), dict) else {}
-        name = author.get("display_name")
-        if name:
-            authors.append(str(name))
-    primary_location = work.get("primary_location") if isinstance(work.get("primary_location"), dict) else {}
-    source = primary_location.get("source") if isinstance(primary_location.get("source"), dict) else {}
-    best_oa_location = work.get("best_oa_location") if isinstance(work.get("best_oa_location"), dict) else {}
-    paper = {
-        "title": work.get("title") or work.get("display_name") or "Unknown title",
-        "year": work.get("publication_year"),
-        "citationCount": work.get("cited_by_count") or 0,
-        "venue": source.get("display_name") or "Unknown venue",
-        "url": primary_location.get("landing_page_url") or best_oa_location.get("landing_page_url") or work.get("doi") or work.get("id") or "",
-        "authors": authors,
-        "openalex_id": work.get("id"),
-    }
-    doi = work.get("doi")
-    if doi:
-        paper["doi"] = doi
-    abstract = openalex_abstract(work.get("abstract_inverted_index"))
-    if abstract:
-        paper["abstract"] = abstract
-    return {key: value for key, value in paper.items() if value is not None}
-
-
-def normalize_openalex_evidence(payload: dict[str, Any]) -> dict[str, Any]:
-    results = payload.get("results")
-    if results is None:
-        results = []
-    if not isinstance(results, list):
-        raise ValueError("OpenAlex response field results must be a list")
-    return {"data": [normalize_openalex_work(work) for work in results if isinstance(work, dict)]}
-
-
-def openalex_request(query: str, limit: int) -> dict[str, Any]:
-    params = urllib.parse.urlencode({"search": query, "per-page": str(limit)})
-    request = urllib.request.Request(f"https://api.openalex.org/works?{params}")
-    request.add_header("User-Agent", "ai-scientist-codex/0.1 (mailto:openalex@example.com)")
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed public API URL.
-        payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("OpenAlex response must be a JSON object")
-    return normalize_openalex_evidence(payload)
-
-
-def literature_failure_reason(exc: BaseException) -> str:
-    if isinstance(exc, urllib.error.HTTPError):
-        return f"HTTP {exc.code}: {exc.reason}"
-    return f"{type(exc).__name__}: {exc}"
-
-
-def provider_live_request(provider: str, query: str, limit: int) -> dict[str, Any]:
-    if provider == "semantic_scholar":
-        return semantic_scholar_request(query, limit)
-    if provider == "openalex":
-        return openalex_request(query, limit)
-    raise IdeationStateError(f"invalid live literature provider: {provider}")
-
-
-def provider_evidence(target_repo: Path, query: str, limit: int, provider: str, evidence_payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    normalized_provider = normalize_literature_provider(provider)
-    if normalized_provider == "auto":
-        raise IdeationStateError("provider_evidence requires a concrete provider")
-    cache_path = evidence_cache_path(target_repo, query, limit, normalized_provider)
-    if cache_path.exists():
-        cached = load_json_if_exists(cache_path)
-        if isinstance(cached, dict):
-            evidence = cached.get("evidence") if isinstance(cached.get("evidence"), dict) else cached
-            if isinstance(evidence, dict):
-                return {"evidence": evidence, "provenance": "cache", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
-    if evidence_payload is not None:
-        atomic_write_json(cache_path, {"query": query, "limit": limit, "provider": normalized_provider, "provenance": "precomputed", "evidence": evidence_payload, "cached_at": utc_now()})
-        return {"evidence": evidence_payload, "provenance": "precomputed", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
-    evidence = provider_live_request(normalized_provider, query, limit)
-    atomic_write_json(cache_path, {"query": query, "limit": limit, "provider": normalized_provider, "provenance": "live", "evidence": evidence, "cached_at": utc_now()})
-    return {"evidence": evidence, "provenance": "live", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
-
-
-def literature_evidence(target_repo: Path, query: str | None, limit: int, evidence_payload: dict[str, Any] | None = None, provider: str = "auto") -> dict[str, Any]:
-    selected_provider = normalize_literature_provider(provider)
-    clean_query = (query or "").strip()
-    if not clean_query and evidence_payload is None:
-        raise IdeationStateError("literature query is required without evidence payload")
-    if evidence_payload is not None:
-        concrete_provider = "openalex" if selected_provider == "auto" else selected_provider
-        return provider_evidence(target_repo, clean_query, limit, concrete_provider, evidence_payload)
-    if selected_provider != "auto":
-        return provider_evidence(target_repo, clean_query, limit, selected_provider)
-    try:
-        return provider_evidence(target_repo, clean_query, limit, "openalex")
-    except Exception as openalex_exc:
-        fallback_reason = literature_failure_reason(openalex_exc)
-        try:
-            result = provider_evidence(target_repo, clean_query, limit, "semantic_scholar")
-        except Exception as s2_exc:
-            raise IdeationStateError(f"literature search failed for openalex ({fallback_reason}) and semantic_scholar ({literature_failure_reason(s2_exc)})") from s2_exc
-        result["fallback_from"] = "openalex"
-        result["fallback_reason"] = fallback_reason
-        return result
-
-
-def semantic_scholar_evidence(target_repo: Path, query: str | None, limit: int, evidence_payload: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, Path | None]:
-    result = literature_evidence(target_repo, query, limit, evidence_payload, provider="semantic_scholar")
-    return result["evidence"], result["provenance"], result["cache_path"]
-
-
-def literature_result_count(evidence: dict[str, Any]) -> int | None:
-    if isinstance(evidence.get("data"), list):
-        return len(evidence["data"])
-    if isinstance(evidence.get("results"), list):
-        return len(evidence["results"])
-    return None
-
-
-def literature_log_dir(provider: str) -> str:
-    return LITERATURE_PROVIDER_LOG_DIRS[normalize_literature_provider(provider)]
-
-
-def literature_evidence_record(query: str | None, evidence_ref: Path, result: dict[str, Any]) -> dict[str, Any]:
-    evidence = result["evidence"]
-    return {
-        "provider": result["provider"],
-        "query": query,
-        "evidence_ref": str(evidence_ref),
-        "cache_ref": str(result["cache_path"]) if result.get("cache_path") is not None else None,
-        "provenance": result["provenance"],
-        "fallback_from": result.get("fallback_from"),
-        "fallback_reason": result.get("fallback_reason"),
-        "result_count": literature_result_count(evidence),
-    }
-
-
-def record_semantic_scholar_search(
-    target_repo: Path,
-    run_id: str,
-    *,
-    idea_id: str | None = None,
-    query: str | None = None,
-    evidence_payload: dict[str, Any] | None = None,
-    limit: int = 10,
-    provider: str = "auto",
-) -> dict[str, Any]:
-    selected_provider = normalize_literature_provider(provider)
-    cfg = current_config(target_repo, run_id)
-    result = literature_evidence(target_repo, query, limit, evidence_payload, selected_provider)
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        resolved_id = resolve_idea_id(phase_state, idea_id, "literature search")
-        ideas = phase_state.setdefault("idea_states", {})
-        idea = ideas.get(resolved_id)
-        if not isinstance(idea, dict):
-            raise IdeationStateError(f"unknown idea_id: {resolved_id}")
-        evidence_ref = write_payload_log(target_repo, run_id, literature_log_dir(result["provider"]), f"{resolved_id}-{int(idea.get('literature_search_count') or 0) + 1:02d}.json", result["evidence"])
-        evidence_record = literature_evidence_record(query, evidence_ref, result)
-        idea.setdefault("literature_evidence", []).append(evidence_record)
-        latest_draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-        latest_draft.setdefault("evidence_refs", [])
-        if isinstance(latest_draft["evidence_refs"], list):
-            latest_draft["evidence_refs"].append(str(evidence_ref))
-        idea["literature_search_count"] = int(idea.get("literature_search_count") or 0) + 1
-        idea["updated_at"] = utc_now()
-        phase_state["s2_query_count"] = int(phase_state.get("s2_query_count") or 0) + 1
-        increment_iteration(phase_state)
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(
-        target_repo,
-        run_id,
-        "api_call",
-        {
-            "command": "idea search-semantic-scholar",
-            "idea_id": idea_id,
-            "query": query,
-            "service": result["provider"],
-            "provider": result["provider"],
-            "requested_provider": selected_provider,
-            "provenance": result["provenance"],
-            "fallback_from": result.get("fallback_from"),
-            "fallback_reason": result.get("fallback_reason"),
-        },
-        mutator,
-    )
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
-
-
-def record_evidence_batch(
-    target_repo: Path,
-    run_id: str,
-    *,
-    idea_ids: list[str],
-    queries: list[str],
-    evidence_payload: dict[str, Any] | None = None,
-    limit: int = 10,
-    provider: str = "auto",
-) -> dict[str, Any]:
-    if not idea_ids or not queries or len(idea_ids) != len(queries):
-        raise IdeationStateError("record-evidence-batch requires equal non-empty --idea-ids and --queries")
-    selected_provider = normalize_literature_provider(provider)
-    cfg = current_config(target_repo, run_id)
-    state = ensure_active_ideation_state(target_repo, run_id)
-    phase_state = state.setdefault("state", {})
-    ideas = phase_state.setdefault("idea_states", {})
-    missing = [idea_id for idea_id in idea_ids if not isinstance(ideas.get(idea_id), dict)]
-    if missing:
-        raise IdeationStateError(f"unknown idea_ids: {', '.join(missing)}")
-    gathered: list[dict[str, Any]] = []
-    for idea_id, query in zip(idea_ids, queries, strict=True):
-        result = literature_evidence(target_repo, query, limit, evidence_payload, selected_provider)
-        gathered.append({"idea_id": idea_id, "query": query, "result": result})
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        ideas = phase_state.setdefault("idea_states", {})
-        for item in gathered:
-            idea = ideas[item["idea_id"]]
-            result = item["result"]
-            evidence_ref = write_payload_log(target_repo, run_id, literature_log_dir(result["provider"]), f"{item['idea_id']}-{int(idea.get('literature_search_count') or 0) + 1:02d}.json", result["evidence"])
-            idea.setdefault("literature_evidence", []).append(literature_evidence_record(item["query"], evidence_ref, result))
-            latest_draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-            latest_draft.setdefault("evidence_refs", [])
-            if isinstance(latest_draft["evidence_refs"], list):
-                latest_draft["evidence_refs"].append(str(evidence_ref))
-            idea["literature_search_count"] = int(idea.get("literature_search_count") or 0) + 1
-            idea["updated_at"] = utc_now()
-        phase_state["s2_query_count"] = int(phase_state.get("s2_query_count") or 0) + len(gathered)
-        increment_iteration(phase_state)
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(
-        target_repo,
-        run_id,
-        "api_call",
-        {
-            "command": "idea record-evidence-batch",
-            "idea_ids": idea_ids,
-            "queries": queries,
-            "service": "literature",
-            "requested_provider": selected_provider,
-            "providers": [item["result"]["provider"] for item in gathered],
-        },
-        mutator,
-    )
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
 
 def finalization_decision(idea: dict[str, Any], preset: dict[str, Any]) -> tuple[str, str]:
     if not latest_critic_matches(idea):
@@ -1898,10 +1540,6 @@ def finalization_decision(idea: dict[str, Any], preset: dict[str, Any]) -> tuple
         if not preset.get("allow_accepted_without_reference"):
             raise IdeationStateError("mode does not allow ACCEPTED_WITHOUT_REFERENCE")
         return "ACCEPTED_WITHOUT_REFERENCE", "accepted_without_reference"
-    if preset.get("s2_required") and not has_literature_evidence(idea):
-        if preset.get("allow_accepted_without_reference"):
-            return "ACCEPTED_WITHOUT_REFERENCE", "accepted_without_reference"
-        raise IdeationStateError("literature_evidence_required")
     return "ACCEPTED", "accepted"
 
 
@@ -2040,94 +1678,6 @@ def exhaust_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None, 
         update_cursor(state, cfg)
 
     updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "idea exhaust", "idea_id": idea_id, "reason": reason}, mutator)
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
-
-
-def ranking_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    items = payload.get("ranked_ideas") or payload.get("candidates") or payload.get("ideas")
-    if not isinstance(items, list) or not items:
-        raise IdeationStateError("ranking payload requires ranked_ideas/candidates list")
-    normalized: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            raise IdeationStateError("ranking items must be objects")
-        idea_id = item.get("idea_id") or item.get("id")
-        if not isinstance(idea_id, str) or not idea_id:
-            raise IdeationStateError("ranking item missing idea_id")
-        score = item.get("score")
-        if not has_int_score(score):
-            raise IdeationStateError(f"ranking item {idea_id} missing integer score 0..100")
-        normalized.append({**item, "idea_id": idea_id, "score": score})
-    return normalized
-
-
-def rank_candidates(target_repo: Path, run_id: str) -> dict[str, Any]:
-    return {"intent": start_intent(target_repo, run_id, "ranker")}
-
-
-def finalize_ranking(target_repo: Path, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    cfg = current_config(target_repo, run_id)
-    items = ranking_items(payload)
-    selected = payload.get("selected_idea_id") or payload.get("selected") or payload.get("selected_id")
-    if not isinstance(selected, str) or not selected:
-        raise IdeationStateError("ranking payload requires selected_idea_id")
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        ideas = phase_state.setdefault("idea_states", {})
-        terminal_ids = {idea["id"] for idea in terminal_ideas(state)}
-        ranked_ids = {item["idea_id"] for item in items}
-        missing = sorted(terminal_ids - ranked_ids)
-        if missing:
-            raise IdeationStateError(f"ranking missing terminal ideas: {', '.join(missing)}")
-        plain_rank = 1
-        for item in items:
-            idea = ideas.get(item["idea_id"])
-            if not isinstance(idea, dict):
-                raise IdeationStateError(f"ranking references unknown idea: {item['idea_id']}")
-            idea["score"] = item["score"]
-            idea["score_components"] = item.get("score_components") or item.get("components")
-            idea["rationale"] = item.get("rationale")
-            idea["risk_flags"] = item.get("risk_flags")
-            if idea.get("evaluation") == "ACCEPTED":
-                idea["rank"] = int(item.get("rank") or plain_rank)
-                plain_rank += 1
-            else:
-                idea["rank"] = None
-            idea["researchable"] = is_researchable_idea(idea, cfg)
-            idea["selected"] = idea["id"] == selected
-        candidates = researchable_candidates(state, cfg)
-        candidate_ids = {idea["id"] for idea in candidates}
-        if selected not in candidate_ids:
-            raise IdeationStateError("selected_idea_id must be researchable under frozen mode config")
-        phase_state["ranking"] = {
-            "status": "final",
-            "selected_idea_id": selected,
-            "ranked_at": utc_now(),
-            "rationale": payload.get("rationale"),
-            "ranking_ref": str(write_payload_log(target_repo, run_id, "ranking", "ranking-final.json", payload)),
-        }
-        phase_state["handoff"] = {
-            "status": "ready",
-            "selected_idea_id": selected,
-            "candidates": [
-                {
-                    "idea_id": idea["id"],
-                    "evaluation": idea.get("evaluation"),
-                    "score": idea.get("score"),
-                    "rank": idea.get("rank"),
-                    "idea_hash": idea.get("idea_hash"),
-                }
-                for idea in candidates
-            ],
-            "config_snapshot": {"strictness_mode": cfg.get("strictness_mode"), "mode_preset": mode_preset(cfg)},
-        }
-        clear_pending_intent_for_role(phase_state, "ranker")
-        increment_iteration(phase_state)
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(target_repo, run_id, "selection", {"command": "ideation rank-finalize", "selected_idea_id": selected}, mutator)
     sync_ideas_archive(target_repo, run_id, updated)
     return updated
 
@@ -2399,7 +1949,7 @@ def next_instruction(state: dict[str, Any]) -> str:
     return (
         f"AI Scientist ideation run {state.get('run_id')} is active. "
         f"Next action: {state.get('next_action', {}).get('type', 'continue')}. "
-        "Use SearchSemanticScholar when literature evidence is needed."
+        "Include stable evidence refs in the idea artifact when literature evidence is needed."
     )
 
 
@@ -2468,16 +2018,6 @@ def save_draft(target_repo: Path, state: dict[str, Any], idea: dict[str, Any]) -
     return state, path
 
 
-def advance_after_search(target_repo: Path, state: dict[str, Any], cache_path: Path) -> dict[str, Any]:
-    run_root = run_dir(target_repo, state["run_id"])
-    state["last_search_file"] = str(cache_path.relative_to(run_root)) if cache_path.is_relative_to(run_root) else str(cache_path)
-    state["reflection_round"] = int(state.get("reflection_round") or 0) + 1
-    state["next_action"] = {"type": "reflect_or_finalize"}
-    save_state(target_repo, state)
-    append_journal_event(target_repo, state["run_id"], "api_call", details={"service": "semantic_scholar", "cache_file": state["last_search_file"]})
-    return state
-
-
 def add_finalized_idea(target_repo: Path, state: dict[str, Any], idea: dict[str, Any]) -> dict[str, Any]:
     finalized = deepcopy(idea)
     finalized.setdefault("id", state.get("current_idea_id", "idea-001"))
@@ -2486,7 +2026,6 @@ def add_finalized_idea(target_repo: Path, state: dict[str, Any], idea: dict[str,
     finalized.setdefault("score", 80)
     finalized.setdefault("rank", len(state.get("finalized_ideas") or []) + 1)
     finalized.setdefault("reflection_count", max(1, int(state.get("reflection_round") or 0)))
-    finalized.setdefault("literature_search_count", 1 if state.get("last_search_file") else 0)
     finalized.setdefault("researchable", True)
     state.setdefault("finalized_ideas", []).append(finalized)
     state["status"] = "ready_to_finalize"
