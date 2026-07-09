@@ -9,10 +9,9 @@ TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from test_support import PLUGIN_ROOT, read_json, write_json
+from test_support import PLUGIN_ROOT, write_json
 
 from ideation import finalize as finalize_ideation
-from ideation import state as ideation_state
 from ideation import validate as validate_idea
 
 
@@ -128,13 +127,10 @@ class IdeationValidatorTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             target = Path(td)
             (target / "README.md").write_text("fixture target\n")
-            state = ideation_state.initialize_ideation(target, "study ideas", run_id="ideation-test", target_num_ideas=1)
-            state = ideation_state.add_finalized_idea(target, state, proposal_grade_idea())
-            result = finalize_ideation.finalize_ideation(target, state, PLUGIN_ROOT)
+            result = finalize_ideation.finalize_ideation(target, {"run_id": "ideation-test"}, PLUGIN_ROOT)
 
             self.assertFalse(result["ok"], result)
-            self.assertEqual(read_json(target / ".ai-scientist" / "runs" / "ideation-test" / "run-status.json")["status"], "validation_failed")
-            self.assertEqual(len(read_json(target / ".ai-scientist" / "ideas" / "ideas.json")["ideas"]), 1)
+            self.assertEqual(result["reason"], "hook_driven_ideation_finalizer_retired")
 
 
 if __name__ == "__main__":

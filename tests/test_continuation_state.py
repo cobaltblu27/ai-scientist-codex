@@ -23,7 +23,7 @@ from core.state import (
 
 
 class ContinuationStateTests(unittest.TestCase):
-    def test_active_ideation_blocks_stop(self) -> None:
+    def test_active_ideation_allows_stop_because_goal_controls_loop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             start_phase(
@@ -41,8 +41,8 @@ class ContinuationStateTests(unittest.TestCase):
 
             decision = evaluate_stop_decision(target)
 
-            self.assertEqual(decision.decision, "block")
-            self.assertIn("active", decision.reason)
+            self.assertEqual(decision.decision, "allow")
+            self.assertEqual(decision.reason, "ai_scientist_ideation_goal_driven_stop_ignored")
 
     def test_terminal_missing_audit_reopens_and_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

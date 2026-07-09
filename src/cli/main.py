@@ -50,15 +50,12 @@ from ideation.state import (
     codex_max_threads,
     current_config,
     cursor_for_state,
-    exhaust_idea,
     exhaust_ideation,
     finalize_ready,
     nested_value,
-    reject_idea,
     resume_ideation,
     start_ideation,
     start_intent_batch,
-    start_revision,
     validate_max_subagents,
 )
 from writeup.state import (
@@ -2853,14 +2850,10 @@ def cmd_ideation_start(args: argparse.Namespace) -> int:
         mode=args.strictness_mode,
         num_ideas_required=args.num_ideas,
         min_candidates_required=args.min_candidates,
-        reflection_budget=args.reflection_budget,
-        max_attempts_per_slot=args.max_attempts_per_slot,
         max_subagents=args.max_subagents,
         payload=payload,
     )
-    cfg = current_config(target, args.run_id)
-    cursor = cursor_for_state(state, cfg)
-    return response("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)), **cursor)
+    return response("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)), control=state["state"]["orchestrator"]["control"])
 
 
 def cmd_ideation_resume(args: argparse.Namespace) -> int:
@@ -2877,7 +2870,7 @@ def cmd_ideation_cancel(args: argparse.Namespace) -> int:
 
 def cmd_ideation_complete(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
-    complete_ideation(target, run_id, budget_exhausted=args.budget_exhausted)
+    complete_ideation(target, run_id)
     return ideation_response(target, run_id)
 
 
@@ -2889,7 +2882,8 @@ def cmd_ideation_exhaust(args: argparse.Namespace) -> int:
 
 def cmd_ideation_finalize_ready(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
-    finalize_ready(target, run_id, idea_ids=args.idea_ids)
+    payload = load_payload(args)
+    finalize_ready(target, run_id, idea_ids=args.idea_ids, payload=payload)
     return ideation_response(target, run_id)
 
 
@@ -2916,24 +2910,6 @@ def cmd_ideation_intent_complete(args: argparse.Namespace) -> int:
 def cmd_ideation_intent_cancel(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
     cancel_intent(target, run_id, args.reason, intent_id=args.intent_id)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_revise_start(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    start_revision(target, run_id, args.idea_id, args.reason)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_reject(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    reject_idea(target, run_id, idea_id=args.idea_id, reason=args.reason)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_exhaust(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    exhaust_idea(target, run_id, idea_id=args.idea_id, reason=args.reason)
     return ideation_response(target, run_id)
 
 
@@ -3207,8 +3183,6 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_start.add_argument("--strictness-mode")
     ideation_start.add_argument("--num-ideas", type=int)
     ideation_start.add_argument("--min-candidates", type=int)
-    ideation_start.add_argument("--reflection-budget", type=int)
-    ideation_start.add_argument("--max-attempts-per-slot", type=int)
     ideation_start.add_argument("--max-subagents", type=int)
     add_json_args(ideation_start)
     ideation_start.set_defaults(func=cmd_ideation_start)
@@ -3222,7 +3196,6 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_cancel.set_defaults(func=cmd_ideation_cancel)
     ideation_complete = ideation_sub.add_parser("complete")
     ideation_complete.add_argument("--run-id")
-    ideation_complete.add_argument("--budget-exhausted", action="store_true")
     ideation_complete.set_defaults(func=cmd_ideation_complete)
     ideation_exhaust = ideation_sub.add_parser("exhaust")
     ideation_exhaust.add_argument("--run-id")
@@ -3230,12 +3203,13 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_finalize_ready = ideation_sub.add_parser("finalize-ready")
     ideation_finalize_ready.add_argument("--run-id")
     ideation_finalize_ready.add_argument("--idea-ids", nargs="+")
+    add_json_args(ideation_finalize_ready)
     ideation_finalize_ready.set_defaults(func=cmd_ideation_finalize_ready)
     ideation_intent = ideation_sub.add_parser("intent")
     ideation_intent_sub = ideation_intent.add_subparsers(dest="intent_command", required=True)
     intent_start_batch = ideation_intent_sub.add_parser("start-batch")
     intent_start_batch.add_argument("--run-id")
-    intent_start_batch.add_argument("--role", required=True, choices=sorted({"generator", "critic"}))
+    intent_start_batch.add_argument("--role", required=True, choices=sorted({"generator", "critic", "selector", "schema_builder"}))
     intent_start_batch.add_argument("--count", type=int)
     intent_start_batch.add_argument("--idea-ids", nargs="+")
     intent_start_batch.add_argument("--agent-thread-id")
@@ -3290,25 +3264,6 @@ def build_parser() -> argparse.ArgumentParser:
     writeup_negative.add_argument("--run-id")
     writeup_negative.add_argument("--reason", required=True)
     writeup_negative.set_defaults(func=cmd_writeup_negative_complete)
-
-    idea = sub.add_parser("idea")
-    idea_sub = idea.add_subparsers(dest="command", required=True)
-    idea_revise = idea_sub.add_parser("revise-start")
-    idea_revise.add_argument("--run-id")
-    idea_revise.add_argument("--idea-id", required=True)
-    idea_revise.add_argument("--reason")
-    idea_revise.set_defaults(func=cmd_idea_revise_start)
-    idea_reject = idea_sub.add_parser("reject")
-    idea_reject.add_argument("--run-id")
-    idea_reject.add_argument("--idea-id")
-    idea_reject.add_argument("--reason", required=True)
-    idea_reject.set_defaults(func=cmd_idea_reject)
-    idea_exhaust = idea_sub.add_parser("exhaust")
-    idea_exhaust.add_argument("--run-id")
-    idea_exhaust.add_argument("--idea-id")
-    idea_exhaust.add_argument("--reason", default="reflection_budget_exhausted")
-    idea_exhaust.set_defaults(func=cmd_idea_exhaust)
-
     validation = sub.add_parser("validation")
     validation_sub = validation.add_subparsers(dest="command", required=True)
     validation_record = validation_sub.add_parser("record")

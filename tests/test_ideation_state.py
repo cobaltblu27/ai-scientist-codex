@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import unittest
 from pathlib import Path
@@ -36,99 +35,69 @@ def campaign_contract() -> dict[str, object]:
     }
 
 
+def final_idea() -> dict[str, object]:
+    return {
+        "id": "idea-001",
+        "family_key": "fixture-family",
+        "title": "Fixture schema idea",
+        "hypothesis": "This intervention improves fixed held-out score over the baseline.",
+        "unique_protocol": "Run baseline, apply intervention, compare fixed held-out score.",
+        "expected_metric": "score",
+        "mechanism": "Improves representation quality under the fixed evaluator.",
+        "implementation_sketch": "Modify the existing model update path and run the evaluator.",
+        "expected_metric_effect": "Improve held-out score by at least 0.03.",
+        "fit_to_research_contract": "Uses the fixed dataset, split, baseline, metric, and evaluator unchanged.",
+        "novelty_angle": "Tests a specific mechanism under the repository benchmark.",
+        "smoke_runnable_now": True,
+        "requires_implementation": [],
+        "minimum_command": "uv run python -m pytest",
+        "evidence_refs": [],
+        "rubric_scores": {"feasibility": 80, "repo_fit": 80},
+        "risk_flags": ["May not beat the baseline."],
+    }
+
+
 class IdeationStateTests(unittest.TestCase):
-    def _start_run_with_drafts(self, target: Path, *, count: int = 1) -> None:
-        (target / "README.md").write_text("fixture target\n")
-        ideation_state.start_ideation(target, "run-001", "fixture", mode="engineer", num_ideas_required=count, payload={"research_contract": campaign_contract()})
-        for index in range(1, count + 1):
-            idea_id = f"idea-{index:03d}"
-            ideation_state.record_draft(
-                target,
-                "run-001",
-                {
-                    "id": idea_id,
-                    "title": f"Fixture idea {index}",
-                    "hypothesis": "Changing the update rule will improve held-out score.",
-                    "fit_to_research_contract": "Uses the fixed benchmark contract unchanged.",
-                    "smoke_runnable_now": False,
-                },
-                idea_id=idea_id,
-            )
-
-    def _loop_state(self, target: Path) -> dict:
-        return read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
-
-    def test_explicit_command_detection_only(self) -> None:
-        self.assertTrue(ideation_state.is_ideation_command("/ideate propose ideas"))
-        self.assertTrue(ideation_state.is_ideation_command("$ai-scientist ideate propose ideas"))
-        self.assertTrue(ideation_state.is_ideation_command("ai-scientist: ideate propose ideas"))
-        self.assertFalse(ideation_state.is_ideation_command("please brainstorm research ideas"))
-
-    def test_initialize_writes_state_and_artifacts(self) -> None:
+    def test_start_writes_goal_driven_ledger_state(self) -> None:
         with TemporaryDirectory() as td:
             target = Path(td)
-            (target / "README.md").write_text("fixture target\n")
-            state = ideation_state.initialize_ideation(target, "study benchmark-preserving ideas", run_id="ideation-test", target_num_ideas=2)
+            (target / "pyproject.toml").write_text("[project]\nname='fixture'\nversion='0.1.0'\n")
+            state = ideation_state.start_ideation(target, "run-001", "fixture", mode="engineer", payload={"research_contract": campaign_contract()})
 
-            self.assertEqual(state["status"], "active")
-            self.assertEqual(state["current_idea_id"], "idea-001")
-            self.assertEqual(state["max_stop_continuations"], 12)
-            self.assertEqual(state["next_action"]["type"], "propose")
-            self.assertTrue((target / ".ai-scientist" / "state" / "active-ideation.json").exists())
-            self.assertTrue((target / ".ai-scientist" / "runs" / "ideation-test" / "filesystem-baseline.json").exists())
-            pointer = read_json(target / ".ai-scientist" / "state" / "active-ideation.json")
-            self.assertEqual(pointer["state_file"], ".ai-scientist/runs/ideation-test/ideation-state.json")
+            phase_state = state["state"]
+            self.assertEqual(phase_state["orchestrator"]["control"], "create_goal")
+            self.assertNotIn("reflection_budget_per_idea", phase_state)
+            self.assertNotIn("max_attempts_per_slot", phase_state)
+            self.assertEqual(ideation_state.cursor_for_state(state)["next_action"], None)
+            self.assertTrue((target / ".ai-scientist" / "runs" / "run-001" / "ideas.json").exists())
 
-    def test_repeated_stop_block_becomes_user_blocker(self) -> None:
+    def test_selector_and_schema_builder_intents_are_ledger_artifacts(self) -> None:
         with TemporaryDirectory() as td:
             target = Path(td)
-            state = ideation_state.initialize_ideation(
-                target,
-                "study ideas",
-                run_id="ideation-test",
-                max_stop_continuations=10,
-                max_repeated_block_count=2,
-            )
-            state = ideation_state.register_stop_block(target, state, "missing_parseable_action")
-            state = ideation_state.register_stop_block(target, state, "missing_parseable_action")
-            state = ideation_state.register_stop_block(target, state, "missing_parseable_action")
+            (target / "pyproject.toml").write_text("[project]\nname='fixture'\nversion='0.1.0'\n")
+            ideation_state.start_ideation(target, "run-001", "fixture", mode="engineer", payload={"research_contract": campaign_contract()})
+            batch = ideation_state.start_intent_batch(target, "run-001", "selector", count=1)
+            intent = batch["intents"][0]
+            Path(intent["result_path"]).write_text("Select idea-001 because it is feasible.")
 
-            self.assertEqual(state["status"], "blocked")
-            self.assertEqual(state["reason"], "repeated_stop_hook_block")
-            self.assertTrue(state["next_user_action_required"])
+            ideation_state.complete_intent(target, "run-001", {}, intent_id=intent["intent_id"])
+            state = read_json(target / ".ai-scientist" / "runs" / "run-001" / "loop-state.json")
+            self.assertEqual(state["state"]["pending_intents"], {})
+            self.assertEqual(len(state["state"]["artifacts"]["selector_reports"]), 1)
 
-    def test_stop_continuation_limit_blocks_cleanly(self) -> None:
+    def test_finalize_ready_and_complete_use_final_schema_only(self) -> None:
         with TemporaryDirectory() as td:
             target = Path(td)
-            state = ideation_state.initialize_ideation(
-                target,
-                "study ideas",
-                run_id="ideation-test",
-                max_stop_continuations=2,
-            )
-            state = ideation_state.register_stop_continuation(target, state)
-            state = ideation_state.register_stop_continuation(target, state)
-            state = ideation_state.register_stop_continuation(target, state)
+            (target / "pyproject.toml").write_text("[project]\nname='fixture'\nversion='0.1.0'\n")
+            ideation_state.start_ideation(target, "run-001", "fixture", mode="engineer", payload={"research_contract": campaign_contract()})
+            ideation_state.finalize_ready(target, "run-001", payload={"ideas": [final_idea()]})
+            completed = ideation_state.complete_ideation(target, "run-001")
 
-            self.assertEqual(state["status"], "blocked")
-            self.assertEqual(state["reason"], "max_stop_continuations_exceeded")
-            self.assertTrue(state["next_user_action_required"])
+            self.assertEqual(completed["phase_status"], "COMPLETED")
+            ideas = read_json(target / ".ai-scientist" / "runs" / "run-001" / "ideas.json")["ideas"]
+            self.assertEqual(ideas[0]["evaluation"], "ACCEPTED")
+            self.assertEqual(completed["state"]["handoff"]["idea_batch"], ["idea-001"])
 
-    def test_action_snapshot_points_state_to_file(self) -> None:
-        with TemporaryDirectory() as td:
-            target = Path(td)
-            state = ideation_state.initialize_ideation(target, "study ideas", run_id="ideation-test")
-            state, action_path = ideation_state.record_action(
-                target,
-                state,
-                'ACTION:\nFinalizeIdea\nARGUMENTS:\n{"idea": {"title": "Draft"}}',
-                {"turn_id": "turn-abc"},
-            )
-
-            self.assertTrue(action_path.exists())
-            self.assertEqual(state["last_action_file"], "actions/turn-abc-0001.json")
-            record = read_json(action_path)
-            self.assertEqual(record["parsed_action"]["action"], "FinalizeIdea")
 
 if __name__ == "__main__":
     unittest.main()

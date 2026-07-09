@@ -182,7 +182,6 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertIn("Do not invent citations", skill)
         self.assertIn("Preflight references found before generator subagents exist are advisory only", skill)
         self.assertIn("`literature-search` skill", ideation)
-        self.assertIn("OpenAlex_API_Guide", ideation)
         self.assertNotIn("search-semantic-scholar", ideation)
         self.assertNotIn("research literature-search", skill)
 
@@ -198,21 +197,22 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertIn("skills/heiemeier-question/SKILL.md", ideation)
         self.assertIn("This sequence is orchestration guidance, not a new CLI lifecycle gate", ideation)
-        self.assertIn("Do not create new required artifacts, new cursor actions, or new Stop-hook blockers", ideation)
+        self.assertIn("Do not create new required artifacts or new helper-enforced state transitions", ideation)
+        self.assertIn("Before starting the ideation run, call `create_goal`", ideation)
+        self.assertIn("The active goal is the continuation mechanism for ideation", ideation)
 
     def test_generator_prompts_require_literature_search_skill(self) -> None:
         ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
         self.assertIn("`literature-search` skill", ideation)
         self.assertIn("preflight reference papers", ideation)
         self.assertIn("Heiemeier answers/insights", ideation)
-        self.assertIn("not as a substitute for evidence they can stand behind", ideation)
         self.assertIn("run-owned `research_contract`", ideation)
-        self.assertIn("fit_to_research_contract", ideation)
+        self.assertIn("frozen `research_contract`", ideation)
 
     def test_fixed_contract_campaign_prompt_contracts(self) -> None:
         ideation = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
         self.assertIn("run-owned `research_contract`", ideation)
-        self.assertIn("accepted idea batch", ideation)
+        self.assertIn("selected idea batch", ideation)
         self.assertIn("handoff.idea_batch", ideation)
         self.assertNotIn("rank-candidates", ideation)
         self.assertNotIn("rank-finalize", ideation)
@@ -258,18 +258,17 @@ class IdeationPromptSchemaTests(unittest.TestCase):
 
     def test_ideation_defaults_to_six_subagents(self) -> None:
         self.assertEqual(DEFAULT_IDEATION_CONFIG["concurrency"]["max_subagents"], 6)
-        self.assertEqual(DEFAULT_IDEATION_CONFIG["reflection_budget_per_idea"], 10)
-        self.assertEqual(DEFAULT_IDEATION_CONFIG["max_attempts_per_slot"], 3)
+        self.assertNotIn("reflection_budget_per_idea", DEFAULT_IDEATION_CONFIG)
+        self.assertNotIn("max_attempts_per_slot", DEFAULT_IDEATION_CONFIG)
 
-    def test_ideation_prompts_define_reject_as_fresh_respawn(self) -> None:
+    def test_ideation_skill_defines_constructive_critic_flow(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
-        self.assertIn("`REJECT` means kill the current attempt and respawn a fully fresh generator for the same slot", skill)
-        for mode in ["scientist", "engineer", "custom"]:
-            critic = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "critic.md").read_text()
-            self.assertIn("respawn a fully fresh generator for the same slot", critic)
-            for verdict in ["ACCEPT", "ACCEPT_WITHOUT_REFERENCE", "REVISE", "REJECT"]:
-                self.assertIn(f"## `{verdict}`:", critic)
-            self.assertGreaterEqual(critic.count("Examples:"), 4)
+        self.assertIn("The critic is a constructive feedback provider, not an acceptance gate", skill)
+        self.assertIn("Do not accept or reject the ideas", skill)
+        self.assertIn("Select final ideas", skill)
+        self.assertIn("Form the final idea into fixed schema with implementation detail", skill)
+        self.assertNotIn("Stop hook", skill)
+        self.assertNotIn("Stop-hook", skill)
 
     def test_ideation_acceptance_requires_mechanistic_reason_to_work(self) -> None:
         required_terms = [

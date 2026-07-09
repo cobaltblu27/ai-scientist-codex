@@ -13,20 +13,12 @@
     "default_mode": "scientist",
     "num_ideas_required": 10,
     "min_candidates_required": 1,
-    "reflection_budget_per_idea": 10,
-    "max_attempts_per_slot": 3,
-    "early_stop_allowed": false,
     "prompt_root": "prompts/ideation",
     "concurrency": {
       "max_subagents": 6
     },
     "modes": {
       "scientist": {
-        "allow_accepted_without_reference": false,
-        "allow_selection_without_reference": false,
-        "candidate_evaluations": [
-          "ACCEPTED"
-        ],
         "scoring_weights": {
           "novelty": 0.35,
           "evidence": 0.25,
@@ -39,12 +31,6 @@
         "critic_prompt_source": "prompts/ideation/scientist/critic.md"
       },
       "engineer": {
-        "allow_accepted_without_reference": true,
-        "allow_selection_without_reference": true,
-        "candidate_evaluations": [
-          "ACCEPTED",
-          "ACCEPTED_WITHOUT_REFERENCE"
-        ],
         "scoring_weights": {
           "performance": 0.45,
           "feasibility": 0.3,
@@ -57,12 +43,6 @@
         "critic_prompt_source": "prompts/ideation/engineer/critic.md"
       },
       "custom": {
-        "allow_accepted_without_reference": true,
-        "allow_selection_without_reference": true,
-        "candidate_evaluations": [
-          "ACCEPTED",
-          "ACCEPTED_WITHOUT_REFERENCE"
-        ],
         "scoring_weights": {
           "custom_fit": 0.4,
           "feasibility": 0.3,

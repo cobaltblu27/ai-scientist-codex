@@ -1,22 +1,14 @@
 ---
 name: ideation
-description: Generate structured research ideas from an inline prompt by running a Codex-native, Stop-hook-enforced ideation loop. DO NOT USE; this skill is explicit-usuage ONLY.
+description: Generate structured research ideas from an inline prompt by running a Codex-native, goal-driven loop. DO NOT USE; this skill is explicit-usuage ONLY.
 ---
 
 # Ideation
 
 <Intro>
 
-<Use_When>
-Use this skill ONLY when the user explicitly triggers this skill. This skill is for research ideas, hypotheses, or experiment proposals before running a research loop, a separate skill.
-</Use_When>
-
-<Do_Not_Use_When>
-- You are told to generate idea for ideation loop. your job is to generate idea, not to operate a orchestration.
-</Do_Not_Use_When>
-
 <Purpose>
-You are the ideation orchestrator. The current Codex session owns the loop. Python helper commands only create artifacts, validate state transitions, and compute the next Stop-hook cursor. Literature search is prompt-owned by the orchestrator or subagents, not a CLI-owned API path. Do not run a Python loop, do not run nested `codex exec`, and do not run a retired Python-owned ideation orchestrator.
+You are the ideation orchestrator. The current Codex session owns the loop, driven by a goal created with `create_goal`. Python helper commands only initialize the run, keep a lightweight ledger of pending subagent artifacts, validate final schema, and prepare final handoff artifacts. Literature search, brainstorming, critic feedback, selection, and refinement are prompt-owned by the orchestrator or subagents.
 </Purpose>
 
 <Persona>
@@ -27,7 +19,7 @@ You are curious and aesthetically demanding. You get bored by generic ideas, dup
 You are the idea curator. Use literature, Heiemeier framing, data insight, generators, and critics to shape a diverse batch of concrete model-improvement directions. Push generators away from duplicates and vague tuning, but keep every idea implementable under the frozen contract.
 </Goal>
 <Supergoal>
-Your higher duty is to seed genuine scientific or engineering discovery. The accepted batch should contain ideas worth spending research-loop resources on: evidence-grounded, mechanism-bearing, contract-preserving, and capable of teaching something even when they fail.
+Your higher duty is to seed genuine scientific or engineering discovery. The selected final batch should contain ideas worth spending research-loop resources on: evidence-grounded, mechanism-bearing, contract-preserving, and capable of teaching something even when they fail.
 </Supergoal>
 </Persona>
 
@@ -36,54 +28,59 @@ Your higher duty is to seed genuine scientific or engineering discovery. The acc
 <Big_Picture_And_Flow>
 
 <Workflow_Overview>
-The ideation loop starts only after the user explicitly calls this skill with a research topic. First, initialize the run through `ai-scientist`, freezing the prompt and mode. Before asking agents to brainstorm, do a short preflight: scan for reference papers, run the Heiemeier question pass, and turn those findings into a compact shared assignment brief. Then record generator intents and spawn generator subagents; each generator proposes one idea draft under the fixed contract and writes JSON to its assigned result path. After drafts are recorded, spawn fresh critic subagents for the current draft versions, record their verdicts, and use the CLI cursor to decide whether each slot should be finalized, revised, rejected into a fresh attempt, or exhausted. Repeat the resume -> intent -> subagent -> record -> critic -> finalize/revise loop until the run has an accepted idea batch that satisfies the frozen mode config and minimum candidate policy, or until it is exhausted. Finally, complete the ideation run and validate the `ideation_to_research` handoff; do not start the research loop unless the user explicitly asks for that separate step.
+The ideation loop starts only after the user explicitly calls this skill with a research topic. First, create a goal with `create_goal`, then initialize the run through `ai-scientist`, freezing the prompt and mode. Before asking agents to brainstorm, do a short preflight: scan for reference papers, run the Heiemeier question pass, and turn those findings into a compact shared assignment brief.
+
+Then spawn generator subagents to brainstorm a pool of ideas. Filter the generated ideas with hard obvious rules, removing duplicates and ideas that are obviously impossible. Send the remaining ideas to critic subagents for constructive reflection and refinement feedback. Select the best ideas using subagents, then form the selected ideas into the fixed final schema with implementation detail.
 </Workflow_Overview>
 
 <Contract_First_Boundary>
 Unless user provides already created research contract, use `skills/create-contract/SKILL.md` for creating a new contract file. In this case, Do not start ideation during contract creation.
 </Contract_First_Boundary>
 
-<Rules>
-- Treat the invocation text as the research topic.
-- Do not mutate target repository source code during ideation. The only target-repository writes are under `.ai-scientist/`.
-- Install/check the project-local Stop hook before starting a real run.
-- All state transitions go through `ai-scientist`.
-- Record subagent intents before spawning generators or critics. Pending intents intentionally block Stop until you record completion or cancellation.
-- Before spawning generators or critics, run `ai-scientist agents check`; if generated native agents are missing or stale, run `ai-scientist agents install` for the same Codex home or target repo.
-- Spawn generator and critic subagents by configured `agent_type`; do not read and paste prompt Markdown from `prompts/` into task prompts.
-- Before spawning the first generator batch for a topic, perform the prompt-only pre-generation synthesis: find reference papers, run `skills/heiemeier-question/SKILL.md`, and use those insights to frame generator assignments.
-- Spawn a separate idea-generation subagent for each substantive idea draft or revision. Use the configured generator `agent_type`.
-- Spawn a fresh critic for each draft or revised draft using the configured critic `agent_type`. Include previous critic verdict/revision notes in the dynamic assignment context; do not reuse long critic context.
-- Do not rank or select a single idea. Ideation produces an accepted idea batch under one run-owned performance contract.
-- `ideation_to_research` means "the fixed contract plus accepted idea batch is safe for research to consume." It must not start the research loop. Research start is a separate explicit user action.
-- Do not report success while Stop hook would still block.
-</Rules>
-
 <Required_Artifacts>
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
 - `config.json`: frozen ideation config, mode preset, generator/critic agent types, prompt source refs, and scoring policy.
-- `loop-state.json`: active cursor, active idea ids, pending intents, terminal status, candidate and batch handoff state.
+- `loop-state.json`: active idea ids, pending intents, terminal status, candidate and batch handoff state.
 - `ideas.json`: canonical terminal idea archive.
 - `journal.jsonl`: append-only audit stream.
-- `logs/drafts/*.json`: versioned draft payloads.
-- `logs/critics/*.json`: critic verdict payloads.
-- `logs/pending/<intent-id>.json`: assigned path where each subagent writes JSON only.
+- `logs/drafts/*.md`: markdown idea batch and refinement artifacts.
+- `logs/pilots/`: pilot runs for choosing ideas.
 - `logs/ideation-contract.json`: shared run context, repo entrypoints, split policy, hardware limits, forbidden workflows, reusable baselines, metric names, and strictness mode.
-
-Root `.ai-scientist/active-run.json` points the Stop hook to the active run.
 </Required_Artifacts>
 
-<Cursor_Actions>
-The helper computes `next_action`. Follow it exactly.
+<Arguments>
+These are variables that may be provided with prompt, when using this skill. arguments are not restricted to these, user may add a tweak to workflow.
+Add these 'arguments' in goal below, to freeze them.
+Common arguments may include:
+- Research goal (required)
+- number of ideas to make (default: 10)
+- number of ideas per subagents (default: 4~6)
+- number of subagents to spawn (default: enough to create idea cnt, given idea per subagents. need to add space for filtered ideas, around 1.5x)
+- number of reflections for critic agent (default: 3)
+- etc
 
-- `start_generator_batch`: run the prompt-only pre-generation synthesis before the first generator batch for a topic, then record up to `ideation.concurrency.max_subagents` generator intents, spawn that many generator subagents, and record all draft results. When `next_action_details.idea_ids` is present, start generators for those exact same idea ids instead of allocating new slots.
-- `collect_subagent_results`: previous generator/critic intents are pending; record completion or cancellation for each representative `intent_id` before doing anything else.
-- `start_critic_batch`: record critic intents for all ready draft `idea_ids`, spawn critics, then record all verdicts.
-- `revise_or_reject_batch`: one or more slots need a decision. `REVISE` means improve the current attempt if its per-attempt reflection budget remains. `REJECT` means kill the current attempt and respawn a fully fresh generator for the same slot. If details say the reflection budget or fresh-attempt cap is exhausted, call `idea exhaust`.
-- `finalize_ready_ideas`: call `ideation finalize-ready`; the transition is atomic and refuses stale critics, duplicate families without a meaningful protocol/metric delta, invalid commands, or missing evidence.
-- `complete_or_exhaust`: call `ideation complete` if the accepted idea batch satisfies `min_candidates`; otherwise call `ideation exhaust`.
-</Cursor_Actions>
+</Arguments>
+
+<Goal_Preflight>
+Before starting the ideation run, call `create_goal` with this objective:
+
+```text
+Follow the $ideation skill guide to achieve the following:
+- Brainstorm the ideas using subagents
+- Go through reflection, and refinement using critic
+- Select final ideas.
+- Form the final idea into fixed schema with implementation detail.
+- The goal is finished when all steps of the skill guide is done, and idea artifact has all been formulized. 
+
+
+- <Arguments from prompt>
+
+To check for the goal criteria, check the $ideation skill again. Check which step you are in, and keep following the instruction.
+```
+
+The active goal is the continuation mechanism for ideation.
+</Goal_Preflight>
 
 <Pre_Generation_Synthesis>
 Before the first generator intent batch for a topic, follow this prompt-only order:
@@ -94,7 +91,7 @@ Before the first generator intent batch for a topic, follow this prompt-only ord
 4. Generator assignment synthesis.
 5. Generator intent batch.
 
-This sequence is orchestration guidance, not a new CLI lifecycle gate. Do not create new required artifacts, new cursor actions, or new Stop-hook blockers for this preflight. Do not add a new helper-enforced state transition for this preflight. The orchestrator must still obtain a valid data-insight report, or a recorded blocker explaining why data insight cannot be performed, before spawning generator subagents. Keep the result as compact context that is copied into generator assignments.
+This sequence is orchestration guidance, not a new CLI lifecycle gate. Do not create new required artifacts or new helper-enforced state transitions for this preflight. The orchestrator must still obtain a valid data-insight report, or a recorded blocker explaining why data insight cannot be performed, before spawning generator subagents. Keep the result as compact context that is copied into generator assignments.
 
 <Preflight_Reference_Scan>
 Find reference papers first. Also use the `literature-search` skill to check API works (only for API check, you don't have to search for references). Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later includes stable source refs in its draft/report.
@@ -156,7 +153,7 @@ These are common rules for ideation. You MUST consider this for idea generation 
 
 - centered on scientific/engineering finding or novel methodology for enhanced performance.
 - when suggesting a methodology for performance boost, refrain from mere incremental changes.
-- requires literature evidence for plain `ACCEPTED`; critic prioritizes novelty, publication claim, leakage/split risk, and evidence quality.
+- requires credible literature evidence for final selected ideas; critic prioritizes novelty, publication claim, leakage/split risk, and evidence quality.
 
 `engineer`:
 
@@ -190,81 +187,19 @@ unclear and the command is required, ask or fail fast with a clear blocker.
 </Python_Launcher>
 
 <Startup>
-From the target repository root, install/check the Stop hook:
-
-```bash
-ai-scientist hooks install --project-root <target-repo>
-```
-
 Install/check generated Codex native agents before spawning subagents:
 
 ```bash
 ai-scientist agents check --target-repo <target-repo> || ai-scientist agents install --target-repo <target-repo>
 ```
-
-Start the run:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation start \
-  --run-id <run-id> \
-  --prompt "<research prompt>" \
-  --json-file <campaign-contract.json> \
-  --strictness-mode scientist \
-  --num-ideas 10
-```
-
-The JSON payload must include a top-level run-owned `research_contract` for a fixed performance campaign: dataset, split/protocol, baseline, metric(s), evaluator command, success criteria, target threshold, and non-drift definition. If `--strictness-mode` is omitted, default is `scientist`. If `--num-ideas` is omitted, default is 10 attempted slots. If `--reflection-budget` is omitted, default is 10 generator draft attempts per fresh idea attempt. Each slot may respawn up to `ideation.max_attempts_per_slot` fresh attempts, default 3. This is slot-based, not "10 accepted ideas."
-
-Resume from state:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation resume --run-id <run-id> --prompt
-```
-
-Use the returned `next_action` and prompt text as the immediate loop cursor. Repeat resume after every major state transition.
 </Startup>
 
-<Subagent_Protocol>
-Before spawning any subagent:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation intent start-batch --run-id <run-id> --role generator --count <n>
-```
-
-Use `--role critic --idea-ids <idea-id> ...` for critic batches.
-
-Before spawning a generator or critic, read the mode preset from `config.json` and use its `generator_agent` or `critic_agent` as the subagent `agent_type`. Do not paste the generated-agent source Markdown into the task prompt. The task prompt should contain only dynamic assignment context: run id, idea id, role, research topic, frozen `research_contract`, shared contract path, compact preflight/data-insight brief, prior verdicts only when revising, required result path, and required skill refs.
-
-Each returned intent includes `result_path`. Give that path to the subagent and require it to overwrite the file with JSON only. `intent complete --intent-id <id>` reads `result_path` by default. Use `--json` or `--path` only as explicit overrides.
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation intent complete --run-id <run-id> --intent-id <intent-id>
-```
-
-If the subagent result is malformed or unusable, cancel the pending intent with a reason, then resume:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation intent cancel --run-id <run-id> --intent-id <intent-id> --reason "malformed generator output"
-```
-
-Generator drafts consume only the current idea attempt's per-attempt reflection budget. Failed/cancelled generator intents end the slot as `error`; critic calls, literature search, finalization, and rejection bookkeeping do not consume reflection budget. Do not leave pending intents unresolved.
-</Subagent_Protocol>
-
 <Prompting>
+
 # Prompting Guide
 Natural prompting: prompt as you're explaining what subagent needs to do. keep in mind the common mistake llms tend to make, assuming others know what you know.
 Try to talk like an engineer living in LA, so subagents feel like its being prompted by human.
-For generators, let agents know that it will be reviewed by a critic.
+For generators, let agents know that output will be reviewed by a critic.
 
 # Prompting Steps
 For some agents, prompting will be done in multiple steps. Prompting content requires multiple steps when next prompt requires output from previous one.
@@ -273,244 +208,174 @@ For sake of efficiency, you may prompt multiple agents, and give next piece of p
 </Prompting>
 
 
-<Generation>
-Spawn one generator per idea slot or substantive revision in the current batch. Generators should not edit files. Each returns one canonical idea object.
+<Ideation_Workflow>
+Spawn generators for idea brainstorming.
+Generator subagent can be spawned with `agent_type` from `config.json` (`generator_agent`).
+Run the process step-wise. give prompts to subagents in current step, so they can work concurrently. when they're all done, and all jobs for the current steps are finished, you may proceed to next step.
 
-Spawn the generator with `agent_type` from `config.json` (`generator_agent`).
-
-Prompting will be done in 3 steps. 
+Prompting will be done in stages.
 
 # Step 1: Idea generation
 
 ## Literature_Search
 Generator subagents should use the `literature-search` skill when the mode/prompt makes it useful. Scientist mode should be evidence-demanding through generator and critic judgment, but the CLI no longer enforces a provider-specific literature gate.
 
-Use any reliable search surface available in the session: scholarly search, venue pages, paper PDFs, local paper corpora, benchmark docs, dataset/model cards, source repositories, or web search that leads to primary sources. If using OpenAlex directly, follow `OpenAlex_API_Guide` in the `literature-search` skill. Store evidence as stable refs in draft JSON, critic reports, revision reports, or checkpointed artifact refs; do not expect a CLI literature cache or provider log.
+Use any reliable search surface available in the session: scholarly search, venue pages, paper PDFs, local paper corpora, benchmark docs, dataset/model cards, source repositories, or web search that leads to primary sources. Use `literature-search` skill. Store evidence as stable refs in draft reports, critic feedback, revision reports, final schema fields, or checkpointed artifact refs; do not expect a CLI literature cache or provider log.
 
-First ask the generator subagent for the initial idea. Ask subagents for idea using information below:
+Ask generator subagents for idea batches using information below:
 - Research topic
 - Findings from using `literature-search` skill, such as local paper dataset or OpenAlex API
+- Essential content from research contract
+
+You may ask a follow-up prompt if you need.
 
 ## Example 
 (this is just an example, can be different)
+(For heterogeneouty in generated idea, you may give different prompts per each subagents. for example, giving different examples of literature-search result)
 ```
+Prompt: 
 I'm working on a project that <description and goals of project>.
 You are a brainstorming agent for research idea. Our goal is to think of a way to enhance performance on ~ tasks.
 So far, we found out <paragraphs about findings on literature-search>.
 Current bottleneck seems to be <...>.
 
-Brainstorm <optional n> {architecture|idea|...} that can be used for <what we need>. 
+Brainstorm <optional n> {architecture|idea|...} that can be used for <what we need>. If you used borrowed idea from existing work, make sure to cite it.
+However, your idea must contain a breakthrough; which means it shouldn't be a mere tuning of existing one.
 Keep in mind the output will be reviewed by the critic agent.
 ```
 
-# Step 2: Critic 
-Spawn a critic subagent to reinforce the idea
+## Idea Collection
+Using generator subagents, when they all return with list of ideas, gather them using following step.
 
+# Step 2: Hard obvious filter
 
+Before critic review, trim ideas that are obviously not worth spending review time on:
 
-# TODO: fill in the steps
-- research topic
-- strictness mode
-- current slot/idea id
-- run-owned `research_contract` with fixed dataset, split, baseline, metric, evaluator, and target threshold
-- preflight reference papers or a "none found" note
-- Heiemeier answers/insights from the pre-generation synthesis
-- unresolved assumptions from the preflight
-- the `literature-search` skill and permission to use it during the generator intent
-- previous critic verdict and required revisions only when this is a `REVISE` revision of the same attempt
-- no rejected draft details when this is a fresh replacement after `REJECT`
-- instruction to return JSON only
+- duplicate idea that has no meaningful mechanism or protocol difference from other idea;
+- ideas that architecturally leak validation/test labels, split information, or benchmark answers;
+- ideas that are drifted from the frozen research contract;
+- ideas that are impossible to implement in the target repo under the stated resources;
+- ideas that are trivial improvement over existing works, such as hyperparameter tuning, mere ensemble, calibration, or anything like that.
 
-Generators should use the preflight reference and Heiemeier brief as seed context, not as a substitute for evidence they can stand behind. Generators must not create per-idea research contracts or change the fixed dataset, split, baseline, metric, evaluator, or target threshold. Generators should use `literature-search` themselves when the idea needs papers, novelty checks, baseline refs, or mechanism evidence, then return stable source refs in `evidence_refs`.
+Keep a short note for each filtered idea so later selectors can understand why it was removed.
 
-Canonical draft payload should include at least:
+After filtering out, tell generator to write the ideas into a markdown, in `logs/drafts` path.
 
-```json
-{
-  "id": "idea-001",
-  "family_key": "family_key",
-  "title": "Short title",
-  "hypothesis": "Concrete hypothesis",
-  "mechanism": "Why this direction may improve the fixed benchmark",
-  "implementation_sketch": "How to implement this direction in the repository",
-  "expected_metric_effect": "Expected effect on the fixed metric",
-  "fit_to_research_contract": "Why this preserves the fixed dataset, split, baseline, metric, evaluator, and target threshold",
-  "novelty_angle": "Why this could become a scientific finding or useful engineering direction",
-  "unique_protocol": "What makes this experiment distinct from same-family ideas",
-  "expected_metric": "Metric or benchmark target",
-  "requires_implementation": [],
-  "minimum_command": "uv run python -m pytest",
-  "evidence_refs": [],
-  "rubric_scores": {"feasibility": 80, "repo_fit": 80},
-}
+## Example
+(This prompt can also be different, tell it to write down the laid out ideas)
+```
+Output:
+{List of ideas}
+
+Prompt:
+Now write each idea {Filtered list of ideas} into a markdown, in `logs/drafts/{agent-numbering}-{idea-id}-{name}.md`.
 ```
 
-Full prose, related work, and detailed plans belong in the referenced draft log, not in persisted state or final `ideas.json`. The run-owned `research_contract` is persisted in `config.json`; generated ideas should not carry their own contracts.
-</Generation>
+# Step 3: Critic feedback
+Spawn critic subagents to reinforce the remaining ideas. Spawn one subagent per each idea. 
 
-<Critic_Agent>
-Spawn a fresh critic for every draft version. The critic should not edit files. It returns a verdict payload.
+## Critic_Agent
+The critic is a constructive feedback provider. It should not edit files. It returns constructive feedback for the generator output.
 
-Spawn the critic with `agent_type` from `config.json` (`critic_agent`). The dynamic task prompt must include:
+Spawn the critic with `agent_type` from `config.json` (`critic_agent`). Give it the target idea markdown, with prompt for reviewing.
+Make it leave a comment on target markdown for constructive feedback.
 
-- current canonical idea draft
-- strictness mode
-- target venue/journal/conference when the user provided one in the original request or assignment; ask whether the idea is solid enough for that venue
-- evidence/search results if available
-- previous critic verdict and required revisions if this is a revised draft
-- instruction to return JSON only
-- the requirement that `research_contract` blocks quiet drift from the original goal into a merely valid report or weak negative result
+prompt contains:
+- target idea
+- what to look for
+- frozen `research_contract`;
+- instruction for review
 
-Critic payload schema:
+## Example
+Use prompt like following (below is an example, your prompt can change to fit the situation)
+```text
+Prompt:
+You are the constructive critic for this ideation loop. Review the idea batch below. Research contract is <path>
+Do not accept or reject the ideas. Give practical feedback the brainstorming agent can use to improve them:
+- dangerous assumptions
+- missing baselines
+- weak mechanism claims
+- missing evidence
+- implementation pitfalls
+- suggested refinements
 
-```json
-{
-  "verdict": "ACCEPT",
-  "score": 82,
-  "strengths": ["..."],
-  "weaknesses": ["..."],
-  "required_revisions": [],
-  "mode_specific_assessment": {},
-  "risk_flags": []
-}
+leave your comment in markdown as follows, considering the type of comment (such as nitpick, thought, blocker, suggestion, etc):
+(idea markdown)
+### Hypothesis 
+(hypothesis content)
+
+<!--
+critic-(type): (comment content)
+-->
+
 ```
 
-Allowed verdicts:
+# Step 4: Reflection and refinement
 
-- `ACCEPT`: candidate may become plain `ACCEPTED` if CLI hard gates pass.
-- `ACCEPT_WITHOUT_REFERENCE`: allowed only by mode config; useful for engineer/custom cases where external references are not central to the claim.
-- `REVISE`: do not finalize; revise the same idea attempt if budget remains, otherwise exhaust the slot.
-- `REJECT`: do not finalize; kill the current attempt and let the CLI respawn a fully fresh generator for the same slot when attempts remain.
+Give critic feedback-added idea markdown back to generator subagents. Ask them to improve the surviving ideas according to the critic's review.
 
-Record verdict by completing the critic intent:
+## Example
 
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation intent complete --run-id <run-id> --intent-id <critic-intent-id>
 ```
-</Critic_Agent>
+# Generator
+Prompt: 
+Your ideas has been annotated with review from critic. read <path of single idea markdown> and refine your idea. you may make a new idea, if the review revealed a critical flaw that cannot be fixed easily. Edit the refined idea back to the markdown. 
 
-<Revision_And_Rejection>
-For `REVISE`, either keep the same idea thread:
+Answer:
+(generator works on it)
 
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  idea revise-start --run-id <run-id> --idea-id <idea-id> --reason "<revision reason>"
+Prompt:
+(continue with rest of the idea generator worked on, until all ideas are refined)
+
+
 ```
 
-Then spawn a new generator for the revised draft. This keeps the same attempt alive and consumes another reflection from that attempt's per-attempt budget.
+After all the md has been updated, go back to step 3 for repeating the reflection N times, given in argument (check the goals)
 
-If the critic verdict is `REJECT`, or if you decide the current attempt is structurally weak, drifty, redundant, or not worth repairing, reject the current attempt into a fresh replacement for the same slot:
+# Step 5: Pilot filtering
 
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  idea reject --run-id <run-id> --idea-id <idea-id> --reason "current_attempt_not_worth_repairing"
+This step is to find the choose the best `N` selected idea from actual signal. 
+Use subagents to create a pilot for actually testing out idea. run will be inside pilot paths. 
+for each idea, create `logs/pilots/<idea-id>/` directory, and spawn one subagent per candidate idea.
+
+For each of them, read the idea, and formulate what kind of assignment would test each idea's hypothesis. This can include, but not limited to:
+- minimal pilot version, such as small epoch run, small split run, etc
+- Oracle-driven upper bound calculation. If things go right, how well would it perform? is it viable?
+- Viability on given dataset. Do we have enough data? How are the distribution? Whats the bottleneck? Can this idea break the bottleneck?
+
+## Example
+
+```
+Propmt:
+We are brainstorming for an idea in <research topic>. 
+Your job is to test if given idea is viable for research.
+Use <python env and other needed environments> to test <idea markdown path>.
+Work inside <workspace>. Do not edit file outside given directory. 
+
+In the directory, test the following (set the assignments into goal using `create_goal`):
+- <constructed assignment list>
+- write the result into a `report.md` in root of the given workspace.
+
 ```
 
-After `idea reject`, resume. If fresh attempts remain, the cursor returns `start_generator_batch` with the same `idea_id`; start that generator from the original topic, frozen contract, mode prompt, and preflight/Heiemeier brief only. Do not pass the rejected draft, critic payload, or rejection reason to the replacement generator.
+After giving assignments to all subagents for each idea, you'll need to wait for them to finish.
 
-For budget exhaustion on an active idea:
+When all of them finish, read each, and from your own verdict, pick the best `N` (check arguement inside goal) ideas.
 
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  idea exhaust --run-id <run-id> --idea-id <idea-id> --reason "reflection_budget_exhausted"
-```
 
-Rejected attempts stay in hidden attempt history. They do not count as terminal slot completion and are not research handoff candidates. Exhausted slots stay in the final `ideas.json` with `evaluation: "REJECTED"`.
-</Revision_And_Rejection>
+# Step 6: Final schema building
 
-<Finalizing_Ideas>
-Only finalize the latest draft after a fresh critic verdict matching the latest draft hash.
+after selection, convert each final idea into the fixed schema required by `ideas.json`.
+find `idea.schema.json`. it should lives at: `<ai-scientist-plugin-root>/schemas/idea.schema.json`. Make sure it includes all the important details for each idea.
 
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation finalize-ready --run-id <run-id>
-```
-
-If finalization fails, do not bypass it by editing JSON. Resume and follow the returned error. Common blockers are stale critic, duplicate family/protocol/metric overlap, invalid `minimum_command`, placeholder commands without `requires_implementation`, or mode disallowing `ACCEPTED_WITHOUT_REFERENCE`.
-</Finalizing_Ideas>
-
-<Completion>
-Successful completion requires:
-
-- no pending subagent intent
-- no active unterminated idea
-- requested slots attempted unless early stop is explicitly configured
-- at least one researchable candidate under the frozen mode config
-- accepted idea batch recorded in `handoff.idea_batch`
-- run-owned `research_contract` in `config.json`
-- `ideation_to_research` validation/handoff evidence
-
-Complete:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation complete --run-id <run-id>
-```
-
-If one or more slots were exhausted but at least one researchable candidate exists:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation complete --run-id <run-id> --budget-exhausted
-```
-
-If no researchable candidate exists:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation exhaust --run-id <run-id>
-```
-
-Terminal statuses:
-
-- `COMPLETED`: successful normal handoff.
-- `COMPLETED_BUDGET_EXHAUSTED`: successful handoff after budget exhaustion.
-- `EXHAUSTED_NO_CANDIDATE`: terminal failure, Stop hook allows exit, `ideation_to_research` fails.
-- `CANCELLED`: explicit cancellation, no valid handoff.
-</Completion>
-
-<Cancellation>
-Cancel only when the user asks or continuation is impossible:
-
-```bash
-ai-scientist \
-  --target-repo <target-repo> \
-  ideation cancel --run-id <run-id> --reason "<reason>"
-```
-</Cancellation>
-
-<Validation>
-Run this before reporting a successful research-ready handoff:
-
-```bash
-ai-scientist validate run \
-  <target-repo> --gate ideation_to_research --run-id <run-id>
-```
-
-`EXHAUSTED_NO_CANDIDATE` should fail this validator. That is expected and still terminal for Stop hook.
-</Validation>
+</Ideation_Workflow>
 
 <Final_Response>
 Report:
 
-- run id
-- strictness mode
-- terminal status
-- selected idea id if any
-- number of terminal ideas and researchable candidates
-- validation command and result
-- artifact paths
-
-Do not claim the research loop has started unless the user explicitly asked for a separate research-loop start.
+- Run id
+- Briefings of final generated ideas
+- Artifact paths
 </Final_Response>
 
 </Details>

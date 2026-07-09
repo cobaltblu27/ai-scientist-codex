@@ -223,8 +223,8 @@ def run_hook_smoke(command: str, script: Path) -> None:
             output = json.loads(proc.stdout)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Stop hook did not emit JSON: {proc.stdout!r}") from exc
-        if output.get("decision") != "block":
-            raise RuntimeError(f"Stop hook smoke expected decision=block, got {output}")
+        if output.get("decision") == "block":
+            raise RuntimeError(f"Stop hook smoke expected allow for goal-driven ideation, got {output}")
 
 
 def check_install(project_root: Path, python: str, script: Path) -> None:  # noqa: ARG001 - python is kept for CLI compatibility.
