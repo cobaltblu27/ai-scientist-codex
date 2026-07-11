@@ -8,7 +8,7 @@ description: Generate structured research ideas from an inline prompt by running
 <Intro>
 
 <Purpose>
-You are the ideation orchestrator. The current Codex session owns the loop, driven by a goal created with `create_goal`. Python helper commands only initialize the run, keep a lightweight ledger of pending subagent artifacts, validate final schema, and prepare final handoff artifacts. Literature search, brainstorming, critic feedback, selection, and refinement are prompt-owned by the orchestrator or subagents.
+You are the ideation orchestrator. The current Codex session owns the loop, driven by a goal created with `create_goal`. You will create and update the run directory, freeze the research contract, log progress, coordinate subagents, check the final idea files, and prepare the handoff.
 </Purpose>
 
 <Persona>
@@ -28,25 +28,27 @@ Your higher duty is to seed genuine scientific or engineering discovery. The sel
 <Big_Picture_And_Flow>
 
 <Workflow_Overview>
-The ideation loop starts only after the user explicitly calls this skill with a research topic. First, create a goal with `create_goal`, then initialize the run through `ai-scientist`, freezing the prompt and mode. Before asking agents to brainstorm, do a short preflight: scan for reference papers, run the Heiemeier question pass, and turn those findings into a compact shared assignment brief.
+The ideation loop starts only after the user explicitly calls this skill with a research topic. First, create a goal with `create_goal`, choose a run id, create the run directory, and freeze the research contract. Before asking agents to brainstorm, do a short preflight: scan for reference papers, run the Heiemeier question pass, run the required data-insight pass, and turn those findings into a compact shared assignment brief.
 
-Then spawn generator subagents to brainstorm a pool of ideas. Filter the generated ideas with hard obvious rules, removing duplicates and ideas that are obviously impossible. Send the remaining ideas to critic subagents for constructive reflection and refinement feedback. Select the best ideas using subagents, then form the selected ideas into the fixed final schema with implementation detail.
+Then spawn generator subagents to brainstorm a pool of ideas. Filter the generated ideas with hard obvious rules, removing duplicates and ideas that are obviously impossible. Turn survivors into idea files, send those files through constructive critic and generator reflection rounds, pilot the refined ideas, and select the best final set. Finish by manually checking the selected idea files and writing the lightweight `ideas.json` index.
 </Workflow_Overview>
 
-<Contract_First_Boundary>
-Unless user provides already created research contract, use `skills/create-contract/SKILL.md` for creating a new contract file. In this case, Do not start ideation during contract creation.
-</Contract_First_Boundary>
+<Contract>
+The run must have a research contract before generation starts. If the user supplies one, copy it to `.ai-scientist/runs/<run-id>/contract.json`. Otherwise create that file using create-contract skill from the user request. At minimum it records the research goal, dataset/data source, split or evaluation protocol, baseline, metrics, evaluator, resource constraints, and non-drift rules.
+
+Once the first generator is spawned, `contract.json` is frozen: do not edit it during the run. If the goal or benchmark must change materially, start a new run with a new contract instead of quietly changing the existing one.
+</Contract>
 
 <Required_Artifacts>
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
-- `config.json`: frozen ideation config, mode preset, generator/critic agent types, prompt source refs, and scoring policy.
-- `loop-state.json`: active idea ids, pending intents, terminal status, candidate and batch handoff state.
-- `ideas.json`: canonical terminal idea archive.
-- `journal.jsonl`: append-only audit stream.
-- `logs/drafts/*.md`: markdown idea batch and refinement artifacts.
-- `logs/pilots/`: pilot runs for choosing ideas.
-- `logs/ideation-contract.json`: shared run context, repo entrypoints, split policy, hardware limits, forbidden workflows, reusable baselines, metric names, and strictness mode.
+- `contract.json`: frozen research contract.
+- `run.md`: run id, original request, chosen mode, arguments, current phase, completed phase checklist, blockers, and important decisions.
+- `ideas/<idea-id>.md`: canonical idea files. Critic comments and generator refinements happen in these files.
+- `logs/pilots/<idea-id>/report.md`: pilot evidence for each surviving idea.
+- `ideas.json`: final index containing each selected idea's id, title, idea-file path, and pilot-report path.
+
+The detailed idea content lives in the idea files, not duplicated into a large JSON schema. Update `run.md` after every major phase and before ending a turn.
 </Required_Artifacts>
 
 <Arguments>
@@ -54,10 +56,11 @@ These are variables that may be provided with prompt, when using this skill. arg
 Add these 'arguments' in goal below, to freeze them.
 Common arguments may include:
 - Research goal (required)
-- number of ideas to make (default: 10)
-- number of ideas per subagents (default: 4~6)
-- number of subagents to spawn (default: enough to create idea cnt, given idea per subagents. need to add space for filtered ideas, around 1.5x)
-- number of reflections for critic agent (default: 3)
+- number of final ideas to select (default: 10)
+- number of candidate ideas per generator (default: 4–6)
+- number of generators to spawn (default: enough to propose roughly 1.5 times the requested final count)
+- number of reflection rounds (default: 3)
+- mode (default: `scientist`)
 - etc
 
 </Arguments>
@@ -70,8 +73,8 @@ Follow the $ideation skill guide to achieve the following:
 - Brainstorm the ideas using subagents
 - Go through reflection, and refinement using critic
 - Select final ideas.
-- Form the final idea into fixed schema with implementation detail.
-- The goal is finished when all steps of the skill guide is done, and idea artifact has all been formulized. 
+- Manually check the selected idea files and write the lightweight final index.
+- The goal is finished when all workflow phases are complete, every selected idea file is implementation-ready, `ideas.json` indexes the selected files, and `run.md` records the completed handoff.
 
 
 - <Arguments from prompt>
@@ -83,15 +86,15 @@ The active goal is the continuation mechanism for ideation.
 </Goal_Preflight>
 
 <Pre_Generation_Synthesis>
-Before the first generator intent batch for a topic, follow this prompt-only order:
+Before the first generator batch for a topic, follow this order:
 
 1. Preflight reference scan.
 2. Heiemeier question pass.
 3. Required data-insight ideation pass.
 4. Generator assignment synthesis.
-5. Generator intent batch.
+5. Generator batch.
 
-This sequence is orchestration guidance, not a new CLI lifecycle gate. Do not create new required artifacts or new helper-enforced state transitions for this preflight. The orchestrator must still obtain a valid data-insight report, or a recorded blocker explaining why data insight cannot be performed, before spawning generator subagents. Keep the result as compact context that is copied into generator assignments.
+The orchestrator must obtain a valid data-insight report, or record a blocker in `run.md` explaining why data insight cannot be performed, before spawning generator subagents. Keep the synthesis compact enough to copy into generator assignments.
 
 <Preflight_Reference_Scan>
 Find reference papers first. Also use the `literature-search` skill to check API works (only for API check, you don't have to search for references). Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later includes stable source refs in its draft/report.
@@ -110,9 +113,9 @@ Use `skills/heiemeier-question/SKILL.md` on the original topic plus the prefligh
 <Required_Data_Insight_Ideation_Pass>
 Use `skills/data-insight-ideation/SKILL.md` before generator assignment synthesis. Serious AI/ML ideation must be grounded in dataset evidence, not only literature or abstract reasoning.
 
-First check whether `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/data_insight_ideation_report.md` already exists. Reuse it only when it matches the current run id, prompt/contract, dataset refs, split refs, evaluator refs, and artifact paths. If it is missing, stale, incomplete, or tied to a different contract, rerun the data-insight pass.
+First check whether `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/data_insight_ideation_report.md` already exists. Reuse it only when it matches the current frozen contract, dataset, split, evaluator, and artifact paths. If it is missing, stale, incomplete, or tied to a different contract, rerun the data-insight pass.
 
-If there is no concrete data path, the required environment is unclear, or the pass would require dependency/environment changes, record a data-insight blocker. Outside autonomous loops, stop and ask the user. Inside the ideation loop, record a clear failure-with-reason and follow the loop protocol rather than silently continuing with paper-only ideation.
+Because this skill runs under an active goal, treat it as an autonomous loop. If there is no concrete data path, the required environment is unclear, or the pass would require an unsafe environment change, record a clear blocker in `run.md`, make the best defensible assignment from the available evidence, and continue. Never silently present paper-only assumptions as dataset findings.
 
 Keep the pass lightweight: have the data-insight agent inspect repo/data interfaces, write and run task-specific inspection code under `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/`, and return only artifact-backed findings. Copy only the compact generator assignment notes, dataset bottlenecks, leakage/split warnings, slice candidates, baseline requirements, and directions to avoid into generator prompts.
 </Required_Data_Insight_Ideation_Pass>
@@ -146,8 +149,7 @@ These are common rules for ideation. You MUST consider this for idea generation 
 
 <Modes>
 - These are ideation policy "modes". You MUST consider the policy of given mode into consideration on idea generation and reflection.
-- Default mode is `scientist`. Mode is frozen once `ideation start` runs.
-- Mode presets live in frozen `config.json`. Read `generator_agent` and `critic_agent` from the preset instead of hardcoding subagent types.
+- Default mode is `scientist`. Record the chosen mode in `run.md` before spawning subagents and do not change it during the run.
 
 `scientist`:
 
@@ -187,7 +189,9 @@ unclear and the command is required, ask or fail fast with a clear blocker.
 </Python_Launcher>
 
 <Startup>
-Install/check generated Codex native agents before spawning subagents:
+Create `.ai-scientist/runs/<run-id>/`, its `ideas/` and `logs/` directories, the frozen `contract.json`, and `run.md`. Record the original request and resolved arguments in `run.md`.
+
+Then install/check generated Codex native agents before spawning subagents:
 
 ```bash
 ai-scientist agents check --target-repo <target-repo> || ai-scientist agents install --target-repo <target-repo>
@@ -210,7 +214,7 @@ For sake of efficiency, you may prompt multiple agents, and give next piece of p
 
 <Ideation_Workflow>
 Spawn generators for idea brainstorming.
-Generator subagent can be spawned with `agent_type` from `config.json` (`generator_agent`).
+Spawn generators with `agent_type: ai-scientist-ideation-generator-<mode>` and critics with `agent_type: ai-scientist-ideation-critic-<mode>`.
 Run the process step-wise. give prompts to subagents in current step, so they can work concurrently. when they're all done, and all jobs for the current steps are finished, you may proceed to next step.
 
 Prompting will be done in stages.
@@ -218,11 +222,11 @@ Prompting will be done in stages.
 # Step 1: Idea generation
 
 ## Literature_Search
-Generator subagents should use the `literature-search` skill when the mode/prompt makes it useful. Scientist mode should be evidence-demanding through generator and critic judgment, but the CLI no longer enforces a provider-specific literature gate.
+Use any reliable search surface available in the session: scholarly search, venue pages, paper PDFs, local paper corpora, benchmark docs, dataset/model cards, source repositories, or web search that leads to primary sources. Use `literature-search` skill. Store stable source links or identifiers and the claims they support directly in candidate summaries and idea files.
 
-Use any reliable search surface available in the session: scholarly search, venue pages, paper PDFs, local paper corpora, benchmark docs, dataset/model cards, source repositories, or web search that leads to primary sources. Use `literature-search` skill. Store evidence as stable refs in draft reports, critic feedback, revision reports, final schema fields, or checkpointed artifact refs; do not expect a CLI literature cache or provider log.
+Each generator proposes the configured 4–6 candidate ideas. Spawn enough generators for the combined pool to contain roughly 1.5 times the requested final idea count. Give different slot-specific emphases to reduce duplication.
 
-Ask generator subagents for idea batches using information below:
+Ask generator subagents for candidate batches using:
 - Research topic
 - Findings from using `literature-search` skill, such as local paper dataset or OpenAlex API
 - Essential content from research contract
@@ -257,9 +261,9 @@ Before critic review, trim ideas that are obviously not worth spending review ti
 - ideas that are impossible to implement in the target repo under the stated resources;
 - ideas that are trivial improvement over existing works, such as hyperparameter tuning, mere ensemble, calibration, or anything like that.
 
-Keep a short note for each filtered idea so later selectors can understand why it was removed.
+Write a short note for each filtered (rejected) candidate to `logs/filter.md` so later selection can distinguish rejected directions from surviving ones. If too few candidates survive to plausibly select the requested final count, spawn another generator batch with new slot-specific emphases before starting critic review.
 
-After filtering out, tell generator to write the ideas into a markdown, in `logs/drafts` path.
+Assign every surviving candidate a stable `idea-id`. Ask generators that created the idea to create one canonical idea file per survivor at `ideas/<idea-id>.md`. An idea file is the evolving Markdown document containing the details of the idea.
 
 ## Example
 (This prompt can also be different, tell it to write down the laid out ideas)
@@ -268,17 +272,16 @@ Output:
 {List of ideas}
 
 Prompt:
-Now write each idea {Filtered list of ideas} into a markdown, in `logs/drafts/{agent-numbering}-{idea-id}-{name}.md`.
+Now write {surviving idea candidates, with idea-ids} into their own Markdown file at `.ai-scientist/runs/<run-id>/ideas/<idea-id>.md` using the required idea-file sections.
 ```
 
 # Step 3: Critic feedback
 Spawn critic subagents to reinforce the remaining ideas. Spawn one subagent per each idea. 
 
 ## Critic_Agent
-The critic is a constructive feedback provider. It should not edit files. It returns constructive feedback for the generator output.
+The critic is a constructive feedback provider, not an acceptance gate. It edits the assigned idea file directly by inserting comments; it does not accept, reject, rank, or rewrite the proposal.
 
-Spawn the critic with `agent_type` from `config.json` (`critic_agent`). Give it the target idea markdown, with prompt for reviewing.
-Make it leave a comment on target markdown for constructive feedback.
+Spawn one critic per idea file in a reflection round. Critics may run concurrently across different files, but never assign two agents to edit the same file at the same time. Give the critic the idea-file path and frozen contract path, and require inline HTML comments using the mode-specific critic format.
 
 prompt contains:
 - target idea
@@ -290,7 +293,7 @@ prompt contains:
 Use prompt like following (below is an example, your prompt can change to fit the situation)
 ```text
 Prompt:
-You are the constructive critic for this ideation loop. Review the idea batch below. Research contract is <path>
+You are the constructive critic for this ideation loop. Review and annotate <idea-file>. The frozen research contract is <contract-path>.
 Do not accept or reject the ideas. Give practical feedback the brainstorming agent can use to improve them:
 - dangerous assumptions
 - missing baselines
@@ -312,7 +315,9 @@ critic-(type): (comment content)
 
 # Step 4: Reflection and refinement
 
-Give critic feedback-added idea markdown back to generator subagents. Ask them to improve the surviving ideas according to the critic's review.
+A reflection round is one complete `critic edit → generator revision` cycle for every surviving idea file. After all critics finish editing distinct files, assign one generator to each annotated file. Generators may revise different files concurrently, but never allow concurrent edits to the same file.
+
+The generator resolves actionable comments by improving the proposal in place. It may remove comments that it fully addressed and should retain unresolved blockers with a short response. It must preserve the stable `idea-id`. If feedback invalidates the core hypothesis and the generator wants to replace it with a different idea, assign a new idea id and send that replacement through the hard filter before it joins the next reflection round.
 
 ## Example
 
@@ -330,7 +335,7 @@ Prompt:
 
 ```
 
-After all the md has been updated, go back to step 3 for repeating the reflection N times, given in argument (check the goals)
+Repeat Steps 3 and 4 until the configured number of reflection rounds is complete. Record each completed round and any unresolved blockers in `run.md`.
 
 # Step 5: Pilot filtering
 
@@ -365,8 +370,25 @@ When all of them finish, read each, and from your own verdict, pick the best `N`
 
 # Step 6: Final schema building
 
-after selection, convert each final idea into the fixed schema required by `ideas.json`.
-find `idea.schema.json`. it should lives at: `<ai-scientist-plugin-root>/schemas/idea.schema.json`. Make sure it includes all the important details for each idea.
+After selection, manually read every selected idea file and pilot report. Check that each idea file contains a concrete hypothesis, mechanism, method, implementation plan, evaluation and success criteria, evidence references, and risks; fits the frozen contract; and has no unresolved critic blocker that makes it unusable.
+
+Write a lightweight `ideas.json` index:
+
+```json
+{
+  "run_id": "<run-id>",
+  "ideas": [
+    {
+      "id": "<idea-id>",
+      "title": "<title>",
+      "idea_file": "ideas/<idea-id>.md",
+      "pilot_report": "logs/pilots/<idea-id>/report.md"
+    }
+  ]
+}
+```
+
+The idea files are the detailed handoff artifacts. Do not duplicate them into a complicated JSON object. Update `run.md` with the selected ids, manual checks, artifact paths, and `status: complete`, then mark the active goal complete.
 
 </Ideation_Workflow>
 
