@@ -1,6 +1,6 @@
 {
   "name": "ai-scientist",
-  "version": "0.1.2+codex.20260706162606",
+  "version": "0.1.3+codex.20260713055531",
   "description": "Codex-native AI Scientist workflows with auditable artifacts and validation gates.",
   "author": {
     "name": "OpenAI Codex",
