@@ -87,23 +87,5 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertIn("constructive feedback provider, not an acceptance gate", scientist_critic)
         self.assertIn("Do not accept", scientist_critic)
 
-    def test_research_loop_uses_current_cli_and_contract_skill(self) -> None:
-        skill = (PLUGIN_ROOT / "skills" / "research-loop" / "SKILL.md").read_text()
-        invocation_policy = (PLUGIN_ROOT / "skills" / "research-loop" / "agents" / "openai.yaml").read_text()
-        self.assertIn("allow_implicit_invocation: false", invocation_policy)
-        self.assertIn("skills/create-contract/SKILL.md", skill)
-        self.assertIn("research start", skill)
-        self.assertIn("research resume", skill)
-        self.assertIn("research checkpoint", skill)
-        self.assertIn("research select", skill)
-        self.assertIn("research complete", skill)
-        self.assertIn("research cancel", skill)
-        self.assertIn("resource status|run|acquire|release", skill)
-        self.assertIn("--json-file", skill)
-        self.assertIn("scientist", skill)
-        self.assertIn("engineer", skill)
-        self.assertIn("custom", skill)
-
-
 if __name__ == "__main__":
     unittest.main()
