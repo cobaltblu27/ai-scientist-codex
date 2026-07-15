@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ideation"
+  short_description: "Run the AI Scientist ideation loop explicitly."
+  default_prompt: "Use $ideation to generate research ideas for this project."
+
+policy:
+  allow_implicit_invocation: false

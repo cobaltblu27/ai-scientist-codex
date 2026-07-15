@@ -107,18 +107,26 @@
       "additionalProperties": true
     },
     "research_contract": {
-      "description": "Frozen hypothesis/outcome contract for paper-oriented research modes.",
+      "description": "Frozen research contract shared by the active research modes.",
       "type": "object",
       "properties": {
-        "primary_hypothesis": {"type": "string"},
         "goal_type": {"type": "string"},
+        "primary_hypothesis": {"type": "string"},
+        "dataset": {"type": "object"},
+        "split_protocol": {"type": "string"},
+        "allowed_inputs": {"type": "array"},
+        "forbidden_inputs": {"type": "array"},
+        "metrics": {"type": "object"},
+        "metrics_that_matter": {"type": "array"},
+        "non_negotiable_comparisons": {"type": "array"},
+        "baseline_reference": {"type": "object"},
+        "benchmark_plan": {},
+        "evaluator_command": {},
         "success_criteria": {},
         "failure_criteria": {},
-        "allowed_rescue_scope": {},
         "kill_criteria": {},
-        "non_drift_definition": {},
-        "metrics_that_matter": {},
-        "non_negotiable_comparisons": {}
+        "target_threshold": {},
+        "non_drift_definition": {}
       },
       "additionalProperties": true
     },

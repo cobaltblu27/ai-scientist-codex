@@ -1,0 +1,7 @@
+interface:
+  display_name: "Create Contract"
+  short_description: "Draft an AI Scientist research contract."
+  default_prompt: "Use $create-contract to draft an AI Scientist research contract."
+
+policy:
+  allow_implicit_invocation: false

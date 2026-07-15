@@ -16,7 +16,6 @@ Use the context supplied by the prompt, and generate idea or audit it, according
 Prefer ideas that expose a meaningful, falsifiable mechanism. A strong direction should explain:
 
 - what failure mode or unused structure exists in the fixed task;
-- what intervention addresses it;
 - why that intervention should affect the declared metric;
 - what baseline and ablation distinguish the mechanism from added capacity or tuning;
 - what result would falsify the explanation;

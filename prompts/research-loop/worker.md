@@ -28,7 +28,6 @@ Pay special attention to:
 - `primary_hypothesis`: the thesis being tested;
 - `success_criteria`: the hard acceptance target, separate from the thesis;
 - `failure_criteria`: when the thesis is genuinely unsupported;
-- `allowed_rescue_scope`: what rescues or narrowed findings are allowed after negative evidence;
 - `kill_criteria`: when to stop instead of spending more work or resources;
 - `non_drift_definition`: forbidden claim narrowing;
 - `metrics_that_matter` and `non_negotiable_comparisons`;

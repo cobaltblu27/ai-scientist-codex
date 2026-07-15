@@ -46,22 +46,26 @@ Write JSON with exactly this top-level shape unless the user explicitly requests
 ```json
 {
   "research_contract": {
-    "primary_hypothesis": "",
     "goal_type": "performance",
-    "success_criteria": "",
-    "failure_criteria": "",
-    "allowed_rescue_scope": "",
-    "kill_criteria": "",
-    "non_drift_definition": "",
+    "primary_hypothesis": "",
+    "dataset": {},
+    "split_protocol": "",
+    "allowed_inputs": [],
+    "forbidden_inputs": [],
+    "metrics": {
+      "primary": "",
+      "secondary": []
+    },
     "metrics_that_matter": [],
     "non_negotiable_comparisons": [],
-    "fixed_dataset": "",
-    "fixed_split": "",
-    "fixed_baseline": "",
-    "evaluator_command": "",
     "baseline_reference": {},
     "benchmark_plan": "",
-    "target_threshold": ""
+    "evaluator_command": "",
+    "success_criteria": "",
+    "failure_criteria": "",
+    "kill_criteria": [],
+    "target_threshold": "",
+    "non_drift_definition": ""
   }
 }
 ```
@@ -70,29 +74,12 @@ Write JSON with exactly this top-level shape unless the user explicitly requests
 <Drafting_Rules>
 Use only scientific and evaluation details supplied by the user or directly implied by the benchmark contract. Do not paste the user's original prompt, conversational context, runtime instructions, system instructions, developer instructions, AGENTS.md content, or agent assignment text into `research_contract`.
 
-If a required scientific or evaluation field is unknown, ask the user or write an explicit placeholder that cannot be mistaken for a final contract, such as `TODO: specify fixed dataset`. Do not invent dataset, split, baseline, metric, threshold, evaluator command, success criteria, or failure criteria.
+If a required scientific or evaluation field is unknown, ask the user or write an explicit placeholder that cannot be mistaken for a final contract, such as `TODO: specify dataset`. Do not invent dataset, split protocol, allowed or forbidden inputs, baseline, metric, threshold, evaluator command, success criteria, or failure criteria.
 
 Keep `failure_criteria` limited to what the user specified or what is directly implied by the benchmark contract. Do not add broad failure modes, convenience exits, or extra acceptance rules.
 
 The contract should be concise, machine-readable, and CLI-friendly. Prefer strings, arrays, and small objects over long prose. Use stable identifiers for datasets, splits, baselines, metrics, and evaluator commands when the user provides them.
 </Drafting_Rules>
-
-<Contamination_Guard>
-Reject or remove obvious prompt/context fields inside the contract. The `research_contract` object must not contain any of these keys:
-
-- `prompt`
-- `raw_prompt`
-- `messages`
-- `conversation`
-- `transcript`
-- `instructions`
-- `system_prompt`
-- `developer_prompt`
-- `assignment_prompt`
-- `context_dump`
-
-If the user asks to preserve raw context, write it somewhere only if they explicitly provide a separate output path for that material. Never place it inside `research_contract`.
-</Contamination_Guard>
 
 <Procedure>
 1. Choose `contract-id` from the user's supplied id. If none is supplied, derive a short filesystem-safe id from the research topic.

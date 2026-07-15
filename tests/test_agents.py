@@ -24,7 +24,7 @@ class AgentGenerationTests(unittest.TestCase):
         self.assertIn("ai-scientist-research-revision-worker-scientist", listed)
         self.assertEqual(listed["ai-scientist-ideation-generator-scientist"]["model_reasoning_effort"], "xhigh")
         self.assertEqual(listed["ai-scientist-research-baseline-worker"]["model_reasoning_effort"], "medium")
-        self.assertEqual(listed["ai-scientist-research-worker"]["model_reasoning_effort"], "high")
+        self.assertEqual(listed["ai-scientist-research-worker"]["model_reasoning_effort"], "xhigh")
 
     def test_render_strips_frontmatter_and_escapes_toml(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

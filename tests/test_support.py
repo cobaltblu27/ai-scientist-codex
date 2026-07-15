@@ -77,7 +77,7 @@ with open(args.metrics_out, 'w') as fh:
     return target
 
 
-def write_minimal_research_run(target: Path, *, decision: str | None = "approved", direction: str = "maximize") -> Path:
+def write_minimal_research_run(target: Path, *, direction: str = "maximize") -> Path:
     """Create a compact final-validation fixture matching the v4 research artifact contract."""
     ai = target / ".ai-scientist"
     run = ai / "runs" / "run-001"
@@ -92,7 +92,6 @@ def write_minimal_research_run(target: Path, *, decision: str | None = "approved
     write_json(run / "dependency-status.json", {"status": "approved", "dependencies": []})
     (run / "api-ledger.jsonl").parent.mkdir(parents=True, exist_ok=True)
     (run / "api-ledger.jsonl").write_text(json.dumps({"kind": "fixture", "external_calls": 0}) + "\n")
-    write_json(run / "principles.json", {"principles": [{"id": "p1", "gates": ["research_to_review"], "evidence_artifacts": ["research-plan.json"]}]})
     write_json(run / "baseline" / "metrics.json", {metric_key: baseline_value, "score": baseline_value})
     (run / "baseline" / "command.log").write_text("baseline ok\n")
     write_json(run / "baseline" / "split_integrity.json", {"passed": True})
@@ -116,21 +115,6 @@ def write_minimal_research_run(target: Path, *, decision: str | None = "approved
         {"event": "finish", "node_id": "node-001"},
     ]))
     write_json(run / "journal.json", {"events": [{"event": "finalized"}]})
-    from legacy.research_loop_v1.handoff import artifact_snapshot
-
-    snapshot = artifact_snapshot(run)
-    validation = {"gate": "research_to_review", "validation_mode": "evidence", "exit_code": 0, "selected_node": "node-001", "metric_key": metric_key, "metric_direction": direction, "artifact_snapshot": snapshot}
+    validation = {"gate": "research_to_review", "exit_code": 0, "selected_node": "node-001", "metric_key": metric_key, "metric_direction": direction}
     write_json(run / "run-status.json", {"strictness_mode": "engineer", "last_validation": validation, "last_validations": {"research_to_review": validation}})
-    (run / "handoff.jsonl").write_text(json.dumps({"gate": "research_to_review", "from_phase": "research", "to_phase": "review", "approved": True, "validator_exit_code": 0, "approved_at": "2026-05-07T00:00:00Z", "artifact_snapshot": snapshot}) + "\n")
-    write_json(run / "verifier-decision.json", {"decision": "go", "blockers": []})
-    if decision is not None:
-        write_json(
-            run / "verifier-decisions" / "research_to_review.json",
-            {
-                "decision": decision,
-                "gate": "research_to_review",
-                "artifact_snapshot": snapshot,
-                "validation_command": "ai-scientist validate run --gate research_to_review --validation-mode evidence",
-            },
-        )
     return run

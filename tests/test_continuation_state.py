@@ -13,7 +13,6 @@ CLI_ARGS = ["uv", "run", "--project", str(REPO_ROOT), "ai-scientist"]
 
 from core.state import (
     append_journal_event,
-    complete_phase,
     evaluate_stop_decision,
     load_loop_state,
     node_evidence_fingerprint,
@@ -23,31 +22,10 @@ from core.state import (
 
 
 class ContinuationStateTests(unittest.TestCase):
-    def test_active_ideation_allows_stop_because_goal_controls_loop(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp)
-            start_phase(
-                target,
-                "run-001",
-                "ideation",
-                {
-                    "num_ideas_required": 1,
-                    "num_reflections_required": 1,
-                    "finalized_count": 0,
-                    "skipped_count": 0,
-                    "idea_states": {"idea-001": {"status": "reflecting"}},
-                },
-            )
-
-            decision = evaluate_stop_decision(target)
-
-            self.assertEqual(decision.decision, "allow")
-            self.assertEqual(decision.reason, "ai_scientist_ideation_goal_driven_stop_ignored")
-
     def test_terminal_missing_audit_reopens_and_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
-            state = start_phase(target, "run-001", "ideation", {})
+            state = start_phase(target, "run-001", "research", {})
             state["active"] = False
             state["phase_status"] = "complete"
             state["completion_audit"] = None
@@ -60,50 +38,6 @@ class ContinuationStateTests(unittest.TestCase):
             self.assertEqual(decision.decision, "block")
             self.assertEqual(reopened["phase_status"], "verifying")
             self.assertTrue(reopened["active"])
-
-    def test_terminal_passing_audit_allows_stop(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp)
-            start_phase(
-                target,
-                "run-001",
-                "ideation",
-                {
-                    "num_ideas_required": 1,
-                    "attempted_slots": 1,
-                    "min_candidates_required": 1,
-                    "active_idea_id": None,
-                    "pending_intent": None,
-                    "ranking": {"status": "not_required"},
-                    "handoff": {"status": "ready", "idea_batch": ["idea-001"]},
-                    "idea_states": {
-                        "idea-001": {
-                            "id": "idea-001",
-                            "status": "accepted",
-                            "evaluation": "ACCEPTED",
-                            "reflection_count": 1,
-                            "score": 90,
-                            "rank": 1,
-                            "researchable": True,
-                        }
-                    },
-                },
-            )
-            complete_phase(
-                target,
-                "run-001",
-                {
-                    "passed": True,
-                    "prompt_to_artifact_checklist": ["idea-001 finalized"],
-                    "verification_evidence": ["ideas.json contains idea-001"],
-                },
-            )
-            append_journal_event(target, "run-001", "validation", details={"gate": "ideation_to_research", "exit_code": 0})
-            append_journal_event(target, "run-001", "handoff", details={"gate": "ideation_to_research", "approved": True, "exit_code": 0})
-
-            decision = evaluate_stop_decision(target)
-
-            self.assertEqual(decision.decision, "allow")
 
     def test_stop_hook_outputs_single_json_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

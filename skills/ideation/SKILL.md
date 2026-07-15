@@ -97,7 +97,7 @@ Before the first generator batch for a topic, follow this order:
 The orchestrator must obtain a valid data-insight report, or record a blocker in `run.md` explaining why data insight cannot be performed, before spawning generator subagents. Keep the synthesis compact enough to copy into generator assignments.
 
 <Preflight_Reference_Scan>
-Find reference papers first. Also use the `literature-search` skill to check API works (only for API check, you don't have to search for references). Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later includes stable source refs in its draft/report.
+Use the `literature-search` skill to check API works (only for API check, you don't have to search for references). Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later includes stable source refs in its draft/report.
 
 Capture a short brief:
 
@@ -286,7 +286,7 @@ Spawn one critic per idea file in a reflection round. Critics may run concurrent
 prompt contains:
 - target idea
 - what to look for
-- frozen `research_contract`;
+- frozen `contract.json`;
 - instruction for review
 
 ## Example
@@ -324,7 +324,7 @@ The generator resolves actionable comments by improving the proposal in place. I
 ```
 # Generator
 Prompt: 
-Your ideas has been annotated with review from critic. read <path of single idea markdown> and refine your idea. you may make a new idea, if the review revealed a critical flaw that cannot be fixed easily. Edit the refined idea back to the markdown. 
+Your ideas has been annotated with review from critic. read <path of single idea markdown> and refine your idea. you may make a new idea, if the review revealed a critical flaw that cannot be fixed easily. Edit the refined idea back to the markdown, in-place.
 
 Answer:
 (generator works on it)
@@ -340,13 +340,15 @@ Repeat Steps 3 and 4 until the configured number of reflection rounds is complet
 # Step 5: Pilot filtering
 
 This step is to find the choose the best `N` selected idea from actual signal. 
-Use subagents to create a pilot for actually testing out idea. run will be inside pilot paths. 
+Use subagents, one per each idea, to create a pilot for actually testing out idea. run will be inside pilot paths.
 for each idea, create `logs/pilots/<idea-id>/` directory, and spawn one subagent per candidate idea.
 
 For each of them, read the idea, and formulate what kind of assignment would test each idea's hypothesis. This can include, but not limited to:
 - minimal pilot version, such as small epoch run, small split run, etc
 - Oracle-driven upper bound calculation. If things go right, how well would it perform? is it viable?
 - Viability on given dataset. Do we have enough data? How are the distribution? Whats the bottleneck? Can this idea break the bottleneck?
+
+After testing is done, orchestrator (you) will choose the most promising idea among the candidates.
 
 ## Example
 

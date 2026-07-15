@@ -47,7 +47,7 @@ The CLI records state, evidence, agent types, prompt source refs, resource lease
 <Arguments>
 These are like the "args" of the skill that will be used throughout the session after user calls this skill. Treat them as "final variables", which means values will be fixed in starting phase, and MUST NOT CHANGE throughout the session, after it has been decided.
 
-- Target Ideas: the idea batch the research loop will start with. In legacy mode this may be one selected idea.
+- Target Ideas: the idea batch the research loop will start with. It will be given as `idea.json`, object containing reference to specific idea reated from ideation-loop.
 - Python Environment: python environment to run the experiments. It could be conda/mamba environment, uv environment, or python binary path.
 - Mode: which mode this will run on. See `Active_Modes` below. (default: 'scientist')
 - Target Venue (optional): which journal/conference this research is targeted to. (not needed when mode is 'engineer'. when mode is 'scientist' and venue is left empty, read the idea and fix the target venue from it.)
@@ -58,12 +58,12 @@ Freeze these values into `.ai-scientist/runs/<run-id>/config.json` under `argume
 <Active_Modes>
 Mode is frozen at `research start` and must be one of:
 
-- `scientist`: Focused on publishable research claim. Expects a frozen `research_contract` from ideation.
-- `engineer`: Focused on strong practical result. Expects a frozen `research_contract` from ideation.
-- `custom`: user-provided custom criteria are the standard. Do not start without `custom_criteria` in the research-start JSON payload. A `research_contract` may also be present and frozen, but custom criteria remain the acceptance standard.
+- `scientist`: Focused on publishable research claim. Expects a frozen `contract.json` from ideation.
+- `engineer`: Focused on strong practical result. Expects a frozen `contract.json` from ideation.
+- `custom`: user-provided custom criteria are the standard. Do not start without `custom_criteria` in the research-start JSON payload. A `contract.json` may also be present and frozen, but custom criteria remain the acceptance standard.
 </Active_Modes>
 
-<Startup>
+<Goal_Preflight>
 When initially starting research-loop, without continuing from a previous loop, read and follow the instructions given before starting. DO NOT PROCEED WITHOUT COMPLETING NEEDED STEPS.
 
 - Is the "Target Idea" specified? if not, exit immediately and ask for idea.
@@ -72,18 +72,19 @@ When initially starting research-loop, without continuing from a previous loop, 
 - Read the idea, and consider what the implementation would look like. What kind of dependencies might be needed? If they are not installed, exit and ask for the installing the dependencies. User may install the dependency, tell you to install it and proceed, or run the loop without installing.
 - Check the benchmark contract. For campaign mode, verify the fixed dataset, split/protocol, baseline, metric(s), evaluator command, and target threshold are already defined. If a prerequisite dataset, checkpoint, baseline artifact, or evaluator asset is missing, exit immediately and ask the user to provide it.
 
-Install or check the project Stop hook before starting:
+## Setting Goal
+When run is ready to start, first set a goal using `create_goal`.
 
-```bash
-ai-scientist hooks install --project-root <target-repo>
-ai-scientist hooks check --project-root <target-repo>
+```text
+Follow the $research-loop skill guide to achieve the following:
+- Perform experiments using subagents
+- From the results, find what can do to make better improve the architecture.
+- Continue the improving process of research tree to iteratively enhance the model architecture.
+- The goal is finished when we have a node that meets the success criteria, or a given hault criteria is met.
+- <additional pause criteria such as token, time constraint. include only if its given by prompt>
 ```
 
-Install or check generated Codex native agents before spawning any subagent:
-
-```bash
-ai-scientist agents check --target-repo <target-repo> || ai-scientist agents install --target-repo <target-repo>
-```
+## Run start
 
 Start the run:
 
@@ -94,7 +95,7 @@ ai-scientist --target-repo <target-repo> research start \
   --selected-idea-id <idea-id> \
   --json-file <run-config.json>
 ```
-</Startup>
+</Goal_Preflight>
 
 <Run_Artifacts>
 At startup, create or resume one run under `.ai-scientist/runs/<run-id>/`. Choose a stable `run-id` before starting; do not rename it mid-loop.
@@ -138,9 +139,9 @@ The prompt for orchestrator (you) is this `skills/research-loop/SKILL.md`. Do no
 </Predefined_Agents>
 
 <Research_Contract>
-Loop runs expect a run-owned `research_contract`. Treat the contract as the anti-drift contract for the whole run. If a `research_contract` exists, freeze it and use it as additional context, but judge acceptance by the custom criteria.
+Loop runs expect a run-owned `contract.json`. Treat the contract as the anti-drift contract for the whole run. If a `contract.json` exists, freeze it and use it as additional context, but judge acceptance by the custom criteria.
 
-If the run-owned `research_contract` is missing, stop before `research start` and use `skills/create-contract/SKILL.md` to create or repair the standalone contract artifact.
+If the run-owned `contract.json` is missing, stop before `research start` and use `skills/create-contract/SKILL.md` to create or repair the standalone contract artifact.
 
 Important fields:
 
@@ -150,7 +151,7 @@ Important fields:
 - `non_negotiable_comparisons`: required comparisons such as baseline, ablation, fixed split, or reference paper.
 - `baseline_reference`: for performance goals, the named baseline/reference paper/model, code/checkpoint availability, and how it can be used.
 
-Before any node work begins, freeze the exact run-owned `research_contract` into the run config together with the full `idea_batch`. Do not rewrite it after results arrive. Pass it to every worker, critic, and revision worker. Do not accept a merely useful report, partial implementation, weaker metric, or negative result if it does not positively satisfy `success_criteria`. `failure_criteria` can justify stopping a node or run, but it is not an accepting success condition unless the user explicitly made proving that negative claim the positive objective.
+Before any node work begins, freeze the exact run-owned `contract.json` into the run config together with the full `idea_batch`. Do not rewrite it after results arrive. Pass it to every worker, critic, and revision worker. Do not accept a merely useful report, partial implementation, weaker metric, or negative result if it does not positively satisfy `success_criteria`. `failure_criteria` can justify stopping a node or run, but it is not an accepting success condition unless the user explicitly made proving that negative claim the positive objectives.
 </Research_Contract>
 
 <Loop>
@@ -306,7 +307,7 @@ All examples use the active CLI shape: `ai-scientist --target-repo <target-repo>
 
 The orchestrator should know what each active research-loop command changes:
 
-- `ai-scientist --target-repo <target-repo> research start --run-id <run-id> --strictness-mode <mode> --json-file <run-config.json>`: creates `.ai-scientist/active-run.json`, `.ai-scientist/runs/<run-id>/config.json`, `.ai-scientist/runs/<run-id>/loop-state.json`, `.ai-scientist/runs/<run-id>/discovery-notes.md`, and a `journal.jsonl` start event. In campaign mode, the JSON payload contains `research_contract` and `idea_batch`; the command freezes arguments, idea batch, learning notes ref, discovery notes ref, agent types, prompt source refs, mode, and resource caps. Legacy single-idea starts may still pass `--selected-idea-id`.
+- `ai-scientist --target-repo <target-repo> research start --run-id <run-id> --strictness-mode <mode> --json-file <run-config.json>`: creates `.ai-scientist/active-run.json`, `.ai-scientist/runs/<run-id>/config.json`, `.ai-scientist/runs/<run-id>/loop-state.json`, `.ai-scientist/runs/<run-id>/discovery-notes.md`, and a `journal.jsonl` start event. In campaign mode, the JSON payload contains `contract.json` and `idea_batch`; the command freezes arguments, idea batch, learning notes ref, discovery notes ref, agent types, prompt source refs, mode, and resource caps. Legacy single-idea starts may still pass `--selected-idea-id`.
 - `ai-scientist --target-repo <target-repo> research resume --run-id <run-id>`: reads `active-run.json`, `config.json`, and `loop-state.json`; returns the orchestrator cursor, selected node, optional open work records, resource summary, and resource queue summary. It only journals the resume event.
 - `ai-scientist --target-repo <target-repo> research checkpoint --run-id <run-id> --json-file <checkpoint.json>`: merges orchestrator-owned updates into `loop-state.json`, including `resource_queue`, and journals the checkpoint. See [checkpointing.md](references/checkpointing.md).
 - `ai-scientist --target-repo <target-repo> research select --run-id <run-id> --node-id <node-id> --summary "<summary>" --evidence-ref <path>`: updates the accepted node and final selection in `loop-state.json`, then writes `.ai-scientist/runs/<run-id>/selection.json`.
@@ -326,8 +327,6 @@ ai-scientist --target-repo <target-repo> research select \
   --evidence-ref <path-or-command>
 ```
 
-Research completion is two-stage. First, `research complete` runs after the accepted selected node and completion audit are ready; it marks the run complete/inactive and changes `active-run.json` to `validating`. Then record validation and handoff evidence. The Stop hook allows the orchestrator to stop only after those release-evidence journal records exist.
-
 Run `research complete` only after:
 
 - all worker/critic/revision assignments have terminal evidence or are explicitly abandoned;
@@ -337,13 +336,11 @@ Run `research complete` only after:
 - the selected accepted node has a fresh `ACCEPT` critic verdict recorded in node state, where `ACCEPT` means positive ending criteria met;
 - the completion audit passes;
 
-Run completion, then record release evidence:
+Complete the CLI run, then complete the active goal:
 
 ```bash
 ai-scientist --target-repo <target-repo> research complete --run-id <run-id> --json-file <audit.json>
-ai-scientist --target-repo <target-repo> validation record --run-id <run-id> --gate research_to_review --exit-code 0 --command "<validator command>"
-ai-scientist --target-repo <target-repo> handoff record --run-id <run-id> --gate research_to_review --exit-code 0 --approved
 ```
 
-Do not report the research loop as done until the Stop hook would allow the orchestrator to stop.
+After that command succeeds and its persisted state agrees with the goal criteria, call `update_goal` with `status: complete`. Do not report the research loop as done before the goal is complete.
 </Completion>

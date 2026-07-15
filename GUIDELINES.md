@@ -33,22 +33,17 @@ Strictness modes may differ in required evidence, but none may weaken leakage, s
 
 A valid run should include:
 
-- `.ai-scientist/config.json`
-- `.ai-scientist/ideas/ideas.json`
-- `.ai-scientist/state/active-ideation.json`
-- `.ai-scientist/runs/<run-id>/ideation-state.json`
-- `.ai-scientist/runs/<run-id>/actions/*.json`
-- `.ai-scientist/runs/<run-id>/drafts/*.json`
-- `.ai-scientist/runs/<run-id>/reflections/*.md`
-- `.ai-scientist/logs/<run-id>/ideation-run.json`
-- `.ai-scientist/runs/<run-id>/semantic-scholar-cache/*.json`
-- `.ai-scientist/runs/<run-id>/dependency-plan.json`
-- `.ai-scientist/runs/<run-id>/api-ledger.jsonl`
-- `.ai-scientist/runs/<run-id>/journal.json`
-- `.ai-scientist/runs/<run-id>/run-status.json`
-- `.ai-scientist/runs/<run-id>/handoff.jsonl`
-- `.ai-scientist/runs/<run-id>/verifier-decision.json`
-- `.ai-scientist/runs/<run-id>/principles.json`
+- `.ai-scientist/contracts/<contract-id>/research-contract.json`
+- `.ai-scientist/runs/<run-id>/contract.json`
+- `.ai-scientist/runs/<run-id>/run.md`
+- `.ai-scientist/runs/<run-id>/ideas.json`
+- `.ai-scientist/runs/<run-id>/ideas/<idea-id>.md`
+- `.ai-scientist/runs/<run-id>/logs/pilots/<idea-id>/report.md`
+- `.ai-scientist/active-run.json`
+- `.ai-scientist/runs/<run-id>/config.json`
+- `.ai-scientist/runs/<run-id>/loop-state.json`
+- `.ai-scientist/runs/<run-id>/journal.jsonl`
+- `.ai-scientist/runs/<run-id>/selection.json`
 - experiment node evidence: command logs, metrics, split integrity, leakage checks, result summaries, and mode deliverables.
 
 If the artifact contract changes, update all of these together:

@@ -131,8 +131,8 @@ def validate_idea(idea: dict[str, Any], search_files: list[Path]) -> list[str]:
     titles = search_cache_titles(search_files)
     related_work = str(idea.get("related_work", ""))
     cited_count = sum(1 for title in titles if title_is_cited(title, related_work))
-    if cited_count < 2:
-        errors.append("related_work must cite at least 2 papers from the Semantic Scholar search cache")
+    if search_files and cited_count < 2:
+        errors.append("related_work must cite at least 2 papers from the provided evidence cache")
 
     failure_modes = [str(risk) for risk in normalize_list(idea.get("risks")) if RISK_TERMS.search(str(risk))]
     if len(failure_modes) < 2:

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 from test_support import AI_SCIENTIST_CMD, REPO_ROOT, read_json
@@ -17,17 +18,18 @@ def research_contract() -> dict[str, object]:
         "goal_type": "performance",
         "success_criteria": {"metric": "score", "min": 0.75},
         "failure_criteria": {"max_score": 0.5},
-        "allowed_rescue_scope": "same benchmark only",
-        "kill_criteria": "leakage or missing baseline",
+        "dataset": {"id": "fixture"},
+        "split_protocol": "fixture split",
+        "allowed_inputs": ["fixture features"],
+        "forbidden_inputs": ["held-out labels"],
+        "metrics": {"primary": "score", "secondary": []},
+        "kill_criteria": ["leakage", "missing baseline"],
         "non_drift_definition": "do not change the benchmark",
         "metrics_that_matter": ["score"],
         "non_negotiable_comparisons": ["baseline"],
         "baseline_reference": {"title": "Fixture baseline", "usability": "Defines the comparable score."},
         "benchmark_plan": {"command": "run benchmark"},
         "target_threshold": {"score": 0.75},
-        "fixed_dataset": "fixture dataset",
-        "fixed_split": "fixture split",
-        "fixed_baseline": "fixture baseline",
         "evaluator_command": "run benchmark",
     }
 
@@ -43,13 +45,13 @@ def selected_idea_payload(resources: dict[str, object] | None = None) -> dict[st
 
 def run_cli(target: Path, *args: str, input_text: str | None = None, extra_path: Path | None = None) -> subprocess.CompletedProcess[str]:
     command_args = list(args)
-    if len(command_args) >= 2 and command_args[0] == "research" and command_args[1] == "start":
+    if command_args and command_args[0] == "research":
         if "--json" in command_args:
-            index = command_args.index("--json") + 1
-            payload = json.loads(command_args[index])
+            flag_index = command_args.index("--json")
+            payload = json.loads(command_args[flag_index + 1])
             if not isinstance(payload, dict):
-                raise AssertionError("test research start payload must be object")
-            if "idea_batch" not in payload:
+                raise AssertionError("test research payload must be object")
+            if len(command_args) >= 2 and command_args[1] == "start" and "idea_batch" not in payload:
                 selected = payload.get("selected_idea")
                 if isinstance(selected, dict):
                     selected.setdefault("id", "idea-001")
@@ -57,9 +59,17 @@ def run_cli(target: Path, *args: str, input_text: str | None = None, extra_path:
                     selected.setdefault("research_contract", research_contract())
                 else:
                     payload.setdefault("selected_idea", {"id": "idea-001", "title": "Fixture", "research_contract": research_contract()})
-            command_args[index] = json.dumps(payload)
-        elif "--json-file" not in command_args:
-            command_args.extend(["--json", json.dumps(selected_idea_payload())])
+            payload_dir = target / ".test-payloads"
+            payload_dir.mkdir(parents=True, exist_ok=True)
+            payload_path = payload_dir / f"{uuid.uuid4().hex}.json"
+            payload_path.write_text(json.dumps(payload))
+            command_args[flag_index : flag_index + 2] = ["--json-file", str(payload_path)]
+        elif len(command_args) >= 2 and command_args[1] == "start" and "--json-file" not in command_args:
+            payload_dir = target / ".test-payloads"
+            payload_dir.mkdir(parents=True, exist_ok=True)
+            payload_path = payload_dir / f"{uuid.uuid4().hex}.json"
+            payload_path.write_text(json.dumps(selected_idea_payload()))
+            command_args.extend(["--json-file", str(payload_path)])
     env = os.environ.copy()
     if extra_path is not None:
         env["PATH"] = os.pathsep.join([str(extra_path), env.get("PATH", "")])
@@ -86,21 +96,14 @@ class ResearchWorkflowTests(unittest.TestCase):
         skill = REPO_ROOT / "skills" / "research-loop" / "SKILL.md"
         self.assertTrue(skill.exists())
         skill_text = skill.read_text()
-        self.assertIn("research_contract", skill_text)
         self.assertIn("CLI_Command_Map", skill_text)
         self.assertIn("The orchestrator must not implement the node directly", skill_text)
         self.assertIn("first return must be a plan", skill_text)
-        self.assertIn("Resource-Heavy Runs", skill_text)
-        self.assertIn("default scheduler is local", skill_text)
-        self.assertIn("--scheduler slurm", skill_text)
-        self.assertIn("Orchestrator_Instructions", skill_text)
-        self.assertIn("This `SKILL.md` is the orchestrator instruction source", skill_text)
         self.assertIn("Do not load or rely on a separate orchestrator prompt file", skill_text)
         self.assertIn("Critic_Revision_Flow", skill_text)
         self.assertIn("Branching", skill_text)
         self.assertIn("Scheduling_Guide", skill_text)
-        self.assertIn("Portfolio_Management", skill_text)
-        self.assertIn("Research completion is two-stage", skill_text)
+        self.assertIn("call `update_goal` with `status: complete`", skill_text)
         self.assertIn("<Persona>", skill_text)
         self.assertIn("You are strategically restless", skill_text)
         self.assertIn("create a bounded branch instead of over-repairing the same path", skill_text)
@@ -109,20 +112,11 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("failure_criteria", skill_text)
         self.assertIn("DO NOT add details that user didn't specify", skill_text)
         self.assertIn("skills/create-contract/SKILL.md", skill_text)
-        self.assertIn("likely contaminated by prompt text", skill_text)
-        self.assertIn("baseline/baseline.json` for the run-level authoritative", skill_text)
         self.assertIn(".ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/", skill_text)
         self.assertIn("git rev-parse HEAD", skill_text)
-        self.assertIn("git worktree", skill_text)
-        self.assertIn("workspace_artifact_links", skill_text)
-        self.assertIn("copy_with_symlinks", skill_text)
         self.assertIn("Terminal work statuses are `completed`, `cancelled`, `failed`, `abandoned`, `accepted`, and `rejected`", skill_text)
-        self.assertIn("--gpus <n> --cpu-cores <n> --memory-mb <n> --timeout-sec <seconds> --poll-sec <seconds>", skill_text)
         self.assertIn("revision_critic_ref", skill_text)
         self.assertIn("Revision-plan review must not use `ACCEPT`", skill_text)
-        self.assertIn("## Data Insight Work", skill_text)
-        self.assertIn("soft coordination surface, not a hard state machine", skill_text)
-        self.assertIn("poll or wait briefly for the expected result path", skill_text)
         legacy = REPO_ROOT / "skills" / "research-loop-legacy" / "SKILL.md"
         self.assertTrue(legacy.exists())
         self.assertIn("name: research-loop-legacy", legacy.read_text())
@@ -130,21 +124,9 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertTrue(revision_skill.exists())
         revision_text = revision_skill.read_text()
         self.assertIn("branch_from_node", revision_text)
-        self.assertIn("Rank branch candidates highly when the data-insight evidence shows room for improvement", revision_text)
-        self.assertIn("compatible option bundle", revision_text)
-        self.assertIn("skills/literature-search/SKILL.md", revision_text)
-        self.assertIn("skills/local-literature-search/SKILL.md", revision_text)
-        self.assertIn("local `papers/` query terms and tag filters", revision_text)
-        self.assertIn("Literature And Source Scan", revision_text)
-        self.assertIn("clone source code", revision_text)
-        self.assertIn("not as an exact end-to-end approach", revision_text)
-        self.assertIn("Enhance_Brainstorming_Guide", revision_text)
-        self.assertIn("Branch_Brainstorming_Guide", revision_text)
-        self.assertIn("Decompose the full method pipeline", revision_text)
-        self.assertIn("split-safe prior knowledge", revision_text)
-        self.assertIn("pipeline stage targeted", revision_text)
-        self.assertIn("post-head residual corrector", revision_text)
-        self.assertIn("raw base-model metrics", revision_text)
+        self.assertIn("Bottleneck Diagnosis", revision_text)
+        self.assertIn("Enhancement Plan", revision_text)
+        self.assertIn("Implementation Plan", revision_text)
         local_literature_skill = REPO_ROOT / "skills" / "local-literature-search" / "SKILL.md"
         self.assertTrue(local_literature_skill.exists())
         local_literature_text = local_literature_skill.read_text()
@@ -171,7 +153,6 @@ class ResearchWorkflowTests(unittest.TestCase):
             revision_text = revision_path.read_text()
             self.assertIn("revision plan", critic_text)
             self.assertIn("it does not accept the current node", critic_text)
-            self.assertIn("post-head residual", critic_text)
             self.assertIn("raw base-model metrics", critic_text)
             self.assertIn("Discovery Note Suggestions", critic_text)
             self.assertIn("Branch aggressively when data shows room for improvement", critic_text)
@@ -196,18 +177,10 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("Baseline_Unit", orchestrator)
         self.assertIn("research checkpoint", orchestrator)
         self.assertIn("Do not start editing", orchestrator)
-        self.assertIn("Checkpoint the worker assignment", orchestrator)
         self.assertIn("Queue_Triage", orchestrator)
         self.assertIn("Every resume begins with durable resource queue triage", orchestrator)
-        self.assertIn("orchestrator dispatch policy, not the local/Slurm execution backend", orchestrator)
         self.assertIn("Build a runnable task list", orchestrator)
-        self.assertIn("Fill available safe slots", orchestrator)
-        self.assertIn("Dispatch a compatible batch", orchestrator)
-        self.assertIn("multiple non-duplicative branches", orchestrator)
         self.assertIn("Only wait when no independent runnable task exists", orchestrator)
-        self.assertIn("two consecutive scheduling decisions have been same-node enhancements", orchestrator)
-        self.assertIn("portfolio_rationale", orchestrator)
-        self.assertIn("Before each scheduling decision, read the relevant recent learning notes", orchestrator)
         self.assertIn("learning-note refs", orchestrator)
         self.assertIn("one or more safe branch candidates", orchestrator)
         self.assertIn("selected_candidate_id", orchestrator)
@@ -215,21 +188,15 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("state.resource_queue.pending` and `state.resource_queue.released` are empty", orchestrator)
         self.assertIn("parent_node_id", orchestrator)
         self.assertIn("fresh `ACCEPT` critic verdict", orchestrator)
-        self.assertIn("Research completion is two-stage", orchestrator)
+        self.assertIn("call `update_goal` with `status: complete`", orchestrator)
         self.assertIn("custom criteria remain the acceptance standard", orchestrator)
         self.assertIn("revision_critic_ref", orchestrator)
-        self.assertIn("revision literature/source evidence", orchestrator)
         self.assertNotIn("research literature-search", orchestrator)
-        self.assertIn("Residual/error analysis is useful diagnosis", orchestrator)
-        self.assertIn("raw base-model metrics", orchestrator)
         self.assertIn("Discovery_Notes", orchestrator)
         self.assertIn("discovery-notes.md", orchestrator)
-        self.assertIn("discovery_notes_ref", orchestrator)
         self.assertIn("agent_thread_id", orchestrator)
         self.assertIn("git rev-parse HEAD", orchestrator)
-        self.assertIn("workspace_artifact_links", orchestrator)
         self.assertIn("Terminal work statuses", orchestrator)
-        self.assertIn("--gpus 1 --cpu-cores 4 --memory-mb 8192 --timeout-sec 3600 --poll-sec 30", orchestrator)
         self.assertIn("first return must be a plan", worker)
         self.assertIn("job_id", worker)
         self.assertIn("blocked_resource_unavailable", worker)
@@ -264,13 +231,18 @@ class ResearchWorkflowTests(unittest.TestCase):
                 "goal_type": "performance",
                 "success_criteria": {"metric": "score", "min": 0.75},
                 "failure_criteria": {"max_score": 0.5},
-                "allowed_rescue_scope": "same benchmark only",
-                "kill_criteria": "leakage or missing baseline",
+                "dataset": {"id": "fixture"},
+                "split_protocol": "fixture split",
+                "allowed_inputs": ["fixture features"],
+                "forbidden_inputs": ["held-out labels"],
+                "metrics": {"primary": "score", "secondary": []},
+                "kill_criteria": ["leakage", "missing baseline"],
                 "non_drift_definition": "do not change the benchmark",
                 "metrics_that_matter": ["score"],
                 "non_negotiable_comparisons": ["baseline"],
                 "baseline_reference": {"name": "Fixture baseline"},
                 "benchmark_plan": {"command": "run benchmark"},
+                "evaluator_command": "run benchmark",
                 "target_threshold": {"score": 0.75},
             }
             payload = {

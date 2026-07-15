@@ -122,12 +122,7 @@ def custom_criteria_from(payload: dict[str, Any]) -> Any:
     return research.get("custom_criteria")
 
 
-def load_resource_config(args: argparse.Namespace, payload: dict[str, Any]) -> dict[str, Any] | None:
-    if getattr(args, "resource_config", None):
-        value = json.loads(Path(args.resource_config).read_text())
-        if not isinstance(value, dict):
-            raise ResearchError("--resource-config must point to a JSON object")
-        return value
+def load_resource_config(payload: dict[str, Any]) -> dict[str, Any] | None:
     value = payload.get("resources")
     if value is None:
         return None
@@ -186,7 +181,7 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     criteria = custom_criteria_from(payload)
     if mode == "custom" and not criteria:
         raise ResearchError("custom mode requires custom_criteria in research start JSON payload")
-    resources = load_resource_config(args, payload)
+    resources = load_resource_config(payload)
     selected_idea = selected_idea_from(payload)
     idea_batch = idea_batch_from(payload, selected_idea)
     research_contract = research_contract_from(payload, selected_idea)
@@ -671,8 +666,8 @@ def cmd_research_start(args: argparse.Namespace) -> int:
         args.run_id,
         "research",
         "active",
-        codex_session_id=args.codex_session_id or os.environ.get("CODEX_SESSION_ID"),
-        codex_thread_id=args.codex_thread_id or os.environ.get("CODEX_THREAD_ID"),
+        codex_session_id=os.environ.get("CODEX_SESSION_ID"),
+        codex_thread_id=os.environ.get("CODEX_THREAD_ID"),
     )
     atomic_write_json(config_path(target, args.run_id), cfg)
     learning_notes_ref = cfg.get("learning_notes_ref")
@@ -776,21 +771,15 @@ def cmd_research_checkpoint(args: argparse.Namespace) -> int:
 def cmd_research_select(args: argparse.Namespace) -> int:
     target = target_repo(args)
     run_id, _ = active_run(target, args.run_id)
-    payload = load_payload(args)
     node_id = args.node_id
     evidence_refs = list(args.evidence_ref or [])
-    payload_refs = payload.get("evidence_refs")
-    if isinstance(payload_refs, list):
-        evidence_refs.extend(str(item) for item in payload_refs)
-    summary = args.summary or payload.get("summary")
-    rationale = args.acceptance_rationale or payload.get("acceptance_rationale")
-    node_payload = payload.get("node") if isinstance(payload.get("node"), dict) else {}
+    summary = args.summary
+    rationale = args.acceptance_rationale
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
         nodes = phase_state.setdefault("nodes", {})
         node = nodes.setdefault(node_id, {})
-        node.update(node_payload)
         node.setdefault("node_id", node_id)
         node["status"] = str(node.get("status") or "accepted")
         if node["status"] != "accepted":
