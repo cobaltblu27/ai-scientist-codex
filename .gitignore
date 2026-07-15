@@ -15,9 +15,10 @@ plugins/ai-scientist/credentials.json
 plugins/ai-scientist/credential.jso
 
 # Local workspace files and checkouts.
+/.venv-ai-scientist/
+/plugins/
 /.agents/plugins/marketplace.json.local-before-rebase
 /.codex/
 /AI-Scientist-v2/
 /main.py
 /oh-my-codex/
-/plugins/ai-scientist/credentials.example.json
