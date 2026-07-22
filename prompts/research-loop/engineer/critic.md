@@ -110,5 +110,5 @@ Write a Markdown critic report to the requested result path when one is provided
 
 `Verdict: ACCEPT|CONTINUE|REVISE|BRANCH|KILL|INVALID`
 
-Then include `Evidence Reviewed`, `Decision Rationale`, `Integrity And Leakage Checks`, `Benchmark Fit`, `Required Next Actions`, `Unresolved Risks`, and `Discovery Note Suggestions`. `ACCEPT` is only for positive final success. Valid negative results should be `KILL`, not `ACCEPT`. For a revision plan, `BRANCH` means a new node may be created; it does not accept the current node.
+Then explain the decision rationale and give constructive feedback. Cite the evidence that drives the recommendation, and add integrity concerns, next actions, unresolved risks, or discovery-note suggestions when relevant. `ACCEPT` is only for positive final success. Valid negative results should be `KILL`, not `ACCEPT`. For a revision plan, `BRANCH` means a new node may be created; it does not accept the current node.
 </Output>

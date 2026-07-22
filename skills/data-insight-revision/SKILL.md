@@ -41,7 +41,7 @@ Do not merely reason from summary metrics. For each revision decision, use artif
 <Soft_Coordination>
 `Data Insight Work` entries are natural-language coordination hints, not hard locks. Similar enough means the same dataset/split, same prediction or result artifacts, and the same decision question or failure mode. Different enough means a different node evidence version, different artifact version, different slice/failure hypothesis, or different decision need.
 
-When starting new insight work inside a run, include a suggested `Data Insight Work` `In Progress` entry in your result or brief with `insight_id`, owner node/work id, question, evidence/artifact scope, expected artifact path, started time, and useful-for notes. When finishing, include a suggested `Completed` update with artifact refs and the compact finding. If blocked or stale, say why so another agent can decide whether to reuse, poll, or start a different pass.
+When coordination would help, include a short suggested `Data Insight Work` note describing the question, evidence scope, artifact location, status, and why it matters. Include only details that are known and useful for another agent deciding whether to reuse, poll, or start a different pass.
 </Soft_Coordination>
 
 <Model_Failure_Diagnosis>
@@ -57,17 +57,7 @@ When inside an AI Scientist research run, write artifacts under:
 .ai-scientist/runs/<run-id>/logs/data-insight/revision/<node-id>/<work-id>/
 ```
 
-If `work_id` is unavailable, use a stable assignment id from the orchestrator. Use these names unless the assignment provides different paths:
-
-```text
-inspection.py
-evidence_inventory.json
-error_table.csv
-slice_metrics.json
-failure_patterns.json
-figures/
-data_insight_revision_report.md
-```
+If `work_id` is unavailable, use a stable assignment id from the orchestrator. For a fresh inspection, keep the executable inspection and Markdown report in this directory. Add tables, JSON, or figures only when they materially support the diagnosis, using descriptive names.
 
 When no run id exists, use the output directory given by the user or assignment. If none is provided and the task is outside an autonomous loop, ask before writing artifacts.
 </Artifact_Location>
@@ -115,25 +105,18 @@ The inspection code should answer the relevant subset of these questions:
 </Boundaries>
 
 <Report_Format>
-Write the Markdown report in this order:
+Write a compact Markdown report that communicates:
 
-1. `Revision Question`: the exact decision being informed.
-2. `Evidence Inventory`: usable refs and missing refs.
-3. `Inspection Code`: script path, command run, produced artifact refs.
-4. `Observed Failure Pattern`: artifact-backed facts only.
-5. `Success Versus Failure Contrast`: where the base model works, where it fails, and what that implies.
-6. `Output Correction Probe`: whether residual/post-head correction was examined, where it helps or fails, and why it is diagnostic or explicitly contract-allowed.
-7. `Slice And Baseline Findings`: measurable gaps and comparison notes.
-8. `Likely Root Cause`: evidence and uncertainty.
-9. `Model Improvement Target`: the upstream model/data/training change suggested by the evidence.
-10. `Recommended Revision Action`: one of revise, branch, abandon/reject, or escalate.
-11. `Validation Plan`: the smallest check that would confirm the revision hypothesis.
-12. `Critic Questions`: what the revision-plan critic should scrutinize.
-13. `Data Insight Work Note`: suggested discovery-note update for in-progress, completed, blocked, or stale insight work.
+- the question and evidence inspected;
+- the important artifact-backed findings and uncertainty;
+- the recommended revision action, why it follows from the findings, and the smallest useful validation;
+- relevant artifact refs or blockers.
+
+Choose headings, order, and depth to fit the evidence. Discuss slices, baseline contrasts, output correction, coordination notes, or critic questions only when they affect the recommendation.
 </Report_Format>
 
 <Revision_Brainstorm_Hand_Off>
-Feed the Markdown report into `revision-brainstorm`. The handoff should include the report path, artifact paths, recommended action, revision hypothesis, validation plan, contract risks, and critic questions. `revision-brainstorm` still owns final idea generation, ranking, and the revise/branch/abandon/escalate recommendation.
+Feed the Markdown report and relevant artifact refs into `revision-brainstorm`, together with the recommended action. Add a revision hypothesis, validation idea, contract risk, or critic question when it is important to the next decision. `revision-brainstorm` still owns final idea generation, ranking, and the revise/branch/abandon/escalate recommendation.
 </Revision_Brainstorm_Hand_Off>
 
 <Final_Response>

@@ -50,3 +50,9 @@ Ralph is a persistence loop that keeps working on a task until it is fully compl
 
 ## Skills Policy
 Skills in this project are mostly a dedicted tool for specific usuage; do not make them trigger without explicit calling.
+
+## Compatibility
+When editing prompts, you do not usually have to worry to much about backward compatibility, as we rarely have to handle continueing from previous runs. So when editing prompts to change behavior from A to B, refrain from terms like 'do not ~<previous behaviour>' or '~is not ~<previous prompts>', unless previous behavour seems to be a common fail case that can happen unless negative prompt is specified. Most of the time, agent won't know what was the previous version's instruction anyways.
+
+## Prompt Flexibility
+Specify the goal, decision, evidence requirements, and non-negotiable boundaries while leaving report structure and depth flexible. Avoid mandatory return forms with long field lists, especially forms with ten or more fields or repeated per-item schemas, because agents may focus on completing the form instead of producing a strong result. Prefer a few content goals in natural Markdown and request additional sections or details only when relevant. Keep exact machine-readable fields in CLI state or artifact schemas instead of duplicating them in prose reports. Use a rigid output format only when a parser or CLI genuinely requires it, and keep that format to the minimum required fields.

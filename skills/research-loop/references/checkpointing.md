@@ -24,27 +24,13 @@ Do not paste full reports, logs, metric tables, or long rationale into checkpoin
 {
   "orchestrator": {
     "next_action": "await_worker_result",
-    "current_node": "node-001",
-    "reason": "worker-node-001 is running the assigned bounded piece"
+    "current_node": "node-001"
   },
   "work": {
     "worker-node-001": {
-      "kind": "worker",
-      "node_id": "node-001",
       "status": "running",
       "agent_thread_id": "<codex-subagent-thread-id>",
-      "agent_type": "ai-scientist-research-worker",
-      "prompt_source": "prompts/research-loop/worker.md",
-      "assignment_ref": ".ai-scientist/runs/<run-id>/logs/workers/node-001/worker-node-001/assignment.json",
       "result_ref": ".ai-scientist/runs/<run-id>/logs/workers/node-001/worker-node-001/result.md"
-    }
-  },
-  "nodes": {
-    "node-001": {
-      "status": "running",
-      "worker_id": "worker-node-001",
-      "summary": "latest durable one-paragraph state",
-      "evidence_refs": []
     }
   }
 }

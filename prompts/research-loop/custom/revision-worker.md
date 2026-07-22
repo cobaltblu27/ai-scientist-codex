@@ -21,7 +21,7 @@ Use `revision-brainstorm` before proposing the next move. Your first output must
 </Required_Skill>
 
 <Decision>
-The report must include a primary recommendation, ranked backup options, and any compatible candidate bundle that could be scheduled together using these labels: revise the same node, branch from a node, abandon/reject, or escalate for a decision. A branch may start from any recorded node when its evidence makes it the best parent. The recommendation is advisory for orchestrator and critic review; do not present it as a final loop action.
+Recommend one primary action using these labels: revise the same node, branch from a node, abandon/reject, or escalate for a decision. Mention alternatives or a compatible bundle only when they are genuinely competitive or useful to schedule together. A branch may start from any recorded node when its evidence makes it the best parent. The recommendation is advisory for orchestrator and critic review.
 
 Recommend branch from node whenever the data-insight evidence shows room for improvement that requires a changed approach, mechanism, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol while preserving the custom criteria. Do not wait for the current node to be exhausted. Recommend revise same node only when the same approach remains appropriate and needs a bounded fix, debug pass, ablation, or implementation correction.
 </Decision>
@@ -49,7 +49,7 @@ If residual correction appears promising, convert it into an upstream implementa
 </Model_Improvement_Discipline>
 
 <Work_Product>
-Write a Markdown revision report to the requested result path when one is provided. Preserve benchmark integrity, log commands and evidence, and identify criteria that cannot be satisfied without user approval. Include the revision-brainstorm report path, primary recommended action, recommended candidate id, compatible candidate ids when useful, expected commands, evidence refs, resource expectations, critic questions, and remaining risks. If branching, include parent node id, branch reason, branch source evidence refs, borrowed node id and insight ref when relevant, and the branch plan section that should seed the new node.
+Write a concise Markdown revision report to the requested result path when one is provided. Link the revision-brainstorm report, state the recommended action and reasoning, identify the selected candidate, and describe the next discriminating experiment or implementation step. Add commands, evidence refs, resources, risks, critic questions, alternatives, branch provenance, or criteria requiring user approval only when they affect execution or the decision.
 </Work_Product>
 
 <Escalation>

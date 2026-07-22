@@ -41,8 +41,6 @@ JOURNAL_EVENT_TYPES = {
 }
 NODE_RESOLVED_STATUSES = {"accepted", "invalid", "rejected"}
 NODE_UNRESOLVED_STATUSES = {"planning", "planned", "implementing", "running", "validating", "buggy", "repairing", "candidate"}
-NODE_TERMINAL_CRITIC_VERDICTS = {"accepted": "ACCEPT", "invalid": "INVALID", "rejected": "KILL"}
-NODE_ACCEPTING_CRITIC_VERDICTS = {"ACCEPT"}
 NODE_EVIDENCE_ADMIN_KEYS = {
     "status",
     "updated_at",
@@ -789,9 +787,6 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, f"research_node_state_invalid:{selected_node}", state)
     if selected.get("status") != "accepted":
         return CompletionResult(False, "research_selected_node_not_accepted", state)
-    critic_reason = node_fresh_critic_reason(str(selected_node), selected, allowed_verdicts=NODE_ACCEPTING_CRITIC_VERDICTS)
-    if critic_reason:
-        return CompletionResult(False, critic_reason, state)
     if selection.get("selected_node") != selected_node:
         return CompletionResult(False, "research_selection_missing_or_stale", state)
     return CompletionResult(True, "research_state_complete", state)

@@ -38,9 +38,9 @@ These out-of-rule behaviours are only for you to help progress research; use the
 The research loop starts only from an explicit user trigger. At startup, save the target idea identities and freeze the python environment, mode, research contract, resource policy, and generated subagent types into the run config. Then start or resume a durable run under `.ai-scientist/runs/<run-id>/`.
 
 After startup, you will run the orchestrator-led loop. Resume the current run state, decide the next action, checkpoint that decision, and create one node for each idea in the saved idea batch. 
-Each node gets a dedicated Codex worker and an isolated workspace. If fixed splits, baseline paper comparison, or comparable baseline scoring are required, spawn a baseline worker and share its authoritative baseline manifest with node workers. Node workers plan, implement, debug, and run experiments, but the orchestrator assigns one bounded piece at a time and records every result through `research checkpoint`.
+Each node gets a dedicated Codex worker and an isolated workspace. If fixed splits, baseline paper comparison, or comparable baseline scoring are required, spawn a baseline worker and share its authoritative baseline manifest with node workers. The worker owns an ordered execution todo list for its node and works through locally runnable implementation, debugging, testing, and experiment tasks in sequence. It returns to the orchestrator at a resource-heavy run boundary, a decision-worthy result, a blocker, a direction-changing finding, or node completion.
 
-When a node's work is done and output is calculated, spawn a mode-specific critic. Critics judge the node against the frozen contract, evidence, baseline, resource records, and mode-specific native agent instructions. If a node's direction looks like it can be enhanced, spawn a revision worker, and create branches based on revision ideas. Repeat worker, critic, revision, branch, and resource steps until a node has an accepted positive outcome with fresh critic approval and outstanding operational work has been completed or explicitly retired.
+When a worker produces evidence that can support a research decision, spawn a mode-specific critic. Critics challenge the evidence and give constructive recommendations for same-node continuation, bounded revision, branching, acceptance, or termination. The orchestrator makes research decisions from the frozen contract, verified evidence, and critic feedback. Repeat worker, critic, revision, branch, and resource steps until a node has an accepted positive outcome and outstanding operational work has been completed or explicitly retired.
 
 The CLI records state, evidence, agent types, prompt source refs, resource leases, and completion gates. It does not enforce scientific judgment or subagent behavior. The orchestrator owns those decisions and must keep checkpointed state sufficient for durable continuation.
 </Big_Picture>
@@ -142,7 +142,7 @@ The prompt for orchestrator (you) is this `skills/research-loop/SKILL.md`. Do no
 </Predefined_Agents>
 
 <Research_Contract>
-Loop runs expect a run-owned `contract.json`. Treat the contract as the anti-drift contract for the whole run. If a `contract.json` exists, freeze it and use it as additional context, but judge acceptance by the custom criteria.
+Loop runs expect a run-owned `contract.json`. Treat the contract as the anti-drift contract for the whole run. If a `contract.json` exists, freeze it and use it as additional context.
 
 If the run-owned `contract.json` is missing, stop and notify user that contract must provided first.
 
@@ -162,7 +162,7 @@ Repeat until completion criteria are met:
 6. If baseline setup is required, spawn/checkpoint the baseline worker and pass expected split refs to node workers.
 7. Workers that run experiments must use `resource acquire`/`resource release`, or preferably `resource run`.
 8. Integrate every worker/critic/revision return with evidence by checkpointing node summaries, result refs, and the next action.
-9. Before accepting a final outcome, run a mode-specific critic and checkpoint its verdict. Review material scientific revision or branch plans with a critic; the orchestrator may directly approve low-risk mechanical fixes that do not change the claim, protocol, or acceptance standard.
+9. Before accepting a final outcome, run a mode-specific critic and consider its recommendation alongside the verified contract evidence. The orchestrator owns the final decision and records its rationale.
 
 </Loop>
 
@@ -171,7 +171,7 @@ The orchestrator should behave like a polling dispatcher: harvest finished work,
 
 Run a scheduler sweep at every resume or before any deliberate wait:
 
-1. Harvest terminal outputs first: released resource jobs, worker result paths, critic verdicts, revision reports, baseline readiness, and blocked/stale work.
+1. Harvest terminal outputs first: released resource jobs, worker result paths, critic recommendations, revision reports, baseline readiness, and blocked/stale work. For some nodes that have partially finished plan, let them go on.
 2. Check for completed outputs, such as works given to nodes, experiments running, or critic/revision refs.
 3. Build a runnable task list: experiments, node implementation, revision, critic review, package download, or any other task that can make progress.
 4. Check which tasks can run now. For resource-heavy tasks, inspect available GPUs/CPUs and current leases before dispatch.
@@ -185,7 +185,8 @@ Only wait when no independent runnable task exists or a dependency is expected t
 Before each new worker, revision, branch, or resource assignment, inspect the active nodes. Classify runnable or recently integrated work as:
 
 - `Enhance`: same mechanism, implementation fix, bounded ablation, or depth on a promising node;
-- `Revise`: new mechanism, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol under the frozen contract;
+- `Revise`: bounded change to the current architecture, objective, preprocessing, training, or experiment design that preserves the node's central research direction;
+- `Branch`: new architectural direction or meaningfully different mechanism or hypothesis that needs its own evidence trail;
 - `Diagnose`: data insight, slice/error analysis, ablation, baseline comparison, or validation whose purpose is to identify the bottleneck or decide between branches;
 - `Experiment`: experiment work from implemented codebase.
 
@@ -203,12 +204,7 @@ Queue buckets live at `state.resource_queue`:
 - `released`: job assigned to a worker/thread and awaiting a worker return.
 - `completed`: worker returned terminal evidence and the orchestrator integrated it.
 
-Queue item shape:
-
-- `job_id`, `node_id`, `work_id`, `worker_id`, `agent_thread_id`;
-- `purpose`, `command`, `cwd`, `request`;
-- `assignment_ref`, `result_ref`;
-- `resource_evidence_refs`, `created_at`, `updated_at`, `status`, `reason`.
+Each queue item must identify the job, owning node/work, current status, runnable command, working directory, and resource request. Add worker/thread ids, result or evidence refs, timestamps, and rationale when they become useful for dispatch, resume, or audit.
 
 On every resume:
 
@@ -232,35 +228,45 @@ Checkpoint the baseline worker assignment and pass its authoritative manifest, n
 <Node_Worker_Protocol>
 Every idea in the saved idea batch begins with at least one node worker. In legacy mode, the selected idea begins with at least one node worker.
 
-A node is one research direction with a dedicated workspace and evidence trail. Do not create a new node for every implementation step; create one only for an initial idea or a meaningfully different branch.
+A node is one research direction with a dedicated workspace and evidence trail. Create nodes for initial ideas and meaningfully different branches, and represent implementation steps within a node as execution todos.
 
 For each new node, the orchestrator must create/checkpoint a node id, materialize or assign its workspace, spawn a dedicated `ai-scientist-research-worker`, and store the worker/thread id, `agent_type`, assignment ref, result ref, status, workspace materialization, and next action. Use `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/` unless the run config says otherwise.
 
 Pass only dynamic context the worker needs: node seed idea, frozen contract/custom criteria, mode, resource policy, notes refs, workspace path, expected result path, relevant baseline refs, and current node evidence. The worker prompt owns the detailed first-plan format, implementation report format, fixed-split discipline, and resource-run evidence format.
 
-The worker's first return must be a plan. Treat it as a current, amendable execution plan rather than a new contract. Review it before assigning implementation, and revise or retire planned pieces when later evidence changes what is decision-relevant. Then assign bounded pieces to the same node worker when possible, checkpoint each return, and continue until implementation is complete, the node needs critic/revision, or the node is abandoned/rejected with evidence.
+The worker's first return must be a plan with an ordered execution todo list. Treat it as a current, amendable execution plan rather than a new contract. Review the plan, then resume the same worker to execute its todos sequentially. The worker may add, reorder, refine, or retire todos as implementation and evidence develop.
+
+Expect a worker return at these orchestration boundaries:
+
+- a long-running or resource-heavy command is ready to launch;
+- experiment or analysis evidence is mature enough for critic review;
+- a blocker requires orchestration;
+- evidence motivates a meaningfully different research direction;
+- the node's planned work is complete.
+
+Checkpoint each such return with the completed work, current evidence, remaining todos, and next decision. Resume the same worker with resource results, critic feedback, or updated node context so it can maintain execution continuity.
 </Node_Worker_Protocol>
 
 <Critic_Revision_Flow>
-Run a mode-specific critic before accepting a final outcome and before implementing a material scientific revision or creating a branch. Low-risk mechanical fixes that preserve the claim, protocol, and acceptance standard may be approved directly by the orchestrator. Critics review node outcomes and material revision plans; they must receive the frozen contract, node evidence, resource evidence, baseline/fixed split refs when present, and the exact question being asked.
+Run a mode-specific critic when a worker returns decision-worthy evidence, including a substantive experiment result, completed benchmark, informative failure analysis, model-design decision, branch proposal, or candidate final outcome. Critics review node outcomes and research decisions; they must receive the frozen contract, node evidence, resource evidence, baseline/fixed split refs when present, the worker's current todo state, and the exact question being asked.
 Spawn critics with `agent_type: ai-scientist-research-critic-<mode>` and pass dynamic review context only.
 
-When a critic reviews a final node outcome, checkpoint the verdict on the node with `critic_ref`, `critic_verdict`, `critic_completed_at`, `critic_result_path`, and evidence refs. Route only these verdicts:
+When a critic reviews a node outcome, checkpoint its recommendation on the node with `critic_ref`, `critic_verdict`, `critic_completed_at`, `critic_result_path`, and evidence refs. Interpret the values as advice:
 
-- `ACCEPT`: binding positive criteria are met with valid, sufficient evidence; safe to select.
-- `CONTINUE`: one or more specific, bounded same-node actions are likely to change the acceptance decision.
-- `REVISE`: a validity-blocking implementation, method, or experimental defect needs a bounded fix before judgment.
-- `BRANCH`: create one or more contract-preserving child nodes.
-- `KILL`: stop this node/lineage with trustworthy evidence, including valid negative results.
-- `INVALID`: disregard evidence because provenance, split, leakage, drift, or benchmark validity failed.
+- `ACCEPT`: the critic recommends acceptance.
+- `CONTINUE`: the critic recommends targeted work on the current design.
+- `REVISE`: the critic recommends a bounded same-node design change.
+- `BRANCH`: the critic recommends a distinct contract-preserving child node.
+- `KILL`: the critic recommends stopping the node.
+- `INVALID`: the critic raises an evidence-validity concern for verification.
 
-Completion requires the selected accepted node to have a fresh `ACCEPT` critic verdict. `ACCEPT` is valid when binding positive criteria are met and the supporting evidence is valid and sufficient for the claim. Optional improvements do not block acceptance. If decision-relevant node evidence changes after the critic, run another critic.
+Critic recommendations are advisory. The orchestrator owns node transitions and may accept a node only when the binding positive criteria are met and the completion audit contains valid, sufficient verification evidence. If a critic raises a concrete concern, verify it or record why the available evidence resolves it.
 
-When a critic requests revision or the orchestrator sees a promising rescue path, spawn `agent_type: ai-scientist-research-revision-worker-<mode>`. The revision worker owns revision brainstorming, required data insight, and model-improvement analysis; the orchestrator owns deciding whether the returned candidates become same-node work, branches, or abandonment.
+For `CONTINUE` and `REVISE`, pass the critic's feedback to the node's existing worker and let it update and execute the todo list. Use `agent_type: ai-scientist-research-revision-worker-<mode>` for open-ended failure analysis or redesign that benefits from data insight and multiple candidate research directions. The orchestrator decides which returned candidates become same-node work, branches, or abandonment.
 
-A material scientific revision or branch plan must pass critic review before implementation. The orchestrator may directly approve a low-risk mechanical fix that does not alter the claim, protocol, split, comparison, or acceptance bar, and must checkpoint why it was classified as mechanical. For revision-plan review, `CONTINUE` means continue same-node work, `REVISE` means fix the plan, `BRANCH` means the plan contains one or more safe branch candidates, `KILL` means stop the lineage, and `INVALID` means the plan/evidence cannot be trusted. Revision-plan review must not use `ACCEPT`; only final positive node outcomes can be accepted.
+For a branch plan or revision that materially changes the node's scientific direction, use critic feedback to expose unsupported assumptions and improve the discriminating experiment. The orchestrator decides whether to implement, revise, defer, or reject the plan.
 
-Store revision-plan critic work under `state.work`. Store plan refs and verdict refs on the affected node or branched nodes using `revision_plan_ref`, `revision_critic_ref`, `revision_critic_verdict`, `revision_critic_completed_at`, and `revision_critic_scope`. Store `data_insight_refs` with every revision plan or node checkpoint. If the accepted plan revises the same node, assign implementation to the original node worker when possible. If the accepted plan branches, create one or more new nodes for the selected branch candidates and assign each new node to its own dedicated worker.
+Store revision-plan critic work under `state.work`. Store plan and recommendation refs on the affected node or branched nodes using `revision_plan_ref`, `revision_critic_ref`, `revision_critic_verdict`, `revision_critic_completed_at`, and `revision_critic_scope`. Store `data_insight_refs` with every revision plan or node checkpoint. If the accepted plan revises the same node, assign implementation to the original node worker when possible. If the accepted plan branches, create one or more new nodes for the selected branch candidates and assign each new node to its own dedicated worker.
 </Critic_Revision_Flow>
 
 <Discovery_Notes>
@@ -270,12 +276,12 @@ Use sections for current best understanding, what worked, what did not work, and
 </Discovery_Notes>
 
 <Branching>
-Branching is the backbone driver of this research loop. As each node represents a single research direction, whenever a node has room for improvement through a change in methodology, mechanism, objective, architecture, preprocessing strategy, data-slice strategy, or training protocol, the loop should produce a branch through the revision brainstorming process. Do not wait for same-node exhaustion before branching when data shows an approach-change opportunity.
+Create a branch when evidence motivates a new architectural direction or a meaningfully different mechanism or hypothesis that needs its own implementation and evidence trail. Keep bounded changes that preserve the node's central research direction within that node as revisions. Evidence can motivate a branch before the parent node is exhausted.
 A branch is a new normal node with its own worker, workspace, evidence trail, resource records, and eventual critic review. Branching is orchestrator judgment, not a separate CLI command.
 
 The orchestrator may branch from any recorded node when evidence makes that node the best parent. Do not restrict branching to the current node, accepted nodes, or nodes marked with a special status. This matters after several experiments fail: the best branch may come from an older failed or partial node.
 
-Use the portfolio rule when deciding whether to branch now, revise the same node, or request diagnostic evidence. A branch is strongest when it responds to a recorded bottleneck, critic finding, discovery note, learning note, or cross-node transferable insight; a same-node revise is strongest when it cheaply completes or debugs the current mechanism.
+Use the portfolio rule when deciding whether to branch now, revise the same node, or request diagnostic evidence. A branch is strongest when evidence supports a new architectural direction or distinct mechanism or hypothesis; a same-node revision is strongest when a bounded change can improve the current direction.
 
 The orchestrator may launch multiple branches from one revision-brainstorm report when candidates test distinct mechanisms or bottleneck hypotheses and can be evaluated without resource starvation. Do not force top-1 branch selection when uncertainty is high. If several candidates are near-duplicates, pick one representative and record why the others were deferred.
 
@@ -338,9 +344,8 @@ Run `research complete` only after:
 - all worker/critic/revision assignments have terminal evidence or are explicitly abandoned;
 - `state.resource_queue.pending` and `state.resource_queue.released` are empty;
 - no active resource leases remain;
-- final selection points to an accepted node/outcome;
-- the selected accepted node has a fresh `ACCEPT` critic verdict recorded in node state, where `ACCEPT` means positive ending criteria met;
-- the completion audit passes;
+- final selection points to an accepted node/outcome with its evidence refs and the orchestrator's acceptance rationale;
+- the completion audit verifies that the selected node meets the binding positive criteria with valid evidence;
 
 Complete the CLI run, then complete the active goal:
 

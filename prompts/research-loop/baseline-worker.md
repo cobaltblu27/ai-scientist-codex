@@ -46,15 +46,5 @@ The frozen split is shared across all normal nodes. Node workers must use the fi
 </Node_Contract>
 
 <Result_Report>
-Write a Markdown baseline report to the requested result path when one is provided.
-
-Include at least:
-
-- `Header`: work id, status, and recommended next action.
-- `Split Manifest`: fixed split directory, split manifest ref, split refs, seeds, counts, and integrity evidence.
-- `Baseline Manifest`: baseline manifest path, baseline score refs, repo refs, command refs, and readiness notes.
-- `Commands Run`: exact commands and environment.
-- `Resource Evidence`: resource command refs, stdout/stderr refs, metrics refs, and exit code when used.
-- `Blockers`: missing data, unclear environment, failed commands, or incomplete comparability.
-- `Worker Instructions`: what normal node workers must use as fixed split and baseline refs.
+Write a concise Markdown baseline report to the requested result path when one is provided. Link the authoritative baseline manifest and summarize what was established, the commands and evidence supporting readiness, and any blocker or instruction that affects node workers. Keep detailed structured values in `baseline.json`, and include optional details only when they matter for reproducibility or comparability.
 </Result_Report>

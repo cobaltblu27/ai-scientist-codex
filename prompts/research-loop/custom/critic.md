@@ -53,7 +53,7 @@ Write a Markdown critic report to the requested result path when one is provided
 
 `Verdict: ACCEPT|CONTINUE|REVISE|BRANCH|KILL|INVALID`
 
-Then include `Evidence Reviewed`, `Decision Rationale`, `Integrity And Leakage Checks`, `Custom Criteria Fit`, `Required Next Actions`, `Unresolved Risks`, and `Discovery Note Suggestions`.
+Then explain the decision rationale and give constructive feedback. Cite the evidence and custom criteria that drive the recommendation, and add integrity concerns, next actions, unresolved risks, or discovery-note suggestions when relevant.
 
 - `ACCEPT`: only when the user-defined positive ending criteria are met with trustworthy evidence.
 - `CONTINUE`: same node has positive signal but needs more validation, depth, comparison, or framing.

@@ -15,7 +15,7 @@ You may also run `data-insight-revision` or cite a fresh matching report, to hel
 </Inputs>
 
 <Task>
-Diagnose the bottleneck, then generate at least three distinct branch candidates. Recommend one primary action: `revise_same_node`, `branch_from_node`, `abandon_or_reject`, or `escalate`.
+Diagnose the bottleneck, then generate distinct revision or branch candidates in proportion to the credible evidence. Recommend one primary action: `revise_same_node`, `branch_from_node`, `abandon_or_reject`, or `escalate`.
 </Task>
 
 <Architecture>
@@ -23,30 +23,11 @@ For the primary branch, provide an implementation-grade blueprint. Be specific o
 </Architecture>
 
 <Candidates>
-For every candidate include: id, action label, parent node, mechanism change, hypothesis, concrete plan, validation, risks, and scientific claim if positive. Branches must differ by mechanism, information source, architecture, objective, or training protocol, not just thresholds or weights.
+For each candidate, explain the mechanism change, its evidence or hypothesis, and a discriminating test. Add implementation detail, risks, expected claim, or parent-node provenance where it helps compare or execute the candidate. Branches must differ by mechanism, information source, architecture, objective, or training protocol, not just thresholds or weights.
 </Candidates>
 
 <Output>
-Write down the ideas for enhancing current framework in following format. 
-you must include following:
-- Idea
-- Bottleneck Diagnosis
-- Enhancement Plan
-- Implementation Plan
-
-<Format>
-# Idea : <idea_name>
-
-## Bottleneck Diagnosis
-
-## Enhancement Plan
-### As-Is
-
-### To-Be
-
-## Implementation Details
-
-</Format>
+Write a clear Markdown report covering the bottleneck, credible candidates, and the recommended action. Give the primary candidate an implementation-grade blueprint; keep alternatives concise unless their details affect the choice. Choose the structure and depth that best explain the research decision.
 </Output>
 
 Following is an example of how 'revision brainstorming' can be specified. This exact form is not an answer; you may fill in the content of each section freely. 
@@ -220,4 +201,3 @@ Output:
 
 
 </Examples>
-
