@@ -28,7 +28,6 @@ from core.state import (
     load_json_if_exists,
     load_loop_state,
     mutate_loop_state,
-    node_evidence_fingerprint,
     run_dir,
     run_lock,
     selection_path,
@@ -45,7 +44,6 @@ TASK_TERMINAL_STATUSES = WORK_TERMINAL_STATUSES
 LEASE_ACTIVE_STATUSES = {"acquired", "running"}
 RESOURCE_KEYS = ("gpus", "cpu_cores", "memory_mb")
 REVISION_BRAINSTORM_SKILL = "skills/revision-brainstorm/SKILL.md"
-CRITIC_METADATA_KEYS = {"critic_ref", "critic_verdict", "critic_completed_at", "critic_result_path", "critic_id", "critic_role"}
 
 
 class ResearchError(ValueError):
@@ -102,8 +100,8 @@ def prompt_path_for(mode: str, kind: str) -> str | None:
         return "prompts/research-loop/worker.md"
     if kind == "baseline-worker":
         return "prompts/research-loop/baseline-worker.md"
-    if kind in {"critic", "revision-critic"}:
-        return f"prompts/research-loop/{mode}/critic.md"
+    if kind == "ranker":
+        return "prompts/research-loop/ranker.md"
     if kind == "revision-worker":
         return f"prompts/research-loop/{mode}/revision-worker.md"
     return None
@@ -191,6 +189,13 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
         raise ResearchError("research start requires idea_batch or selected_idea")
     if research_contract is None:
         raise ResearchError("research start requires research_contract for campaign runs or selected_idea.research_contract for legacy runs")
+    requested_research = payload.get("research") if isinstance(payload.get("research"), dict) else {}
+    ranking_top_n = requested_research.get("ranking_top_n", 3)
+    active_node_cap = requested_research.get("active_node_cap", ranking_top_n)
+    if isinstance(ranking_top_n, bool) or not isinstance(ranking_top_n, int) or ranking_top_n < 1:
+        raise ResearchError("research.ranking_top_n must be a positive integer")
+    if isinstance(active_node_cap, bool) or not isinstance(active_node_cap, int) or active_node_cap < ranking_top_n:
+        raise ResearchError("research.active_node_cap must be an integer greater than or equal to ranking_top_n")
     selected_idea_id = args.selected_idea_id or (selected_idea.get("id") if isinstance(selected_idea, dict) else None)
     cfg = {
         "schema_version": 1,
@@ -215,8 +220,10 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
             "worker_prompt_source": prompt_path_for(mode, "worker"),
             "baseline_worker_agent": research_agent_name(mode, "baseline-worker"),
             "baseline_worker_prompt_source": prompt_path_for(mode, "baseline-worker"),
-            "critic_agent": research_agent_name(mode, "critic"),
-            "critic_prompt_source": prompt_path_for(mode, "critic"),
+            "ranker_agent": research_agent_name(mode, "ranker"),
+            "ranker_prompt_source": prompt_path_for(mode, "ranker"),
+            "ranking_top_n": ranking_top_n,
+            "active_node_cap": active_node_cap,
             "revision_worker_agent": research_agent_name(mode, "revision-worker"),
             "revision_worker_prompt_source": prompt_path_for(mode, "revision-worker"),
             "revision_brainstorm_skill": REVISION_BRAINSTORM_SKILL,
@@ -236,12 +243,17 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, idea_batch, mode)
     research = cfg.setdefault("research", {})
     if isinstance(research, dict):
+        research.pop("critic_agent", None)
+        research.pop("critic_prompt_source", None)
+        research.pop("critic_gate", None)
         research.setdefault("worker_agent", research_agent_name(mode, "worker"))
         research.setdefault("worker_prompt_source", prompt_path_for(mode, "worker"))
         research.setdefault("baseline_worker_agent", research_agent_name(mode, "baseline-worker"))
         research.setdefault("baseline_worker_prompt_source", prompt_path_for(mode, "baseline-worker"))
-        research.setdefault("critic_agent", research_agent_name(mode, "critic"))
-        research.setdefault("critic_prompt_source", prompt_path_for(mode, "critic"))
+        research.setdefault("ranker_agent", research_agent_name(mode, "ranker"))
+        research.setdefault("ranker_prompt_source", prompt_path_for(mode, "ranker"))
+        research.setdefault("ranking_top_n", ranking_top_n)
+        research.setdefault("active_node_cap", active_node_cap)
         research.setdefault("revision_worker_agent", research_agent_name(mode, "revision-worker"))
         research.setdefault("revision_worker_prompt_source", prompt_path_for(mode, "revision-worker"))
         research.setdefault("revision_brainstorm_skill", REVISION_BRAINSTORM_SKILL)
@@ -250,6 +262,28 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     if criteria is not None:
         cfg["custom_criteria"] = criteria
     return cfg
+
+
+def migrate_research_ranker_config(target: Path, run_id: str, mode: str) -> bool:
+    path = config_path(target, run_id)
+    cfg = load_json_if_exists(path)
+    if not isinstance(cfg, dict):
+        return False
+    research = cfg.setdefault("research", {})
+    if not isinstance(research, dict):
+        return False
+    before = deepcopy(research)
+    research.pop("critic_agent", None)
+    research.pop("critic_prompt_source", None)
+    research.pop("critic_gate", None)
+    research.setdefault("ranker_agent", research_agent_name(mode, "ranker"))
+    research.setdefault("ranker_prompt_source", prompt_path_for(mode, "ranker"))
+    research.setdefault("ranking_top_n", 3)
+    research.setdefault("active_node_cap", research["ranking_top_n"])
+    if research == before:
+        return False
+    atomic_write_json(path, cfg)
+    return True
 
 
 def phase_state_or_error(state: dict[str, Any] | None, run_id: str) -> dict[str, Any]:
@@ -602,20 +636,6 @@ def update_nodes_from_result(phase_state: dict[str, Any], payload: dict[str, Any
                     current["updated_at"] = utc_now()
 
 
-def stamp_critic_fingerprints(phase_state: dict[str, Any], nodes_patch: dict[str, Any]) -> None:
-    nodes = phase_state.get("nodes") if isinstance(phase_state.get("nodes"), dict) else {}
-    for node_id, patch in nodes_patch.items():
-        if not isinstance(patch, dict) or not any(key in patch for key in CRITIC_METADATA_KEYS):
-            continue
-        current = nodes.get(str(node_id))
-        if not isinstance(current, dict):
-            continue
-        fingerprint = node_evidence_fingerprint(current)
-        current["node_evidence_fingerprint"] = fingerprint
-        if "critic_evidence_fingerprint" not in patch:
-            current["critic_evidence_fingerprint"] = fingerprint
-
-
 def cmd_research_start(args: argparse.Namespace) -> int:
     target = target_repo(args)
     payload = load_payload(args)
@@ -709,8 +729,19 @@ def cmd_research_resume(args: argparse.Namespace) -> int:
     target = target_repo(args)
     run_id, state = active_run(target, args.run_id)
     phase_state = phase_state_or_error(state, run_id)
+    mode = validate_mode(str(phase_state.get("mode") or "scientist"))
+    migrated_ranker_config = migrate_research_ranker_config(target, run_id, mode)
     orchestrator = phase_state.get("orchestrator") if isinstance(phase_state.get("orchestrator"), dict) else {}
-    append_journal_event(target, run_id, "state_transition", details={"command": "research resume", "next_action": orchestrator.get("next_action")})
+    append_journal_event(
+        target,
+        run_id,
+        "state_transition",
+        details={
+            "command": "research resume",
+            "next_action": orchestrator.get("next_action"),
+            "migrated_ranker_config": migrated_ranker_config,
+        },
+    )
     set_active_run(target, run_id, "research", "active")
     return emit(
         "ok",
@@ -750,7 +781,6 @@ def cmd_research_checkpoint(args: argparse.Namespace) -> int:
                     current_node["updated_at"] = utc_now()
                 else:
                     nodes[str(node_id)] = node_patch
-            stamp_critic_fingerprints(phase_state, patch["nodes"])
         if isinstance(patch.get("orchestrator"), dict):
             phase_state.setdefault("orchestrator", {}).update(patch["orchestrator"])
         orchestrator = phase_state.setdefault("orchestrator", {})

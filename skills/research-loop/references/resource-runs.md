@@ -1,67 +1,24 @@
-# Resource Runs
+# Resource-Heavy Work
 
-Use `resource run` for official or heavy benchmark evidence. The orchestrator owns queue decisions; workers execute released jobs.
+The orchestrator owns resource queue decisions; workers execute released jobs.
 
 ## Policy
 
-- Read resource caps from run config. Do not infer hardware.
-- Execution backend is separate from orchestrator scheduling and resource caps.
-- Use `resource status` to inspect active leases and available capacity.
-- The orchestrator must not run long official benchmark commands itself.
-- A Codex worker invokes `resource run` only after the orchestrator assigns or releases the queued job to that worker.
-- Official GPU benchmark and final-validation commands must go through `resource run`; do not run raw `python`, `uv run`, `conda run`, or ad hoc `sbatch --wrap` for official evidence.
-- Record resource decisions and outcomes in worker reports or checkpoints so critics can distinguish scientific failure from resource/environment failure.
-
-## Local Example
-
-```bash
-ai-scientist --target-repo <target-repo> resource run \
-  --run-id <run-id> \
-  --task-id <work-id> \
-  --cwd .ai-scientist/runs/<run-id>/nodes/<node-id>/workspace \
-  --purpose benchmark \
-  --gpus 1 \
-  --cpu-cores 4 \
-  --memory-mb 8192 \
-  --timeout-sec 3600 \
-  --poll-sec 30 \
-  -- <command ...>
-```
-
-`resource run` acquires a lease, writes `logs/resources/<work-id>/<lease-id>/command.json`, `stdout.log`, and `stderr.log`, executes through the configured scheduler backend, then releases the lease in `finally`.
-
-## Slurm Example
-
-HPC runs should freeze `resources.scheduler.type: "slurm"` and explicit Slurm options in run config, or pass matching `resource run` flags.
-
-```bash
-ai-scientist --target-repo <target-repo> resource run \
-  --run-id <run-id> \
-  --task-id <work-id> \
-  --cwd .ai-scientist/runs/<run-id>/nodes/<node-id>/workspace \
-  --purpose benchmark \
-  --gpus 1 \
-  --cpu-cores 8 \
-  --memory-mb 32768 \
-  --scheduler slurm \
-  --partition gpu \
-  --time 7-00:00:00 \
-  --gres gpu:1 \
-  --cpus-per-task 8 \
-  --mem 32G \
-  -- <command ...>
-```
-
-The Slurm backend writes a generated job script under the resource log directory and records the `sbatch` argv, Slurm job id, stdout/stderr paths, and exit code in `command.json`.
+- Read resource caps and scheduler constraints from the frozen `config.md`; do not infer hardware availability from assumptions.
+- The orchestrator does not run long official benchmark commands itself.
+- Before release, inspect recorded leases, the resource queue, and current host capacity.
+- A worker receives a resource-heavy job only after the orchestrator records it as `released` with its worker/thread ID, assignment ref, result path, working directory, command, and requested resources.
+- Record every official command under `logs/resources/<work-id>/<lease-id>/`: command specification, allocation, stdout, stderr, exit status, and release details.
+- Record resource decisions and outcomes through `$research-loop-checkpoint` so workers, the orchestrator, and the ranker can distinguish scientific failure from environment or capacity failure.
 
 ## Queue Handling
 
-- If resources are not available, checkpoint the job in `state.resource_queue.pending`, sweep other nodes, and retry queue triage on the next resume.
-- If resources are available, assign the job to the node worker and checkpoint it in `state.resource_queue.released` with `job_id`, `agent_thread_id`, `assignment_ref`, and `result_ref`.
-- When the worker returns terminal benchmark evidence, integrate evidence refs and move the queue item to `state.resource_queue.completed`.
+- If capacity is unavailable, record the job in `state.resource_queue.pending`, continue independent work, and revisit it on the next scheduling sweep.
+- If capacity is available, assign the job to its node worker and record it in `state.resource_queue.released`.
+- When the worker returns terminal evidence, integrate the result and move the queue item to `state.resource_queue.completed`.
 
 ## Failure Handling
 
-- If the heavy run fails with OOM/resource exhaustion while resources were busy or uncertain, wait for resources to free and retry once when justified.
-- If OOM/resource exhaustion persists when resources are free and the request fits configured caps, prompt the worker to reduce memory pressure, batch work, checkpoint, or otherwise fix the implementation.
-- If the request cannot ever fit configured caps, record a blocker or revise the implementation plan; do not spin.
+- If a job fails from OOM or exhaustion while capacity was uncertain, wait for capacity and retry once when justified.
+- If failure persists while the request fits frozen caps, ask the worker to reduce memory pressure, batch work, checkpoint, or repair the implementation.
+- If the request cannot fit the frozen caps, record a blocker or revise the implementation plan; do not spin.

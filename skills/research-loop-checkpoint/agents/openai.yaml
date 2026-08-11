@@ -1,0 +1,7 @@
+interface:
+  display_name: "Research Loop Checkpoint"
+  short_description: "Persist research-loop state for continuation."
+  default_prompt: "Use $research-loop-checkpoint to persist this research-loop transition for reliable continuation."
+
+policy:
+  allow_implicit_invocation: false

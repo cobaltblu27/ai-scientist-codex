@@ -133,18 +133,19 @@
     "research": {
       "type": "object",
       "properties": {
-        "critic_agent": {
-          "type": "object",
-          "properties": {
-            "model": {"type": "string"},
-            "reasoning_effort": {"type": "string"},
-            "required": {"type": "boolean"}
-          },
-          "additionalProperties": true
+        "ranker_agent": {
+          "type": "string"
         },
-        "critic_gate": {
-          "type": "object",
-          "additionalProperties": true
+        "ranker_prompt_source": {
+          "type": "string"
+        },
+        "ranking_top_n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "active_node_cap": {
+          "type": "integer",
+          "minimum": 1
         },
         "baseline_worker_prompt": {
           "type": "string"

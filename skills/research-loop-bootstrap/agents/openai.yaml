@@ -1,0 +1,7 @@
+interface:
+  display_name: "Research Loop Bootstrap"
+  short_description: "Freeze config and initialize a research run."
+  default_prompt: "Use $research-loop-bootstrap to freeze the validated research-loop configuration and initialize its run artifacts."
+
+policy:
+  allow_implicit_invocation: false

@@ -91,8 +91,8 @@ Use this when you want Codex to run bounded experiments for a selected idea whil
 It manages:
 
 - an orchestrator cursor kept alive by the Stop hook
-- checkpointed worker, critic, revision-worker, and revision-critic work records
-- mode-specific prompt paths under `prompts/research-loop/`
+- checkpointed worker, comparative ranker, and revision-worker records
+- shared ranker and mode-specific revision prompt paths under `prompts/research-loop/`
 - explicit resource leases for experiment commands
 - command, metric, and result evidence in `journal.jsonl`
 - final selection and completion audit evidence

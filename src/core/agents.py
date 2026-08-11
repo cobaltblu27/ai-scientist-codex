@@ -10,6 +10,9 @@ from core.plugin import plugin_root
 
 MANAGED_MARKER_PREFIX = "# ai-scientist agent: "
 AGENT_DIR = "agents"
+OBSOLETE_MANAGED_AGENT_NAMES = tuple(
+    f"ai-scientist-research-critic-{mode}" for mode in ("scientist", "engineer", "custom")
+)
 
 
 class AgentInstallError(RuntimeError):
@@ -53,14 +56,6 @@ def _specs() -> list[AgentSpec]:
         )
         specs.append(
             AgentSpec(
-                name=f"ai-scientist-research-critic-{mode}",
-                description=f"AI Scientist research critic for {mode} mode.",
-                prompt_source=f"prompts/research-loop/{mode}/critic.md",
-                model_reasoning_effort="xhigh",
-            )
-        )
-        specs.append(
-            AgentSpec(
                 name=f"ai-scientist-research-revision-worker-{mode}",
                 description=f"AI Scientist research revision worker for {mode} mode.",
                 prompt_source=f"prompts/research-loop/{mode}/revision-worker.md",
@@ -79,6 +74,12 @@ def _specs() -> list[AgentSpec]:
                 name="ai-scientist-research-worker",
                 description="AI Scientist research node worker.",
                 prompt_source="prompts/research-loop/worker.md",
+                model_reasoning_effort="xhigh",
+            ),
+            AgentSpec(
+                name="ai-scientist-research-ranker",
+                description="AI Scientist comparative research branch ranker.",
+                prompt_source="prompts/research-loop/ranker.md",
                 model_reasoning_effort="xhigh",
             ),
         ]
@@ -106,10 +107,10 @@ def research_agent_name(mode: str, role: str) -> str:
         return "ai-scientist-research-baseline-worker"
     if role == "worker":
         return "ai-scientist-research-worker"
+    if role == "ranker":
+        return "ai-scientist-research-ranker"
     if mode not in {"scientist", "engineer", "custom"}:
         raise AgentInstallError(f"invalid research mode: {mode}")
-    if role == "critic":
-        return f"ai-scientist-research-critic-{mode}"
     if role == "revision-worker":
         return f"ai-scientist-research-revision-worker-{mode}"
     raise AgentInstallError(f"invalid research agent role: {role}")
@@ -171,6 +172,12 @@ def is_managed_agent_file(path: Path, spec: AgentSpec) -> bool:
 def install_agents(*, codex_home: Path | None = None, target_repo: Path | None = None, force: bool = False, root: Path | None = None) -> list[dict[str, str]]:
     agents_dir = target_agents_dir(codex_home, target_repo)
     agents_dir.mkdir(parents=True, exist_ok=True)
+    for name in OBSOLETE_MANAGED_AGENT_NAMES:
+        obsolete_path = agents_dir / f"{name}.toml"
+        if obsolete_path.exists():
+            first_line = obsolete_path.read_text().splitlines()[:1]
+            if first_line and first_line[0].strip() == f"{MANAGED_MARKER_PREFIX}{name}":
+                obsolete_path.unlink()
     installed: list[dict[str, str]] = []
     for spec in AGENT_SPECS:
         path = agents_dir / spec.filename
