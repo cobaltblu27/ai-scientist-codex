@@ -43,7 +43,7 @@ Once the first generator is spawned, `contract.json` is frozen: do not edit it d
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
 - `contract.json`: frozen research contract.
-- `run.md`: run id, original request, chosen mode, arguments, current phase, completed phase checklist, blockers, and important decisions.
+- `run.md`: run id, original request, arguments, current phase, completed phase checklist, blockers, and important decisions.
 - `ideas/<idea-id>.md`: canonical idea files. Critic comments and generator refinements happen in these files.
 - `logs/pilots/<idea-id>/report.md`: pilot evidence for each surviving idea.
 - `ideas.json`: final index containing each selected idea's id, title, idea-file path, and pilot-report path.
@@ -60,7 +60,6 @@ Common arguments may include:
 - number of candidate ideas per generator (default: 4–6)
 - number of generators to spawn (default: enough to propose roughly 1.5 times the requested final count)
 - number of reflection rounds (default: 3)
-- mode (default: `scientist`)
 - etc
 
 </Arguments>
@@ -147,30 +146,18 @@ These are common rules for ideation. You MUST consider this for idea generation 
 - When suggesting a new AI architecture for performance boost, you MUST include a reference paper that contains a comparable performance result. The reference should be or be close to SOTA (you may use web search to confirm this).
 </Common>
 
-<Modes>
-- These are ideation policy "modes". You MUST consider the policy of given mode into consideration on idea generation and reflection.
-- Default mode is `scientist`. Record the chosen mode in `run.md` before spawning subagents and do not change it during the run.
+<Scientific_Standard>
+- Center ideas on a scientific or engineering finding or a novel methodology for enhanced performance.
+- Refrain from proposing merely incremental changes as the central contribution.
+- Require credible literature evidence for final selected ideas.
+- During reflection, prioritize novelty, publication claim, leakage and split risk, evidence quality, mechanism, feasibility, and repository fit.
 
-`scientist`:
+Generated native agents:
 
-- centered on scientific/engineering finding or novel methodology for enhanced performance.
-- when suggesting a methodology for performance boost, refrain from mere incremental changes.
-- requires credible literature evidence for final selected ideas; critic prioritizes novelty, publication claim, leakage/split risk, and evidence quality.
-
-`engineer`:
-
-- Search for papers, that can guarantee a performance boost.
-- Literature evidence is advisory only; critic prioritizes likely performance, implementation feasibility, and repo fit. Novelty is optional.
-
-`custom`:
-
-- Follow the user's custom criteria and make the success rule explicit enough for handoff.
-
-Generated native agents are mode-specific:
-
-- Generator: `ai-scientist-ideation-generator-<mode>`
-- Critic: `ai-scientist-ideation-critic-<mode>`
-</Modes>
+- Generator: `ai-scientist-ideation-generator`
+- Critic: `ai-scientist-ideation-critic`
+- Ranker: `ai-scientist-ideation-ranker`
+</Scientific_Standard>
 
 </Ideation_Policy>
 
@@ -214,7 +201,7 @@ For sake of efficiency, you may prompt multiple agents, and give next piece of p
 
 <Ideation_Workflow>
 Spawn generators for idea brainstorming.
-Spawn generators with `agent_type: ai-scientist-ideation-generator-<mode>` and critics with `agent_type: ai-scientist-ideation-critic-<mode>`.
+Spawn generators with `agent_type: ai-scientist-ideation-generator` and critics with `agent_type: ai-scientist-ideation-critic`.
 Run the process step-wise. give prompts to subagents in current step, so they can work concurrently. when they're all done, and all jobs for the current steps are finished, you may proceed to next step.
 
 Prompting will be done in stages.
@@ -281,7 +268,7 @@ Spawn critic subagents to reinforce the remaining ideas. Spawn one subagent per 
 ## Critic_Agent
 The critic is a constructive feedback provider, not an acceptance gate. It edits the assigned idea file directly by inserting comments; it does not accept, reject, rank, or rewrite the proposal.
 
-Spawn one critic per idea file in a reflection round. Critics may run concurrently across different files, but never assign two agents to edit the same file at the same time. Give the critic the idea-file path and frozen contract path, and require inline HTML comments using the mode-specific critic format.
+Spawn one critic per idea file in a reflection round. Critics may run concurrently across different files, but never assign two agents to edit the same file at the same time. Give the critic the idea-file path and frozen contract path, and require inline HTML comments using the critic prompt's format.
 
 prompt contains:
 - target idea

@@ -1,7 +1,7 @@
-# Scientist Ideation Generator
+# Ideation Generator
 
 <Purpose>
-Generate and refine scientist-mode research ideas under the frozen run contract. Follow the assignment stage exactly: brainstorm a candidate batch, create assigned idea files, or revise critic-annotated idea files.
+Generate and refine research ideas under the frozen run contract. Follow the assignment stage exactly: brainstorm a candidate batch, create assigned idea files, or revise critic-annotated idea files.
 </Purpose>
 
 <Frozen_Boundary>

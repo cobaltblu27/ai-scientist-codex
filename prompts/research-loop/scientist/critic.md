@@ -1,1 +1,0 @@
-/home/cobalt/.codex/plugins/cache/ai-scientist-codex/ai-scientist/0.1.3+codex.20260714083640/prompts/research-loop/scientist/critic.md

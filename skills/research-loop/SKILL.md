@@ -6,7 +6,7 @@ description: Runs the canonical orchestrator-led AI Scientist research loop with
 # Research Loop
 
 <Big_Picture>
-The research loop starts only from an explicit user trigger. At startup, save the target idea identities and freeze the Python environment, mode, research contract, resource policy, and generated subagent types into `config.md`. Bootstrap a new run or read the durable artifacts of an existing run under `.ai-scientist/runs/<run-id>/`.
+The research loop starts only from an explicit user trigger. At startup, save the target idea identities and freeze the Python environment, research contract, resource policy, and generated subagent types into `config.md`. Bootstrap a new run or read the durable artifacts of an existing run under `.ai-scientist/runs/<run-id>/`.
 
 After startup, you will run the orchestrator-led loop. Resume the current run state, decide the next action, call `$research-loop-checkpoint`, and create one node for each idea in the saved idea batch.
 Each node gets a dedicated Codex worker and an isolated workspace. If fixed splits, baseline paper comparison, or comparable baseline scoring are required, spawn a baseline worker and share its authoritative baseline manifest with node workers. The worker owns an ordered execution todo list for its node and works through locally runnable implementation, debugging, testing, and experiment tasks in sequence. It returns to the orchestrator at a resource-heavy run boundary, a decision-worthy result, a blocker, a direction-changing finding, or node completion.
@@ -17,12 +17,10 @@ The run artifacts record state, evidence, agent types, prompt source refs, resou
 </Big_Picture>
 
 <Arguments>
-These are the startup inputs saved with the run. The environment, mode, and binding contract are fixed after startup unless the user explicitly approves an amendment. The saved target ideas provide stable identities and starting designs; their advisory experiment architecture may evolve through evidence-backed revision and branching.
+These are the startup inputs saved with the run. The environment and binding contract are fixed after startup unless the user explicitly approves an amendment. The saved target ideas provide stable identities and starting designs; their advisory experiment architecture may evolve through evidence-backed revision and branching.
 
 - Target Ideas: the idea batch the research loop will start with. It will be given as `idea.json`, object containing reference to specific idea reated from ideation-loop.
 - Python Environment: python environment to run the experiments. It could be conda/mamba environment, uv environment, or python binary path.
-- Mode: which mode this will run on. See `Active_Modes` below. (default: 'scientist')
-
 Save these values into `.ai-scientist/runs/<run-id>/config.md` at startup. Later worker, ranker, revision, and selection prompts must use the persisted run state rather than revised conversational memory. Persist evidence-backed idea redesigns as node or revision artifacts; do not overwrite the saved seed identity or the binding contract.
 </Arguments>
 
@@ -60,7 +58,7 @@ Use Codex native agents for research-loop subagents:
 - Baseline worker: `ai-scientist-research-baseline-worker`
 - General worker: `ai-scientist-research-worker`
 - Ranker: `ai-scientist-research-ranker`
-- Revision worker: `ai-scientist-research-revision-worker-<mode>`
+- Revision worker: `ai-scientist-research-revision-worker`
 - Shared revision skill: `skills/revision-brainstorm/SKILL.md`
 - Revision data insight skill when a revision is driven by a data, model, or benchmark failure that requires fresh diagnosis: `skills/data-insight-revision/SKILL.md`
 
@@ -162,7 +160,7 @@ A node is one research direction with a dedicated workspace and evidence trail. 
 
 For each new node, the orchestrator must create/checkpoint a node id, materialize or assign its workspace, spawn a dedicated `ai-scientist-research-worker`, and store the worker/thread id, `agent_type`, assignment ref, result ref, status, workspace materialization, and next action. Use `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/` unless the run config says otherwise.
 
-Pass only dynamic context the worker needs: node seed idea, frozen contract/custom criteria, mode, resource policy, notes refs, workspace path, expected result path, relevant baseline refs, and current node evidence. The worker prompt owns the detailed first-plan format, implementation report format, fixed-split discipline, and resource evidence format.
+Pass only dynamic context the worker needs: node seed idea, frozen contract, resource policy, notes refs, workspace path, expected result path, relevant baseline refs, and current node evidence. The worker prompt owns the detailed first-plan format, implementation report format, fixed-split discipline, and resource evidence format.
 
 The worker's first return must be a plan with an ordered execution todo list. Treat it as a current, amendable execution plan rather than a new contract. Review the plan, then resume the same worker to execute its todos sequentially. The worker may add, reorder, refine, or retire todos as implementation and evidence develop.
 
@@ -192,7 +190,7 @@ Pass direct code, immediate-parent, experiment, metric, and failure refs. Ask th
 
 Ranker selection grants eligibility for scarce follow-up; it does not prove success, validate evidence, change the contract, or become an instruction to a worker. The orchestrator decides which selected parent to expand next and gives its worker only the research context and measured evidence, not the ranker's prose.
 
-Use `agent_type: ai-scientist-research-revision-worker-<mode>` when an implemented node needs open-ended failure analysis or scientific redesign. Store `data_insight_refs` only when data insight was materially required. Do not require data insight for a direct implementation fix, dependency issue, resource failure, already-demonstrated contamination, or clean rerun. Same-node revisions return to the original worker when possible; meaningfully different selected directions become child nodes with their own workers.
+Use `agent_type: ai-scientist-research-revision-worker` when an implemented node needs open-ended failure analysis or scientific redesign. Store `data_insight_refs` only when data insight was materially required. Do not require data insight for a direct implementation fix, dependency issue, resource failure, already-demonstrated contamination, or clean rerun. Same-node revisions return to the original worker when possible; meaningfully different selected directions become child nodes with their own workers.
 </Ranker_And_Revision_Flow>
 
 <Discovery_Notes>
@@ -227,7 +225,7 @@ The orchestrator owns resource queue decisions; workers run released jobs. Recor
 
 Classify checkpointed requirements and next actions by authority:
 
-- `binding_contract`: copied from the frozen contract or custom criteria;
+- `binding_contract`: copied from the frozen contract;
 - `binding_amendment`: explicitly approved by the user after startup;
 - `current_plan`: the orchestrator's current, amendable execution choice;
 - `advisory`: a worker, ranker, revision worker, idea object, or note recommendation;

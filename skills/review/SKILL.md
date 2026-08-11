@@ -12,7 +12,7 @@ Use this skill ONLY when the user explicitly triggers the AI Scientist review sk
 <Do_Not_Use_When>
 - Do not use this skill just because an agent is told to review, critique, score, or evaluate an idea.
 - Do not use this skill for ideation critic subagents, research-loop node critics, revision critics, paper reviewers, or generic code review.
-- Do not use this skill before the run-level artifacts needed for final evidence review exist; use the mode-specific critic prompt or active phase skill instead.
+- Do not use this skill before the run-level artifacts needed for final evidence review exist; use the ideation critic prompt or active phase skill instead.
 </Do_Not_Use_When>
 
 <Purpose>
@@ -28,7 +28,7 @@ Use this skill for the explicit run-level review phase after research-loop artif
 - split integrity evidence for every accepted node.
 - leakage evidence for every accepted node.
 - Baseline comparison using the declared benchmark metric and split.
-- Strictness-mode criteria for `scientist`, `engineer`, or `custom` as declared in the research run config and selection evidence.
+- Scientific acceptance criteria declared in the research contract and selection evidence.
 - Command/evidence trail for claimed scores.
 - A verdict: accept, revise, reject, or negative-result.
 
@@ -41,8 +41,8 @@ Use this skill for the explicit run-level review phase after research-loop artif
 1. Read `.ai-scientist/config.json`, `run-status.json`, node evidence, and `journal.json`.
 2. Confirm benchmark/split was not changed unless explicitly part of setup.
 3. Confirm no train/test leakage and no deceptive metric selection.
-4. Compare best accepted node to baseline and check mode-specific criteria.
-5. Write `.ai-scientist/runs/<run-id>/review/structured-review.json` with sections for leakage, split integrity, baseline comparison, strictness-mode criteria, limitations, and verdict.
+4. Compare the best accepted node to the baseline and check the contract's scientific acceptance criteria.
+5. Write `.ai-scientist/runs/<run-id>/review/structured-review.json` with sections for leakage, split integrity, baseline comparison, scientific acceptance criteria, limitations, and verdict.
 6. Run `ai-scientist validate run <target> --gate review_to_writeup`.
 7. Any rejection blocks writeup unless the writeup is clearly marked failed/negative.
 

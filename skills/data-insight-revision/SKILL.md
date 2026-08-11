@@ -26,7 +26,7 @@ Expect some subset of:
 
 - target repository path;
 - research-loop `run_id`, `node_id`, and optional `work_id`;
-- frozen run-owned `research_contract`, mode/custom criteria, split refs, and baseline refs;
+- frozen run-owned `research_contract`, split refs, and baseline refs;
 - node seed idea, implementation notes, worker result refs, benchmark/evaluator command refs, resource records, and critic verdicts;
 - prediction files, loss files, logs, metrics, error samples, model outputs, or baseline comparison artifacts;
 - exact revision question;

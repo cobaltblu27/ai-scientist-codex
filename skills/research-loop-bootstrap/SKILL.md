@@ -25,8 +25,7 @@ Use the validated values from the preflight and the user's explicit request:
 
 - target repository;
 - target idea or idea batch, including stable idea IDs;
-- mode: `scientist`, `engineer`, or `custom`;
-- frozen research contract or custom criteria;
+- frozen research contract;
 - resource policy, if supplied;
 - ranking and active-node limits, if supplied.
 </Inputs>
@@ -53,7 +52,7 @@ Use the validated values from the preflight and the user's explicit request:
 <Config_Rules>
 `config.md` is immutable run configuration. Do not put changing checkpoints, worker progress, resource leases, or selection decisions in it. Record those in `loop-state.json` and linked evidence files.
 
-The frozen configuration must include enough information to resume without conversational memory: run ID, target repository, mode, Python environment, idea IDs and seed identities, contract or custom criteria, resource policy, active-node cap, ranking top `N`, and prompt/skill references.
+The frozen configuration must include enough information to resume without conversational memory: run ID, target repository, Python environment, idea IDs and seed identities, research contract, resource policy, active-node cap, ranking top `N`, and prompt/skill references.
 
 Do not claim that the run is started until `config.md`, `loop-state.json`, `active-run.json`, and the notes files exist. Do not create nodes, spawn agents, run experiments, acquire resources, or modify the target implementation during bootstrap.
 </Config_Rules>

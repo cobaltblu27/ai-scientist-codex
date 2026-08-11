@@ -37,7 +37,7 @@ Do not force one provider. Prefer primary sources over summaries:
 <Generator_Workflow>
 When used by a generator subagent:
 
-1. Start from the assigned topic, mode, idea id, frozen contract, and result path.
+1. Start from the assigned topic, idea id, frozen contract, and result path.
 2. Form 1-3 targeted queries before drafting the final idea.
 3. Search with any available reliable tools or local corpus; do not rely on a single provider when the result set is weak.
 4. Use evidence to choose or reject baseline references, benchmark plans, novelty claims, and implementation hooks.
