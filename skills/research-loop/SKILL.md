@@ -17,11 +17,10 @@ The run artifacts record state, evidence, agent types, prompt source refs, resou
 </Big_Picture>
 
 <Arguments>
-These are the startup inputs saved with the run. The environment and binding contract are fixed after startup unless the user explicitly approves an amendment. The saved target ideas provide stable identities and starting designs; their advisory experiment architecture may evolve through evidence-backed revision and branching.
+These are the startup inputs saved with the run. The environment and binding contract are fixed after startup unless the user explicitly approves an amendment.
 
 - Target Ideas: the idea batch the research loop will start with. It will be given as `idea.json`, object containing reference to specific idea reated from ideation-loop.
 - Python Environment: python environment to run the experiments. It could be conda/mamba environment, uv environment, or python binary path.
-Save these values into `.ai-scientist/runs/<run-id>/config.md` at startup. Later worker, ranker, revision, and selection prompts must use the persisted run state rather than revised conversational memory. Persist evidence-backed idea redesigns as node or revision artifacts; do not overwrite the saved seed identity or the binding contract.
 </Arguments>
 
 <Startup_Preflight>
@@ -99,12 +98,11 @@ The orchestrator should behave like a polling dispatcher: harvest finished work,
 
 Run a scheduler sweep at every resume or before any deliberate wait:
 
-1. Harvest terminal outputs first: released resource jobs, worker result paths, ranker selections, revision reports, baseline readiness, and blocked/stale work. For nodes with a partially finished implementation, let them continue when the experiment remains useful.
-2. Check for completed outputs, such as assigned node work, experiments running, or ranking/revision refs.
-3. Build a runnable task list of model implementation, fixed evaluation, evidence-backed revision, cohort completion, dependency setup, or direct repairs of demonstrated experiment blockers. Do not create process work merely to fill capacity.
-4. Check which tasks can run now. For resource-heavy tasks, inspect available GPUs/CPUs and current leases before dispatch.
-5. Dispatch available tasks. Prompt agents that can move to the next step, and release stalled experiments that can run now.
-6. After dispatching each task, call `$research-loop-checkpoint` with assignment refs, result refs, worker/thread id, portfolio rationale, learning-note refs, selected candidate ids when present, and blocked alternatives. Then continue sweeping other nodes instead of waiting for that task to finish.
+- Harvest subagent outputs first. For nodes with a partially finished implementation, let them continue when the experiment remains useful.
+- Check for completed outputs, such as assigned node work or experiments running.
+- Check which tasks can run next.
+- Dispatch available tasks. Prompt agents that can move to the next step, and release stalled experiments that can run now.
+- After dispatching each task, call `$research-loop-checkpoint` with assignment refs, result refs, worker/thread id, portfolio rationale, learning-note refs, selected candidate ids when present, and blocked alternatives. Then continue sweeping other nodes instead of waiting for that task to finish.
 
 Only wait when no independent runnable task exists or a dependency is expected to materialize immediately. (A brief poll is acceptable for a known result path)
 </Scheduling_Guide>
@@ -147,14 +145,8 @@ On every resume:
 For long benchmarks, the orchestrator creates or updates a `pending` item first. It releases the job to a worker only when capacity is available. The worker records the command, allocation, stdout, stderr, exit status, and release under `logs/resources/`; blocking is acceptable inside that worker thread, not in the main orchestrator thread.
 </Queue_Triage>
 
-<Baseline_Unit>
-The baseline unit owns fixed splits, baseline-paper setup, and apples-to-apples baseline scoring for the run. Spawn `agent_type: ai-scientist-research-baseline-worker` when the contract requires fixed split seeds, a comparable baseline score, or a missing baseline repository/checkpoint calculation.
-
-Checkpoint the baseline worker assignment and pass its authoritative manifest, normally `.ai-scientist/runs/<run-id>/baseline/baseline.json`, to node workers as `split_manifest_ref`. Node workers may plan while baseline setup runs, but benchmark evidence is invalid until the manifest exists and `state.baseline.status` is `ready`.
-</Baseline_Unit>
-
 <Node_Worker_Protocol>
-Every idea in the saved idea batch begins with at least one node worker. In legacy mode, the selected idea begins with at least one node worker.
+Every idea in the saved idea batch begins with at least one node worker.
 
 A node is one research direction with a dedicated workspace and evidence trail. Create nodes for initial ideas and meaningfully different branches, and represent implementation steps within a node as execution todos.
 
@@ -176,7 +168,7 @@ Checkpoint each such return with the completed work, current evidence, remaining
 </Node_Worker_Protocol>
 
 <Ranker_And_Revision_Flow>
-The ranker is a scarce-slot allocator. do not use as critic or gate. Invoke `agent_type: ai-scientist-research-ranker` only when a comparable recent cohort is ready and the loop must choose the top `N` branches to retain for follow-up.
+The ranker is a scarce-slot allocator. Invoke `agent_type: ai-scientist-research-ranker` only when a comparable recent cohort is ready and the loop must choose the top `N` branches to retain for follow-up.
 
 Build cohorts by exposure rather than wall-clock recency:
 
@@ -194,7 +186,7 @@ Use `agent_type: ai-scientist-research-revision-worker` when an implemented node
 </Ranker_And_Revision_Flow>
 
 <Discovery_Notes>
-Maintain `.ai-scientist/runs/<run-id>/discovery-notes.md` as a compact run-level wiki for what the campaign has learned. The orchestrator owns this file. Workers, data-insight passes, and revision workers may suggest entries, but the orchestrator decides what to integrate and keeps the prose concise, evidence-linked, and non-duplicative. Ranker comparisons are allocation records, not discovery notes.
+Maintain `.ai-scientist/runs/<run-id>/discovery-notes.md` as a compact run-level wiki for what the campaign has learned. The orchestrator owns this file. Workers, data-insight passes, and revision workers may suggest entries, but the orchestrator decides what to integrate and keeps the prose concise, evidence-linked, and non-duplicative.
 
 Use sections for current best understanding, what worked, what did not work, and data/evaluation findings. After meaningful node results or data-insight work, add only transferable findings that can help later workers or brainstorming: useful/harmful data, dataset quirks, architecture or objective choices that mattered, evaluation traps, and branch-worthy bottlenecks.
 </Discovery_Notes>
