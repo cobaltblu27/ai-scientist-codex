@@ -91,8 +91,8 @@ Use this when you want Codex to run bounded experiments for a selected idea whil
 It manages:
 
 - an orchestrator cursor kept alive by the Stop hook
-- checkpointed worker, critic, revision-worker, and revision-critic work records
-- mode-specific prompt paths under `prompts/research-loop/`
+- checkpointed worker, comparative ranker, and revision-worker records
+- shared ranker and mode-specific revision prompt paths under `prompts/research-loop/`
 - explicit resource leases for experiment commands
 - command, metric, and result evidence in `journal.jsonl`
 - final selection and completion audit evidence
@@ -148,18 +148,14 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 ├── GUIDELINES.md
 ├── hooks.json
 ├── pyproject.toml
-├── config/
 ├── references/
 │   └── artifact-contract.md
 ├── schemas/
 │   ├── config.schema.json
-│   ├── idea.schema.json
 │   ├── journal.schema.json
 │   ├── active-run.schema.json
 │   ├── loop-state.schema.json
-│   ├── principles.schema.json
-│   ├── run-status.schema.json
-│   └── verifier-decision.schema.json
+│   └── run-status.schema.json
 ├── prompts/
 │   └── research-loop/
 ├── skills/
@@ -172,7 +168,6 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 │   ├── cli/
 │   ├── core/
 │   ├── hooks/
-│   ├── ideation/
 │   ├── research/
 │   ├── validation/
 │   └── writeup/
@@ -205,13 +200,11 @@ while a run is active or lacks passing completion audit evidence.
 
 ## Quick start
 
-From this repository root, verify the plugin manifest and the valid minimal fixture:
+From this repository root, verify the plugin manifest and active CLI:
 
 ```bash
-python -m json.tool .codex-plugin/plugin.json >/dev/null
-uv run ai-scientist validate run \
-  tests/fixtures/valid-minimal \
-  --gate all
+uv run python -m json.tool .codex-plugin/plugin.json >/dev/null
+uv run ai-scientist --help
 ```
 
 A successful run prints a `PASS` message.
@@ -226,50 +219,12 @@ uv run ai-scientist validate run \
 
 ## Ideation orchestrator
 
-The `ideation` skill is backed by an agent-driven loop:
+The `ideation` skill is goal-driven and has no CLI lifecycle. The current Codex
+session creates a goal, freezes `contract.json`, delegates generator, critic, and
+pilot work through native agents, and writes Markdown idea files plus a lightweight
+`ideas.json` index. Progress and completion are recorded in `run.md`.
 
-```text
-uv run ai-scientist
-```
-
-The current Codex session is the orchestrator. Python only manages deterministic
-state, Semantic Scholar recording, validation, and handoff artifacts:
-
-1. `ideation start` records the prompt, frozen config, run-local `ideas.json`,
-   `loop-state.json`, and `journal.jsonl`.
-2. `ideation resume --prompt` returns the next cursor action for the main Codex
-   orchestrator.
-3. Native Codex subagents generate ideas, critique drafts, and rank candidates.
-4. Helper commands record drafts, Semantic Scholar evidence, critic verdicts,
-   final idea decisions, ranking, and terminal run state. Accepted ideas include
-   a `research_contract` that freezes the hypothesis, success/failure criteria,
-   non-drift rule, metrics, and comparisons for the later research loop.
-5. The project-local Stop hook blocks ending until ideation reaches
-   `COMPLETED`, `COMPLETED_BUDGET_EXHAUSTED`, `EXHAUSTED_NO_CANDIDATE`, or
-   `CANCELLED`.
-
-Default loop settings are `--num-ideas 10`, `--reflection-budget 10` per fresh
-idea attempt, `ideation.max_attempts_per_slot` 3, and `--strictness-mode
-scientist`.
-
-Example start:
-
-```bash
-uv run ai-scientist \
-  --target-repo . \
-  ideation start \
-  --run-id ideation-001 \
-  --prompt "Generate ideas for improving the current benchmark without changing the split." \
-  --num-ideas 10
-```
-
-Then continue from the cursor:
-
-```bash
-uv run ai-scientist \
-  --target-repo . \
-  ideation resume --run-id ideation-001 --prompt
-```
+The only CLI commands used by ideation are `agents check` and `agents install`.
 
 ## Typical workflow
 
@@ -284,19 +239,14 @@ Use ideation to propose experiments for improving this model on the current benc
 Use scientist mode unless another mode is justified.
 ```
 
-Expected artifacts:
+Expected artifacts are file-driven rather than CLI state:
 
 ```text
-.ai-scientist/config.json
-.ai-scientist/active-run.json
+.ai-scientist/runs/<run-id>/contract.json
+.ai-scientist/runs/<run-id>/run.md
 .ai-scientist/runs/<run-id>/ideas.json
-.ai-scientist/runs/<run-id>/loop-state.json
-```
-
-Validate the transition into research when the run artifacts are prepared:
-
-```bash
-uv run ai-scientist validate run <target-repo> --gate ideation_to_research
+.ai-scientist/runs/<run-id>/ideas/<idea-id>.md
+.ai-scientist/runs/<run-id>/logs/pilots/<idea-id>/report.md
 ```
 
 ### Step 2: Plan and run research
@@ -413,29 +363,6 @@ No mode permits leakage, split manipulation, or deceptive metrics.
 
 Every transition is intended to fail closed if required evidence is missing or invalid.
 
-### Ideation to research
-
-Requires:
-
-- at least one researchable candidate in `runs/<run-id>/ideas.json`
-- accepted candidates include a `research_contract`; performance-focused
-  candidates include a usable baseline reference, benchmark plan, and target
-  threshold
-- `config.json` with strictness mode, target repo, and API budgets
-- `config.json` with dependency plan entries marked as one of:
-  - `approved`
-  - `rejected`
-  - `not_needed`
-- at least one `journal.jsonl` API-call record
-- approved `journal.jsonl` handoff record
-- passing validator result
-
-Validation command:
-
-```bash
-uv run ai-scientist validate run <target-repo> --gate ideation_to_research
-```
-
 ### Research to review
 
 Requires:
@@ -477,18 +404,10 @@ uv run ai-scientist validate run <target-repo> --gate review_to_writeup
 
 Requires:
 
-- `verifier-decision.json`
-- `decision: "go"`
-- empty `blockers` list
-
-Example:
-
-```json
-{
-  "decision": "go",
-  "blockers": []
-}
-```
+- completed writeup manifest and reports
+- at least one recorded figure
+- compiled PDF when required
+- independent final audit with verdict `ACCEPT`
 
 Validation command:
 
@@ -507,12 +426,9 @@ uv run ai-scientist validate run
 Supported gates:
 
 ```bash
-uv run ai-scientist validate run <target> --gate ideation_to_research
 uv run ai-scientist validate run <target> --gate research_to_review
 uv run ai-scientist validate run <target> --gate review_to_writeup
 uv run ai-scientist validate run <target> --gate launch
-uv run ai-scientist validate run <target> --gate principles
-uv run ai-scientist validate run <target> --gate all
 ```
 
 `<target>` can be a target repository, a fixture root, or an `.ai-scientist/` directory.
@@ -521,13 +437,10 @@ The validator fails for problems such as:
 
 - missing required JSON or JSONL artifacts
 - malformed JSON or JSONL
-- stale or non-zero validation records
-- missing approved handoff records
 - missing leakage or split-integrity evidence
-- missing dependency approval statuses
-- no-go verifier decisions
-- non-empty verifier blockers
-- incomplete principle traceability
+- incomplete research completion state
+- incomplete structured review coverage
+- missing writeup reports, figures, PDF, disclosure, limitations, or final audit
 
 ## Safety and integrity model
 
@@ -578,8 +491,8 @@ When changing the artifact contract, update these together:
 Before claiming a change is complete, run at least:
 
 ```bash
-python -m json.tool .codex-plugin/plugin.json >/dev/null
-uv run ai-scientist validate run tests/fixtures/valid-minimal --gate all
+uv run python -m json.tool .codex-plugin/plugin.json >/dev/null
+uv run pytest -q
 ```
 
 ## Status

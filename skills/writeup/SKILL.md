@@ -1,6 +1,6 @@
 ---
 name: writeup
-description: Create a final report from accepted AI Scientist artifacts with disclosure, limitations, mode/split details, figures, and negative-result handling.
+description: Create a final report from accepted AI Scientist artifacts with disclosure, limitations, split details, figures, and negative-result handling.
 ---
 
 # Writeup
@@ -18,9 +18,9 @@ Use this skill only after `review_to_writeup` validation and approved handoff ar
 - Run `ai-scientist --target-repo <target> writeup doctor` first. If it reports missing Python or TeX dependencies, stop and ask the user to install them.
 - Include at least one final-paper plot. The default helper creates `writeup/figures/generated/baseline-vs-selected.png` from the accepted run metrics.
 - Include an explicit AI Scientist disclosure section stating that Codex assisted ideation, experimentation, review, and/or writing.
-- State the strictness mode and benchmark/split exactly as recorded in `.ai-scientist/config.json`, run artifacts, and structured review.
+- State the benchmark and split exactly as recorded in the run artifacts and structured review.
 - Include result limitations, failed attempts, known validity threats, split integrity evidence, leakage evidence, baseline comparison, and reproducibility artifacts.
-- Handle negative or failed results honestly; do not present rejected or engineer-mode outcomes as scientist-mode research claims.
+- Handle negative or failed results honestly; do not present rejected outcomes as supported research claims.
 
 </Requirements>
 

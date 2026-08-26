@@ -1,0 +1,7 @@
+interface:
+  display_name: "Research Loop"
+  short_description: "Run the AI Scientist research loop explicitly."
+  default_prompt: "Use $research-loop to run the AI Scientist research loop for this project."
+
+policy:
+  allow_implicit_invocation: false

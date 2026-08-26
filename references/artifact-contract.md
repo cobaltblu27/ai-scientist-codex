@@ -4,10 +4,12 @@ Target repositories keep all plugin state in `.ai-scientist/` so ordinary projec
 
 ## Required root and run artifacts
 
-- `.ai-scientist/config.json` — optional target-repository override for plugin defaults from `config/config.json`.
 - `.ai-scientist/active-run.json` — current run pointer used by the AI Scientist Codex Stop hook.
-- `.ai-scientist/runs/<run-id>/ideas.json` — generation-order array of terminal valid idea objects from `ideation`, including `evaluation`, `score`, and `rank` where applicable.
-- `.ai-scientist/runs/<run-id>/logs/...` — ideation-only draft, critic, ranking, and Semantic Scholar cache records retained for auditability.
+- `.ai-scientist/runs/<run-id>/contract.json` — frozen ideation contract copied from the standalone contract artifact.
+- `.ai-scientist/runs/<run-id>/run.md` — ideation progress, reflection rounds, selected ids, manual checks, and completion status.
+- `.ai-scientist/runs/<run-id>/ideas.json` — lightweight selected-idea index containing ids, titles, idea-file refs, and pilot-report refs.
+- `.ai-scientist/runs/<run-id>/ideas/<idea-id>.md` — detailed idea handoff document.
+- `.ai-scientist/runs/<run-id>/logs/pilots/<idea-id>/report.md` — pilot viability evidence for a selected idea.
 - `.ai-scientist/runs/<run-id>/config.json` — frozen run configuration, active mode, selected idea snapshot, optional custom criteria, prompt paths, and explicit resource caps.
 - `.ai-scientist/runs/<run-id>/loop-state.json` — mutable progress state, orchestrator work records/checkpoints, shared baseline state, lightweight node/outcome summaries, resource leases, orchestration cursor, and Stop-hook gate state.
 - `.ai-scientist/runs/<run-id>/journal.jsonl` — append-only audit stream for orchestration decisions, API calls, Stop-hook events, resource events, handoff events, and notable validations.
@@ -44,31 +46,26 @@ Hard continuation also requires the project-local Codex Stop hook installed by `
 
 ### Ideation to research
 
-Requires at least one researchable candidate under the frozen mode config, generated run config, dependency approval statuses, run-local `ideas.json`, finalized ranking, and an approved handoff journal entry.
-Modes that require Semantic Scholar evidence must also include journal `api_call` entries. Also requires `loop-state.json` to include a terminal successful `ideation` phase with a passing `completion_audit`.
-
-The Codex-native ideation orchestrator must:
-
-- read the starting point from a prompt string, not a Markdown workshop file;
-- use project-local Stop-hook state so active ideation blocks session end;
-- use the current Codex session as orchestrator and never run a Python-owned nested Codex loop;
-- record subagent intents before generation, criticism, and ranking;
-- write terminal ideas to `.ai-scientist/runs/<run-id>/ideas.json` with `evaluation` values of `ACCEPTED`, `ACCEPTED_WITHOUT_REFERENCE`, or `REJECTED`;
-- include a hybrid `research_contract` on accepted ideas with a primary hypothesis, goal type, hard success/failure criteria, non-drift definition, metrics, and non-negotiable comparisons; performance contracts also need a usable baseline reference, benchmark plan, and target threshold;
-- run a dedicated ranking agent after generation; ranking scores all terminal ideas and assigns dense `rank` only to plain `ACCEPTED` ideas;
-- end as `EXHAUSTED_NO_CANDIDATE` with a denied handoff when no researchable candidate exists;
-- keep intermediate JSON audit artifacts under `.ai-scientist/runs/<run-id>/logs/`.
+Ideation is goal-driven and has no CLI lifecycle or transition validator. Research
+startup consumes the frozen `contract.json`, selected Markdown idea files, pilot
+reports, and the lightweight `ideas.json` index. The ideation orchestrator records
+its manual artifact checks and `status: complete` in `run.md`.
 
 ### Research to review
 
 Requires completed research loop state, no unresolved checkpointed work, no active resource
-leases, final selection pointing at an accepted node/outcome, a passing
-completion audit, and an approved handoff journal entry.
+leases, final selection pointing at an accepted node/outcome, and a passing
+completion audit. After validation passes, record validation and approved handoff
+journal evidence so the Stop hook can release the orchestrator.
 
 ### Review to writeup
 
-Requires structured review, verdict, leakage/split/baseline/mode criteria coverage, canonical state validation, and an approved handoff journal entry. Rejected runs must block writeup or be clearly marked as failed/negative.
+Requires structured review, verdict, and leakage/split/baseline/mode criteria
+coverage. Record validation and approved handoff evidence after the validator
+passes. Rejected reviews block positive writeup.
 
 ### Launch
 
-Requires `verifier-decision.json` with `decision: "go"` and no blockers.
+Requires complete writeup artifacts, at least one figure, the required PDF,
+disclosure and limitations coverage, and an independent final audit with verdict
+`ACCEPT`.

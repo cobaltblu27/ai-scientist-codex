@@ -51,9 +51,6 @@
         "$ref": "#/$defs/validation"
       },
       "properties": {
-        "ideation_to_research": {
-          "$ref": "#/$defs/validation"
-        },
         "research_to_review": {
           "$ref": "#/$defs/validation"
         },

@@ -17,12 +17,10 @@ from typing import Any
 TERMINAL_PHASE_STATUSES = {
     "complete",
     "completed",
-    "completed_budget_exhausted",
     "cancelled",
     "blocked_on_user",
     "failed",
     "exhausted",
-    "exhausted_no_candidate",
 }
 ALLOW_WITH_REASON_STATUSES = {"cancelled", "blocked_on_user", "failed"}
 JOURNAL_EVENT_TYPES = {
@@ -41,19 +39,8 @@ JOURNAL_EVENT_TYPES = {
     "note",
     "finding",
 }
-IDEA_TERMINAL_STATUSES = {
-    "accepted",
-    "accepted_without_reference",
-    "error",
-    "exhausted",
-    "failed",
-    "finalized",
-    "skipped",
-}
 NODE_RESOLVED_STATUSES = {"accepted", "invalid", "rejected"}
 NODE_UNRESOLVED_STATUSES = {"planning", "planned", "implementing", "running", "validating", "buggy", "repairing", "candidate"}
-NODE_TERMINAL_CRITIC_VERDICTS = {"accepted": "ACCEPT_FINAL", "invalid": "INVALID", "rejected": "KILL"}
-NODE_ACCEPTING_CRITIC_VERDICTS = {"ACCEPT_FINAL", "ACCEPT"}
 NODE_EVIDENCE_ADMIN_KEYS = {
     "status",
     "updated_at",
@@ -80,6 +67,24 @@ NODE_EVIDENCE_ADMIN_KEYS = {
     "repair_log_ref",
     "requires_fresh_critic",
 }
+
+
+def open_resource_queue_ids(phase_state: dict[str, Any]) -> list[str]:
+    queue = phase_state.get("resource_queue") if isinstance(phase_state.get("resource_queue"), dict) else {}
+    open_ids: list[str] = []
+    for bucket in ("pending", "released"):
+        entries = queue.get(bucket)
+        if not isinstance(entries, list):
+            if entries:
+                open_ids.append(bucket)
+            continue
+        for index, entry in enumerate(entries):
+            if isinstance(entry, dict):
+                identifier = entry.get("job_id") or entry.get("work_id") or entry.get("node_id") or f"{bucket}[{index}]"
+            else:
+                identifier = entry or f"{bucket}[{index}]"
+            open_ids.append(f"{bucket}:{identifier}")
+    return sorted(str(item) for item in open_ids)
 SUBAGENT_TERMINAL_STATUSES = {"integrated", "rejected_with_reason", "abandoned_with_reason"}
 RESOURCE_TERMINAL_STATUSES = {"completed", "cancelled", "superseded", "abandoned", "expired"}
 
@@ -644,10 +649,6 @@ def terminal_reason_present(state: dict[str, Any]) -> bool:
     )
 
 
-def has_int_score(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100
-
-
 def status_has_reason(value: Any) -> bool:
     return has_substantive_value(value)
 
@@ -733,71 +734,6 @@ def validate_node_contract(node_id: str, node: dict[str, Any], official_status: 
     return None
 
 
-def evaluate_ideation_state(state: dict[str, Any]) -> CompletionResult:
-    phase_state = state.get("state")
-    if not isinstance(phase_state, dict):
-        return CompletionResult(False, "ideation_state_missing", state)
-    required = int(phase_state.get("num_ideas_required") or 0)
-    attempted = int(phase_state.get("attempted_slots") or len(phase_state.get("idea_states") or {}) or 0)
-    min_candidates = int(phase_state.get("min_candidates_required") or 1)
-    idea_states = phase_state.get("idea_states")
-    if required <= 0:
-        return CompletionResult(False, "ideation_num_ideas_required_missing", state)
-    if not isinstance(idea_states, dict):
-        return CompletionResult(False, "ideation_idea_states_missing", state)
-    if len(idea_states) < attempted:
-        return CompletionResult(False, "ideation_attempted_idea_missing", state)
-    phase_status = str(state.get("phase_status") or "").lower()
-    pending_intents = phase_state.get("pending_intents") if isinstance(phase_state.get("pending_intents"), dict) else {}
-    if pending_intents or isinstance(phase_state.get("pending_intent"), dict):
-        return CompletionResult(False, "ideation_pending_intent", state)
-    active_idea_ids = phase_state.get("active_idea_ids") if isinstance(phase_state.get("active_idea_ids"), list) else []
-    if active_idea_ids or phase_state.get("active_idea_id"):
-        return CompletionResult(False, "ideation_active_idea_unresolved", state)
-    budget_terminal = phase_status == "completed_budget_exhausted"
-    if phase_status != "exhausted_no_candidate" and not phase_state.get("early_stop_allowed") and attempted < required:
-        return CompletionResult(False, "ideation_not_all_ideas_attempted", state)
-    researchable = []
-    for idea_id, idea in idea_states.items():
-        if not isinstance(idea, dict):
-            return CompletionResult(False, f"ideation_idea_state_invalid:{idea_id}", state)
-        status = str(idea.get("status") or "")
-        if status not in IDEA_TERMINAL_STATUSES:
-            return CompletionResult(False, f"ideation_idea_unresolved:{idea_id}", state)
-        evaluation = str(idea.get("evaluation") or "").upper()
-        if status in {"accepted", "accepted_without_reference", "finalized"} and not idea.get("reflection_count"):
-            return CompletionResult(False, f"ideation_accepted_missing_reflection_count:{idea_id}", state)
-        if status == "accepted" and not has_int_score(idea.get("score")):
-            return CompletionResult(False, f"ideation_accepted_missing_score:{idea_id}", state)
-        ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
-        if ranking.get("status") == "final" and status == "accepted" and not isinstance(idea.get("rank"), int):
-            return CompletionResult(False, f"ideation_accepted_missing_rank:{idea_id}", state)
-        if ranking.get("status") == "final" and evaluation in {"REJECTED", "ACCEPTED_WITHOUT_REFERENCE"} and not has_int_score(idea.get("score")):
-            return CompletionResult(False, f"ideation_scored_terminal_missing_score:{idea_id}", state)
-        if status in {"skipped", "failed", "error", "exhausted"} and not has_substantive_value(idea.get("skip_reason") or idea.get("reason") or idea.get("error") or idea.get("exhaustion_reason")):
-            return CompletionResult(False, f"ideation_skipped_missing_reason:{idea_id}", state)
-        if idea.get("researchable") is True or evaluation == "ACCEPTED":
-            researchable.append(idea)
-    if phase_status == "exhausted_no_candidate":
-        if researchable:
-            return CompletionResult(False, "ideation_exhausted_has_researchable_candidate", state)
-        return CompletionResult(True, "ideation_exhausted_no_candidate_complete", state)
-    if phase_status not in {"complete", "completed", "completed_budget_exhausted"}:
-        return CompletionResult(False, f"ideation_terminal_status_invalid:{phase_status}", state)
-    if budget_terminal and not researchable:
-        return CompletionResult(False, "ideation_budget_exhausted_missing_candidate", state)
-    if len(researchable) < min_candidates:
-        return CompletionResult(False, "ideation_no_researchable_candidate", state)
-    handoff = phase_state.get("handoff") if isinstance(phase_state.get("handoff"), dict) else {}
-    batch_ids = handoff.get("idea_batch")
-    if not isinstance(batch_ids, list) or not batch_ids:
-        return CompletionResult(False, "ideation_handoff_batch_missing", state)
-    researchable_ids = {str(idea.get("id")) for idea in researchable}
-    if any(not isinstance(item, str) or item not in researchable_ids for item in batch_ids):
-        return CompletionResult(False, "ideation_handoff_batch_invalid", state)
-    return CompletionResult(True, "ideation_state_complete", state)
-
-
 def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
     phase_state = state.get("state")
     if not isinstance(phase_state, dict):
@@ -832,6 +768,9 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
     ]
     if active_leases:
         return CompletionResult(False, f"research_resources_unresolved:{','.join(sorted(active_leases))}", state)
+    open_queue = open_resource_queue_ids(phase_state)
+    if open_queue:
+        return CompletionResult(False, f"research_resource_queue_unresolved:{','.join(open_queue)}", state)
     selection = phase_state.get("selection")
     if not isinstance(selection, dict) or selection.get("status") != "final":
         return CompletionResult(False, "research_selection_not_final", state)
@@ -848,9 +787,6 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, f"research_node_state_invalid:{selected_node}", state)
     if selected.get("status") != "accepted":
         return CompletionResult(False, "research_selected_node_not_accepted", state)
-    critic_reason = node_fresh_critic_reason(str(selected_node), selected, allowed_verdicts=NODE_ACCEPTING_CRITIC_VERDICTS)
-    if critic_reason:
-        return CompletionResult(False, critic_reason, state)
     if selection.get("selected_node") != selected_node:
         return CompletionResult(False, "research_selection_missing_or_stale", state)
     return CompletionResult(True, "research_state_complete", state)
@@ -867,8 +803,6 @@ def evaluate_loop_state_completion(state: dict[str, Any]) -> CompletionResult:
     if not completion_audit_passes(state.get("completion_audit")):
         return CompletionResult(False, "completion_audit_missing_or_not_passing", state)
     phase = state.get("phase")
-    if phase == "ideation":
-        return evaluate_ideation_state(state)
     if phase == "research":
         return evaluate_research_state(state)
     return CompletionResult(True, "completion_audit_passed", state)
@@ -889,8 +823,6 @@ def evaluate_completion(target_repo: Path, run_id: str, phase: str | None = None
 
 
 def phase_gate(phase: str) -> str | None:
-    if phase == "ideation":
-        return "ideation_to_research"
     if phase == "research":
         return "research_to_review"
     if phase == "writeup":
@@ -1098,40 +1030,6 @@ def evaluate_stop_decision(target_repo: Path, payload: dict[str, Any] | None = N
                     cursor += f" Pending audit: {pending_audit}."
                 if reason:
                     cursor += f" Reason: {reason}."
-        elif phase == "ideation":
-            try:
-                from ideation.state import current_config, cursor_for_state
-
-                ideation_cursor = cursor_for_state(state, current_config(target_repo, run_id))
-            except Exception:
-                ideation_cursor = {}
-            next_action = ideation_cursor.get("next_action")
-            details = ideation_cursor.get("next_action_details") if isinstance(ideation_cursor.get("next_action_details"), dict) else {}
-            if next_action:
-                cursor = f" Run: {run_id}. Next action: {next_action}."
-                idea_id = details.get("idea_id") or details.get("next_idea_id")
-                intent_id = details.get("intent_id")
-                pending_count = details.get("pending_count")
-                intent_ids = details.get("intent_ids") if isinstance(details.get("intent_ids"), list) else []
-                reason = details.get("reason")
-                if idea_id:
-                    cursor += f" Idea: {idea_id}."
-                if intent_id:
-                    cursor += f" Intent: {intent_id}."
-                if pending_count:
-                    cursor += f" Pending intents: {pending_count}."
-                if intent_ids:
-                    cursor += f" Representative intents: {', '.join(str(item) for item in intent_ids[:5])}."
-                if reason:
-                    cursor += f" Reason: {reason}."
-        else:
-            idea_index = phase_state.get("current_idea_index")
-            reflection_round = phase_state.get("current_reflection_round")
-            idea_states = phase_state.get("idea_states") if isinstance(phase_state.get("idea_states"), dict) else {}
-            idea_id = f"idea-{int(idea_index):03d}" if isinstance(idea_index, int) and idea_index > 0 else None
-            idea_state = idea_states.get(idea_id, {}) if idea_id else {}
-            if idea_id:
-                cursor = f" Run: {run_id}. Idea: {idea_id}. Round: {reflection_round}. Status: {idea_state.get('status', state.get('phase_status'))}."
         if not cursor:
             cursor = f" Run: {run_id}. Status: {state.get('phase_status', 'active')}."
         message = f"AI Scientist {phase} is still active.{cursor} Continue from {state_path} and do not report completion until completion_audit passes."
@@ -1141,8 +1039,6 @@ def evaluate_stop_decision(target_repo: Path, payload: dict[str, Any] | None = N
     if result.complete:
         if phase_status in ALLOW_WITH_REASON_STATUSES and terminal_reason_present(state):
             return StopDecision("allow", f"{phase_status}_with_reason", run_id=run_id, phase=phase, state_path=str(state_path))
-        if phase == "ideation" and phase_status == "exhausted_no_candidate":
-            return StopDecision("allow", "ideation_exhausted_no_candidate", run_id=run_id, phase=phase, state_path=str(state_path))
         if not has_stop_release_evidence(target_repo, run_id, phase):
             message = f"AI Scientist {phase} completion state is complete but validation/handoff journal evidence is missing. Continue verification before stopping."
             return StopDecision("block", f"ai_scientist_{phase}_missing_release_evidence", message, run_id, phase, str(state_path))

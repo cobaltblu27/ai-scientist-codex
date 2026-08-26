@@ -1,0 +1,7 @@
+interface:
+  display_name: "Architecture Tree"
+  short_description: "Create a normalized model architecture tree."
+  default_prompt: "Use $architecture-tree to document the planned architecture."
+
+policy:
+  allow_implicit_invocation: false

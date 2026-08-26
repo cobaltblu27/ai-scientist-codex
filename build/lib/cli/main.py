@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent-facing helper CLI for AI Scientist research-loop state."""
+"""Agent-facing helper CLI for AI Scientist workflow state."""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +13,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from core import agents as core_agents
 from core.state import (
     append_journal_event,
     audit_block_reason,
@@ -49,23 +50,12 @@ from ideation.state import (
     codex_max_threads,
     current_config,
     cursor_for_state,
-    exhaust_idea,
     exhaust_ideation,
     finalize_ready,
-    finalize_idea,
-    finalize_ranking,
     nested_value,
-    rank_candidates,
-    record_critic,
-    record_draft,
-    record_evidence_batch,
-    record_semantic_scholar_search,
-    reject_idea,
     resume_ideation,
     start_ideation,
-    start_intent,
     start_intent_batch,
-    start_revision,
     validate_max_subagents,
 )
 from writeup.state import (
@@ -87,22 +77,32 @@ from research.usage_cap import (
     read_codex_rate_limits,
     utc_now as usage_utc_now,
 )
+from research import workflow as research_workflow
 
 MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
 PAPER_MODES = {"scientist", "researcher"}
 PRACTICAL_MODES = {"balanced", "builder", "engineer"}
 NODE_STATUSES = {"planning", "planned", "implementing", "running", "buggy", "repairing", "candidate", "validating", "accepted", "invalid", "rejected"}
 NODE_TERMINAL_STATUSES = {"accepted", "invalid", "rejected"}
-CRITIC_VERDICTS = {"ACCEPT", "REVISE", "INVALID", "REJECT"}
-CRITIC_STATUS_BY_VERDICT = {"ACCEPT": "accepted", "REVISE": "repairing", "INVALID": "invalid", "REJECT": "rejected"}
+CRITIC_VERDICTS = {"ACCEPT", "CONTINUE", "REVISE", "BRANCH", "KILL", "INVALID"}
+CRITIC_STATUS_BY_VERDICT = {
+    "ACCEPT": "accepted",
+    "CONTINUE": "validating",
+    "REVISE": "repairing",
+    "BRANCH": "repairing",
+    "KILL": "rejected",
+    "INVALID": "invalid",
+}
 CRITIC_ROLES = {"evidence_auditor", "claim_critic", "performance_auditor"}
 DEFAULT_CRITIC_AGENT = {"model": "gpt-5.5", "reasoning_effort": "xhigh", "required": True}
 REQUIRED_CONTRACT_KEYS = {
     "primary_hypothesis",
+    "goal_type",
     "success_criteria",
     "failure_criteria",
     "allowed_rescue_scope",
     "kill_criteria",
+    "non_drift_definition",
     "metrics_that_matter",
     "non_negotiable_comparisons",
 }
@@ -114,8 +114,6 @@ OUTCOME_TYPES = {
 }
 PAPER_OUTCOME_TYPES = {
     "hypothesis_supported",
-    "hypothesis_failed_with_evidence",
-    "rescue_finding_with_failed_hypothesis",
 }
 REQUIRED_ACCEPTANCE_CHECKS = {
     "metric_contract_valid",
@@ -167,34 +165,34 @@ TARGET_VENUE_BARS = {
         "for a better idea instead of accepting drift or performance-only hacks."
     ),
 }
-REVISION_VERDICTS = {"CONTINUE_NODE", "BRANCH", "STOP_DRIFTED", "STOP_EXHAUSTED"}
+REVISION_VERDICTS = {"CONTINUE", "BRANCH", "KILL", "INVALID"}
 FINDING_KINDS = {"positive", "negative", "optimization", "bug", "drift", "exhaustion", "transferable"}
 
 RESEARCH_NODE_CRITIC_PROMPTS = {
     "scientist": (
         "You are an independent research-node critic in scientist mode. Review node {node_id} for novelty, evidence, ablations, leakage/split integrity, "
-        "reproducibility, publishability, and fidelity to the frozen research contract. Partial success, promising progress, quiet claim narrowing, "
-        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
+        "reproducibility, publishability, and fidelity to the frozen research contract. ACCEPT requires positive ending criteria met. "
+        "Promising but incomplete evidence should be CONTINUE; fixable flaws should be REVISE; valid negative results should be KILL."
     ),
     "researcher": (
         "You are an independent research-node critic in researcher mode. Review node {node_id} for research usefulness, evidence quality, ablations, leakage/split "
-        "integrity, reproducibility, publishability, and fidelity to the frozen research contract. Partial success, promising progress, quiet claim narrowing, "
-        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
+        "integrity, reproducibility, publishability, and fidelity to the frozen research contract. ACCEPT requires positive ending criteria met. "
+        "Promising but incomplete evidence should be CONTINUE; fixable flaws should be REVISE; valid negative results should be KILL."
     ),
     "balanced": (
         "You are an independent research-node critic in balanced mode. Review node {node_id} for benchmark integrity, evidence, implementation quality, leakage/split "
-        "integrity, reproducibility, practical value, risk, and whether cheap validation remains. Partial success, promising progress, or evidence needing validation "
-        "must be REVISE/repairing, not ACCEPT."
+        "integrity, reproducibility, practical value, risk, and whether cheap validation remains. ACCEPT requires positive ending criteria met. "
+        "Promising but incomplete evidence should be CONTINUE; fixable flaws should be REVISE; valid negative results should be KILL."
     ),
     "engineer": (
         "You are an independent research-node critic in engineer mode. Review node {node_id} for benchmark integrity, implementation quality, performance, "
-        "maintainability, reproducibility, risk, budget-backed tuning plateau, and missed high-expected-value improvements. Merely beating baseline is not enough. "
-        "If a cheap bounded improvement remains, return REVISE/repairing, not ACCEPT."
+        "maintainability, reproducibility, risk, budget-backed tuning plateau, and missed high-expected-value improvements. ACCEPT requires positive ending criteria met. "
+        "If a cheap bounded improvement or missing validation remains, return CONTINUE or REVISE, not ACCEPT."
     ),
     "builder": (
         "You are an independent research-node critic in builder mode. Review node {node_id} for benchmark integrity, implementation quality, performance, "
-        "maintainability, reproducibility, buildability, risk, and remaining cheap reliability/integration improvements. Partial success, promising progress, "
-        "or evidence needing validation must be REVISE/repairing, not ACCEPT."
+        "maintainability, reproducibility, buildability, risk, and remaining cheap reliability/integration improvements. ACCEPT requires positive ending criteria met. "
+        "Promising but incomplete evidence should be CONTINUE; fixable flaws should be REVISE; valid negative results should be KILL."
     ),
 }
 
@@ -300,21 +298,39 @@ def default_research_contract(payload: dict[str, Any]) -> dict[str, Any] | None:
     for key in ("research_contract", "contract"):
         value = payload.get(key)
         if isinstance(value, dict):
-            return value
+            return deepcopy(value)
     idea = payload.get("selected_idea") or payload.get("idea")
+    if isinstance(idea, dict):
+        for key in ("research_contract", "contract"):
+            value = idea.get(key)
+            if isinstance(value, dict):
+                return deepcopy(value)
     if isinstance(idea, dict) and idea.get("hypothesis"):
         hypothesis = str(idea["hypothesis"])
         metric = idea.get("expected_metric") or payload.get("metric_key") or "declared benchmark metric"
         return {
             "primary_hypothesis": hypothesis,
+            "goal_type": "performance",
             "success_criteria": f"Evidence supports the hypothesis under the declared benchmark and {metric}.",
             "failure_criteria": f"Evidence shows the hypothesis is false or unsupported under the declared benchmark and {metric}.",
             "allowed_rescue_scope": "Allowed only when the original hypothesis verdict is explicitly failed and the narrower claim is disclosed.",
             "kill_criteria": "Stop or mark failed when required evidence cannot be produced without changing the frozen benchmark, split, or environment.",
+            "non_drift_definition": "A useful report, partial implementation, or narrowed claim is drift unless it explicitly resolves the primary hypothesis or an allowed rescue.",
             "metrics_that_matter": [metric],
             "non_negotiable_comparisons": ["baseline", "declared split", "leakage/split integrity checks"],
         }
     return None
+
+
+def selected_idea_snapshot(payload: dict[str, Any]) -> dict[str, Any] | None:
+    idea = payload.get("selected_idea") or payload.get("idea")
+    if not isinstance(idea, dict):
+        return None
+    snapshot = deepcopy(idea)
+    if "research_contract" not in snapshot and isinstance(snapshot.get("contract"), dict):
+        snapshot["research_contract"] = deepcopy(snapshot["contract"])
+    snapshot.pop("contract", None)
+    return snapshot
 
 
 def default_selection_config(payload: dict[str, Any]) -> dict[str, Any]:
@@ -766,7 +782,7 @@ def default_config(
         raise CliError(f"invalid strictness mode: {strictness_mode}")
     resolved_max, concurrency_source = resolve_research_max_subagents(target, payload, max_subagents)
     contract = default_research_contract(payload)
-    return {
+    cfg = {
         "schema_version": 1,
         "run_id": run_id,
         "target_repo": str(target),
@@ -781,7 +797,7 @@ def default_config(
             target_venue=target_venue,
             token_budget_percent=token_budget_percent,
         ),
-        "api_budgets": payload.get("api_budgets", {"semantic_scholar": {"max_calls": 100}}),
+        "api_budgets": payload.get("api_budgets", {}),
         "workspace": payload.get("workspace", {"mode": "copy", "baseline_workspace": f".ai-scientist/runs/{run_id}/baseline-workspace"}),
         "dependency_plan": payload.get("dependency_plan", {"mode": "frozen", "planned_dependencies": []}),
         "benchmark_contract": payload.get("benchmark_contract", {"version": "v1", "command": payload.get("benchmark_command")}),
@@ -790,6 +806,10 @@ def default_config(
         "selection": default_selection_config(payload),
         "created_at": utc_now(),
     }
+    idea_snapshot = selected_idea_snapshot(payload)
+    if idea_snapshot is not None:
+        cfg["selected_idea"] = idea_snapshot
+    return cfg
 
 
 def cmd_research_start(args: argparse.Namespace) -> int:
@@ -833,6 +853,14 @@ def cmd_research_start(args: argparse.Namespace) -> int:
     }
     initial_state.update(payload.get("state", {}))
     state = start_phase(target, run_id, "research", initial_state)
+    set_active_run(
+        target,
+        run_id,
+        "research",
+        "active",
+        codex_session_id=args.codex_session_id or os.environ.get("CODEX_SESSION_ID"),
+        codex_thread_id=args.codex_thread_id or os.environ.get("CODEX_THREAD_ID"),
+    )
     atomic_write_json(config_path(target, run_id), cfg)
     append_journal_event(target, run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
     usage = refresh_usage_cap(target, run_id, cfg, force=True, command="research start usage-check")
@@ -1099,7 +1127,7 @@ def record_payload_findings(target: Path, run_id: str, node_id: str | None, payl
 
 def node_has_lineage_stop(node: dict[str, Any]) -> bool:
     stop = node.get("lineage_stop")
-    return isinstance(stop, dict) and stop.get("verdict") in {"STOP_DRIFTED", "STOP_EXHAUSTED"}
+    return isinstance(stop, dict) and stop.get("verdict") in {"KILL", "INVALID"}
 
 def next_sequence_id(phase_state: dict[str, Any], collection_name: str, prefix: str) -> str:
     collection = phase_state.get(collection_name) if isinstance(phase_state.get(collection_name), dict) else {}
@@ -1319,7 +1347,7 @@ def build_node_critic_prompt(config: dict[str, Any], node_id: str, critic_id: st
         + "\n\nFrozen target venue bar:\n"
         + target_venue_summary(config)
         + "\n\nReturn JSON only to the assigned result_path with this schema:\n"
-        '{ "verdict": "ACCEPT|REVISE|INVALID|REJECT", "critic_role": "'
+        '{ "verdict": "ACCEPT|CONTINUE|REVISE|BRANCH|KILL|INVALID", "critic_role": "'
         + role
         + '", "mode": "'
         + mode
@@ -1331,10 +1359,12 @@ def build_node_critic_prompt(config: dict[str, Any], node_id: str, critic_id: st
         '"strengths": ["..."], "weaknesses": ["..."], "required_revisions": ["..."], "risk_flags": ["..."] }\n'
         f"Node evidence fingerprint: {fingerprint}\n"
         f"Result path: {result_path}\n"
-        "Do not assume the node is final or accepted. ACCEPT means this role's required evidence is complete under the frozen rubric. "
-        "REVISE means meaningful progress, partial success, incomplete implementation, missing validation, a plausible next approach, or cheap actionable improvement remains. "
-        "Do not treat an underperforming or half-built implementation as hypothesis_failed_with_evidence. That outcome requires evidence that the frozen hypothesis is fundamentally false under the current data/contract, not merely that this approach needs more work or a different node. "
-        "INVALID means the evidence cannot be trusted. REJECT means it is not worth continuing or not selected."
+        "Do not assume the node is final or accepted. ACCEPT means the positive ending criteria are met: success_criteria are satisfied, the result is positive under the frozen contract, evidence is trusted, and no cheap required improvement remains. "
+        "CONTINUE means the same node has positive signal but needs more validation, depth, ablations, confirmation, or framing before acceptance. "
+        "REVISE means the same node needs a bounded implementation or method fix before its result can be judged. "
+        "BRANCH means the current evidence points to a meaningfully different node direction worth trying. "
+        "KILL means valid evidence says this node or lineage should stop; a valid negative result belongs here, not in ACCEPT. "
+        "INVALID means the evidence cannot be trusted."
     )
 
 
@@ -1382,8 +1412,8 @@ def critic_acceptance_reason(critic: dict[str, Any], config: dict[str, Any], pen
         if contract_reason:
             return contract_reason
         outcome = node.get("outcome_type")
-        if outcome not in PAPER_OUTCOME_TYPES:
-            return "paper-mode ACCEPT requires paper outcome_type"
+        if outcome != "hypothesis_supported":
+            return "paper-mode ACCEPT requires positive outcome_type hypothesis_supported"
         for key in ("current_claim", "claim_equivalence", "contract_evidence", "paper_worthiness"):
             if not node.get(key):
                 return f"paper-mode ACCEPT requires node.{key}"
@@ -1391,26 +1421,12 @@ def critic_acceptance_reason(critic: dict[str, Any], config: dict[str, Any], pen
             return "paper-mode ACCEPT requires complete implementation evidence, not an incomplete worker result"
         if role == "claim_critic":
             verdict = critic.get("original_hypothesis_verdict")
-            if verdict not in {"supported", "failed", "rescue"}:
-                return "claim_critic ACCEPT requires original_hypothesis_verdict supported|failed|rescue"
+            if verdict != "supported":
+                return "claim_critic ACCEPT requires original_hypothesis_verdict supported"
             if critic.get("paper_worthy") is not True:
                 return "claim_critic ACCEPT requires paper_worthy=true"
-            if outcome == "hypothesis_supported" and critic.get("contract_success_met") is not True:
+            if critic.get("contract_success_met") is not True:
                 return "hypothesis_supported requires contract_success_met=true"
-            if outcome == "hypothesis_failed_with_evidence":
-                if critic.get("contract_failure_met") is not True or critic.get("fundamental_failure") is not True:
-                    return "hypothesis_failed_with_evidence requires contract_failure_met=true and fundamental_failure=true"
-                evidence = node.get("contract_evidence") if isinstance(node.get("contract_evidence"), dict) else {}
-                if evidence.get("routine_optimization_failure") is True or evidence.get("implementation_failure") is True:
-                    return "hypothesis_failed_with_evidence cannot be based on routine optimization or implementation failure"
-                if evidence.get("fundamental_failure_not_implementation_failure") is not True:
-                    return "hypothesis_failed_with_evidence requires fundamental_failure_not_implementation_failure=true"
-                alternatives = node.get("alternative_approaches_considered")
-                if not isinstance(alternatives, list) or not alternatives:
-                    return "hypothesis_failed_with_evidence requires alternative_approaches_considered"
-            if outcome == "rescue_finding_with_failed_hypothesis":
-                if critic.get("contract_failure_met") is not True or critic.get("rescue_scope_met") is not True:
-                    return "rescue_finding_with_failed_hypothesis requires failure and rescue scope evidence"
     elif mode in {"builder", "engineer"}:
         if node.get("outcome_type") not in {"practical_improvement"}:
             return "builder/engineer ACCEPT requires practical_improvement outcome_type"
@@ -1438,7 +1454,7 @@ def validate_critic_payload(payload: dict[str, Any], config: dict[str, Any], pen
         raise CliError("critic payload must be a JSON object")
     verdict = critic.get("verdict")
     if verdict not in CRITIC_VERDICTS:
-        raise CliError("critic verdict must be one of ACCEPT, REVISE, INVALID, REJECT")
+        raise CliError("critic verdict must be one of ACCEPT, CONTINUE, REVISE, BRANCH, KILL, INVALID")
     rationale = critic.get("rationale") or critic.get("reason")
     if not isinstance(rationale, str) or not rationale.strip():
         raise CliError("critic payload requires non-empty rationale")
@@ -1864,10 +1880,10 @@ def build_revision_critic_prompt(target: Path, run_id: str, critic_id: str, revi
     return (
         "You are the revision critic for an AI Scientist research lineage. Decide whether this node needs more same-direction work, may branch, or should stop.\n"
         "Use the frozen target venue as a hard threshold. Lower bars may accept honest incremental work; AAAI/IJCAI and top-ML bars require stronger novelty, mechanism, ablations, and less tolerance for tuning-only ideas.\n"
-        "Return CONTINUE_NODE if more debugging/tuning/ablations within the same mechanism are still required before revision.\n"
-        "Return BRANCH only for one to three approved alternatives that are viable and paper-worthy under the frozen venue bar.\n"
-        "Return STOP_DRIFTED if continued branching is mostly performance hacking, claim drift, or below the venue threshold.\n"
-        "Return STOP_EXHAUSTED if evidence indicates the goal is fundamentally unachievable under the current data/contract.\n\n"
+        "Return CONTINUE if more debugging/tuning/ablations within the same mechanism are still required before revision.\n"
+        "Return BRANCH whenever data-backed evidence supports one to three distinct alternatives that change the approach and could plausibly improve the result under the frozen contract; do not wait for same-node exhaustion.\n"
+        "Return KILL only if valid, trustworthy evidence says this node or lineage should stop, including a valid negative result or exhaustion without a positive path, after ruling out same-approach fixes and data-backed branches.\n"
+        "Return INVALID only if the revision evidence or plan cannot be trusted because it drifts, changes the benchmark, or violates integrity requirements; do not use INVALID for trustworthy negative results, low scores, or failed hypotheses.\n\n"
         f"Run id: {run_id}\nCritic id: {critic_id}\nRevision id: {revision.get('revision_id')}\nNode id: {revision.get('node_id')}\nTarget repo: {target}\nResult path: {result_path}\n\n"
         "Frozen target venue bar:\n"
         + target_venue_summary(config)
@@ -1876,7 +1892,7 @@ def build_revision_critic_prompt(target: Path, run_id: str, critic_id: str, revi
         + "\n\nRelevant run findings:\n"
         + findings_context(target, run_id, node_id=str(revision.get("node_id") or ""), limit=30)
         + "\n\nWrite JSON only to result_path with this schema:\n"
-        '{"verdict":"CONTINUE_NODE|BRANCH|STOP_DRIFTED|STOP_EXHAUSTED","rationale":"...",'
+        '{"verdict":"CONTINUE|BRANCH|KILL|INVALID","rationale":"...",'
         '"selected_alternative_ids":["alt-001"],"venue_bar_assessment":"...","paper_worthiness_assessment":"...",'
         '"drift_assessment":"...","required_same_node_work":["..."],"stop_reason":"..."}\n'
     )
@@ -2020,7 +2036,7 @@ def validate_revision_critic_payload(payload: dict[str, Any], revision: dict[str
         raise CliError("revision critic payload must be a JSON object")
     verdict = critic.get("verdict")
     if verdict not in REVISION_VERDICTS:
-        raise CliError("revision critic verdict must be one of CONTINUE_NODE, BRANCH, STOP_DRIFTED, STOP_EXHAUSTED")
+        raise CliError("revision critic verdict must be one of CONTINUE, BRANCH, KILL, INVALID")
     rationale = str(critic.get("rationale") or critic.get("reason") or "").strip()
     if not rationale:
         raise CliError("revision critic payload requires rationale")
@@ -2068,10 +2084,10 @@ def cmd_node_revision_critic_complete(args: argparse.Namespace) -> int:
     completed_at = utc_now()
     log_path = revision_critic_log_path(target, run_id, args.critic_id)
     status_by_verdict = {
-        "CONTINUE_NODE": "continue_node",
+        "CONTINUE": "continue_node",
         "BRANCH": "branch_approved",
-        "STOP_DRIFTED": "stopped_drifted",
-        "STOP_EXHAUSTED": "stopped_exhausted",
+        "KILL": "stopped_killed",
+        "INVALID": "stopped_invalid",
     }
     revision_update = {
         **revision_record,
@@ -2088,10 +2104,10 @@ def cmd_node_revision_critic_complete(args: argparse.Namespace) -> int:
     atomic_write_json(log_path, record)
     node_id = str(pending.get("node_id") or revision.get("node_id") or "")
     node = read_node(target, run_id, node_id) if node_id else {}
-    if verdict in {"STOP_DRIFTED", "STOP_EXHAUSTED"} and node_id:
+    if verdict in {"KILL", "INVALID"} and node_id:
         node["lineage_stop"] = {"verdict": verdict, "reason": critic["rationale"], "critic_ref": str(log_path), "stopped_at": completed_at}
         write_node(target, run_id, node_id, node)
-    elif verdict == "CONTINUE_NODE" and node_id:
+    elif verdict == "CONTINUE" and node_id:
         node["status"] = "implementing"
         node["revision_continue_reason"] = critic["rationale"]
         write_node(target, run_id, node_id, node)
@@ -2106,13 +2122,13 @@ def cmd_node_revision_critic_complete(args: argparse.Namespace) -> int:
             node_state["updated_at"] = utc_now()
             node_state["last_revision_id"] = pending.get("revision_id")
             node_state["last_revision_critic_ref"] = str(log_path)
-            if verdict == "CONTINUE_NODE":
+            if verdict == "CONTINUE":
                 node_state["status"] = "implementing"
                 node_state["revision_continue_reason"] = critic["rationale"]
-            elif verdict in {"STOP_DRIFTED", "STOP_EXHAUSTED"}:
+            elif verdict in {"KILL", "INVALID"}:
                 node_state["lineage_stop"] = {"verdict": verdict, "reason": critic["rationale"], "critic_ref": str(log_path), "stopped_at": completed_at}
         orchestrator = phase.setdefault("orchestrator", {})
-        if verdict == "CONTINUE_NODE":
+        if verdict == "CONTINUE":
             orchestrator["next_action"] = "node_implementation_step"
             details = {"reason": critic["rationale"], "node_id": node_id, "revision_id": pending.get("revision_id"), "required_same_node_work": critic.get("required_same_node_work", [])}
         elif verdict == "BRANCH":
@@ -2826,6 +2842,7 @@ def ideation_response(target: Path, run_id: str, **extra: Any) -> int:
 
 def cmd_ideation_start(args: argparse.Namespace) -> int:
     target = target_repo(args)
+    payload = load_payload(args)
     state = start_ideation(
         target,
         args.run_id,
@@ -2833,12 +2850,10 @@ def cmd_ideation_start(args: argparse.Namespace) -> int:
         mode=args.strictness_mode,
         num_ideas_required=args.num_ideas,
         min_candidates_required=args.min_candidates,
-        reflection_budget=args.reflection_budget,
         max_subagents=args.max_subagents,
+        payload=payload,
     )
-    cfg = current_config(target, args.run_id)
-    cursor = cursor_for_state(state, cfg)
-    return response("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)), **cursor)
+    return response("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)), control=state["state"]["orchestrator"]["control"])
 
 
 def cmd_ideation_resume(args: argparse.Namespace) -> int:
@@ -2855,7 +2870,7 @@ def cmd_ideation_cancel(args: argparse.Namespace) -> int:
 
 def cmd_ideation_complete(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
-    complete_ideation(target, run_id, budget_exhausted=args.budget_exhausted)
+    complete_ideation(target, run_id)
     return ideation_response(target, run_id)
 
 
@@ -2865,29 +2880,11 @@ def cmd_ideation_exhaust(args: argparse.Namespace) -> int:
     return ideation_response(target, run_id)
 
 
-def cmd_ideation_rank_finalize(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    finalize_ranking(target, run_id, payload)
-    return ideation_response(target, run_id)
-
-
-def cmd_ideation_rank_candidates(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    result = rank_candidates(target, run_id, mode=args.mode)
-    return ideation_response(target, run_id, **result)
-
-
 def cmd_ideation_finalize_ready(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
-    finalize_ready(target, run_id, idea_ids=args.idea_ids)
+    payload = load_payload(args)
+    finalize_ready(target, run_id, idea_ids=args.idea_ids, payload=payload)
     return ideation_response(target, run_id)
-
-
-def cmd_ideation_intent_start(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    intent = start_intent(target, run_id, args.role, idea_id=args.idea_id, agent_thread_id=args.agent_thread_id)
-    return ideation_response(target, run_id, intent=intent)
 
 
 def cmd_ideation_intent_start_batch(args: argparse.Namespace) -> int:
@@ -2913,78 +2910,6 @@ def cmd_ideation_intent_complete(args: argparse.Namespace) -> int:
 def cmd_ideation_intent_cancel(args: argparse.Namespace) -> int:
     target, run_id = require_ideation_run(args)
     cancel_intent(target, run_id, args.reason, intent_id=args.intent_id)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_draft(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    idea_payload = payload.get("idea") if isinstance(payload.get("idea"), dict) else payload
-    record_draft(target, run_id, idea_payload, idea_id=args.idea_id)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_revise_start(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    start_revision(target, run_id, args.idea_id, args.reason)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_critic_record(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    critic_payload = payload.get("critic") if isinstance(payload.get("critic"), dict) else payload
-    record_critic(target, run_id, critic_payload, idea_id=args.idea_id)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_search_semantic_scholar(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    if not payload and not args.query:
-        raise CliError("search-semantic-scholar requires --query or a JSON evidence payload")
-    record_semantic_scholar_search(
-        target,
-        run_id,
-        idea_id=args.idea_id,
-        query=args.query,
-        evidence_payload=payload or None,
-        limit=args.limit,
-        provider=args.provider,
-    )
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_record_evidence_batch(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    payload = load_payload(args)
-    record_evidence_batch(
-        target,
-        run_id,
-        idea_ids=args.idea_ids,
-        queries=args.queries,
-        evidence_payload=payload or None,
-        limit=args.limit,
-        provider=args.provider,
-    )
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_finalize(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    finalize_idea(target, run_id, idea_id=args.idea_id)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_reject(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    reject_idea(target, run_id, idea_id=args.idea_id, reason=args.reason)
-    return ideation_response(target, run_id)
-
-
-def cmd_idea_exhaust(args: argparse.Namespace) -> int:
-    target, run_id = require_ideation_run(args)
-    exhaust_idea(target, run_id, idea_id=args.idea_id, reason=args.reason)
     return ideation_response(target, run_id)
 
 
@@ -3142,12 +3067,6 @@ def cmd_hooks_check(args: argparse.Namespace) -> int:
     return install_main(["--project-root", str(args.project_root), "--python", args.python, "--check"])
 
 
-def cmd_hooks_codex_event(args: argparse.Namespace) -> int:
-    from ideation.hooks import main as hooks_main
-
-    return hooks_main([args.event])
-
-
 def cmd_hooks_stop_gate(args: argparse.Namespace) -> int:
     from hooks.stop_gate import main as stop_gate_main
 
@@ -3157,32 +3076,22 @@ def cmd_hooks_stop_gate(args: argparse.Namespace) -> int:
     return stop_gate_main(argv)
 
 
-def cmd_evidence_semantic_scholar(args: argparse.Namespace) -> int:
-    from ideation.evidence import main as evidence_main
-
-    argv = [
-        "--target-repo",
-        str(args.target_repo or Path.cwd()),
-        "--run-id",
-        args.run_id,
-        "--query",
-        args.query,
-        "--idea-id",
-        args.idea_id,
-        "--reflection-round",
-        str(args.reflection_round),
-        "--max-results",
-        str(args.max_results),
-    ]
-    if args.fixture:
-        argv.extend(["--fixture", str(args.fixture)])
-    return evidence_main(argv)
+def cmd_agents_list(args: argparse.Namespace) -> int:
+    sys.stdout.write(json.dumps({"status": "ok", "agents": core_agents.list_agents()}, indent=2, sort_keys=True) + "\n")
+    return 0
 
 
-def cmd_research_loop_run(args: argparse.Namespace) -> int:
-    from research.loop.orchestrator import main as research_loop_main
+def cmd_agents_install(args: argparse.Namespace) -> int:
+    installed = core_agents.install_agents(codex_home=args.codex_home, target_repo=args.agent_target_repo, force=args.force)
+    agents_dir = core_agents.target_agents_dir(args.codex_home, args.agent_target_repo)
+    sys.stdout.write(json.dumps({"status": "ok", "agents_dir": str(agents_dir), "installed": installed}, indent=2, sort_keys=True) + "\n")
+    return 0
 
-    return research_loop_main(args.args)
+
+def cmd_agents_check(args: argparse.Namespace) -> int:
+    result = core_agents.check_agents(codex_home=args.codex_home, target_repo=args.agent_target_repo)
+    sys.stdout.write(json.dumps({"status": "ok" if result["ok"] else "error", **result}, indent=2, sort_keys=True) + "\n")
+    return 0 if result["ok"] else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3213,71 +3122,58 @@ def build_parser() -> argparse.ArgumentParser:
     hooks_check.add_argument("--project-root", type=Path, default=Path.cwd())
     hooks_check.add_argument("--python", default=sys.executable)
     hooks_check.set_defaults(func=cmd_hooks_check)
-    codex_event = hooks_sub.add_parser("codex-event")
-    codex_event.add_argument("event", choices=["SessionStart", "UserPromptSubmit", "Stop", "PreToolUse", "PostToolUse"])
-    codex_event.set_defaults(func=cmd_hooks_codex_event)
     stop_gate = hooks_sub.add_parser("stop-gate")
     stop_gate.add_argument("--target-repo", type=Path)
     stop_gate.set_defaults(func=cmd_hooks_stop_gate)
 
-    evidence = sub.add_parser("evidence")
-    evidence_sub = evidence.add_subparsers(dest="command", required=True)
-    s2 = evidence_sub.add_parser("semantic-scholar")
-    s2.add_argument("--target-repo", type=Path)
-    s2.add_argument("--run-id", required=True)
-    s2.add_argument("--query", required=True)
-    s2.add_argument("--idea-id", required=True)
-    s2.add_argument("--reflection-round", type=int, required=True)
-    s2.add_argument("--max-results", type=int, default=10)
-    s2.add_argument("--fixture", type=Path)
-    s2.set_defaults(func=cmd_evidence_semantic_scholar)
-
-    research_loop = sub.add_parser("research-loop")
-    research_loop_sub = research_loop.add_subparsers(dest="command", required=True)
-    research_loop_run = research_loop_sub.add_parser("run")
-    research_loop_run.add_argument("args", nargs=argparse.REMAINDER)
-    research_loop_run.set_defaults(func=cmd_research_loop_run)
+    agents = sub.add_parser("agents")
+    agents_sub = agents.add_subparsers(dest="command", required=True)
+    agents_list = agents_sub.add_parser("list")
+    agents_list.set_defaults(func=cmd_agents_list)
+    agents_install = agents_sub.add_parser("install")
+    agents_install.add_argument("--codex-home", type=Path)
+    agents_install.add_argument("--target-repo", dest="agent_target_repo", type=Path)
+    agents_install.add_argument("--force", action="store_true")
+    agents_install.set_defaults(func=cmd_agents_install)
+    agents_check = agents_sub.add_parser("check")
+    agents_check.add_argument("--codex-home", type=Path)
+    agents_check.add_argument("--target-repo", dest="agent_target_repo", type=Path)
+    agents_check.set_defaults(func=cmd_agents_check)
 
     research = sub.add_parser("research")
     research_sub = research.add_subparsers(dest="command", required=True)
     start = research_sub.add_parser("start")
     start.add_argument("--run-id", required=True)
-    start.add_argument("--strictness-mode")
+    start.add_argument("--strictness-mode", required=True, choices=sorted(research_workflow.ACTIVE_MODES))
     start.add_argument("--selected-idea-id")
-    start.add_argument("--target-venue-preset")
-    start.add_argument("--target-venue-name")
-    start.add_argument("--target-venue-notes")
-    start.add_argument("--token-budget-percent")
-    start.add_argument("--max-subagents", type=int)
-    start.add_argument("--no-limit-host-cap", action="store_true")
+    start.add_argument("--resource-config", type=Path)
+    start.add_argument("--codex-session-id")
+    start.add_argument("--codex-thread-id")
     add_json_args(start)
-    start.set_defaults(func=cmd_research_start)
+    start.set_defaults(func=research_workflow.cmd_research_start)
     resume = research_sub.add_parser("resume")
     resume.add_argument("--run-id")
-    resume.set_defaults(func=cmd_research_resume)
-    usage_check = research_sub.add_parser("usage-check")
-    usage_check.add_argument("--run-id", required=True)
-    usage_check.add_argument("--force", action="store_true")
-    usage_check.set_defaults(func=cmd_research_usage_check)
+    resume.set_defaults(func=research_workflow.cmd_research_resume)
     checkpoint = research_sub.add_parser("checkpoint")
     checkpoint.add_argument("--run-id")
     add_json_args(checkpoint)
-    checkpoint.set_defaults(func=cmd_research_checkpoint)
-    next_action = research_sub.add_parser("set-next-action")
-    next_action.add_argument("--run-id")
-    next_action.add_argument("--lane", required=True)
-    next_action.add_argument("--reason")
-    next_action.add_argument("--node-id")
-    add_json_args(next_action)
-    next_action.set_defaults(func=cmd_research_set_next_action)
+    checkpoint.set_defaults(func=research_workflow.cmd_research_checkpoint)
+    select = research_sub.add_parser("select")
+    select.add_argument("--run-id")
+    select.add_argument("--node-id", required=True)
+    select.add_argument("--summary")
+    select.add_argument("--evidence-ref", action="append")
+    select.add_argument("--acceptance-rationale")
+    add_json_args(select)
+    select.set_defaults(func=research_workflow.cmd_research_select)
     complete = research_sub.add_parser("complete")
     complete.add_argument("--run-id")
     add_json_args(complete)
-    complete.set_defaults(func=cmd_research_complete)
+    complete.set_defaults(func=research_workflow.cmd_research_complete)
     cancel = research_sub.add_parser("cancel")
     cancel.add_argument("--run-id")
     cancel.add_argument("--reason", required=True)
-    cancel.set_defaults(func=cmd_research_cancel)
+    cancel.set_defaults(func=research_workflow.cmd_research_cancel)
 
     ideation = sub.add_parser("ideation")
     ideation_sub = ideation.add_subparsers(dest="command", required=True)
@@ -3287,8 +3183,8 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_start.add_argument("--strictness-mode")
     ideation_start.add_argument("--num-ideas", type=int)
     ideation_start.add_argument("--min-candidates", type=int)
-    ideation_start.add_argument("--reflection-budget", type=int)
     ideation_start.add_argument("--max-subagents", type=int)
+    add_json_args(ideation_start)
     ideation_start.set_defaults(func=cmd_ideation_start)
     ideation_resume = ideation_sub.add_parser("resume")
     ideation_resume.add_argument("--run-id")
@@ -3300,34 +3196,20 @@ def build_parser() -> argparse.ArgumentParser:
     ideation_cancel.set_defaults(func=cmd_ideation_cancel)
     ideation_complete = ideation_sub.add_parser("complete")
     ideation_complete.add_argument("--run-id")
-    ideation_complete.add_argument("--budget-exhausted", action="store_true")
     ideation_complete.set_defaults(func=cmd_ideation_complete)
     ideation_exhaust = ideation_sub.add_parser("exhaust")
     ideation_exhaust.add_argument("--run-id")
     ideation_exhaust.set_defaults(func=cmd_ideation_exhaust)
-    ideation_rank = ideation_sub.add_parser("rank-finalize")
-    ideation_rank.add_argument("--run-id")
-    add_json_args(ideation_rank)
-    ideation_rank.set_defaults(func=cmd_ideation_rank_finalize)
-    ideation_rank_candidates = ideation_sub.add_parser("rank-candidates")
-    ideation_rank_candidates.add_argument("--run-id")
-    ideation_rank_candidates.add_argument("--mode", choices=["deterministic", "agent"], default="deterministic")
-    ideation_rank_candidates.set_defaults(func=cmd_ideation_rank_candidates)
     ideation_finalize_ready = ideation_sub.add_parser("finalize-ready")
     ideation_finalize_ready.add_argument("--run-id")
     ideation_finalize_ready.add_argument("--idea-ids", nargs="+")
+    add_json_args(ideation_finalize_ready)
     ideation_finalize_ready.set_defaults(func=cmd_ideation_finalize_ready)
     ideation_intent = ideation_sub.add_parser("intent")
     ideation_intent_sub = ideation_intent.add_subparsers(dest="intent_command", required=True)
-    intent_start = ideation_intent_sub.add_parser("start")
-    intent_start.add_argument("--run-id")
-    intent_start.add_argument("--role", required=True, choices=sorted({"generator", "critic", "ranker"}))
-    intent_start.add_argument("--idea-id")
-    intent_start.add_argument("--agent-thread-id")
-    intent_start.set_defaults(func=cmd_ideation_intent_start)
     intent_start_batch = ideation_intent_sub.add_parser("start-batch")
     intent_start_batch.add_argument("--run-id")
-    intent_start_batch.add_argument("--role", required=True, choices=sorted({"generator", "critic"}))
+    intent_start_batch.add_argument("--role", required=True, choices=sorted({"generator", "critic", "selector", "schema_builder"}))
     intent_start_batch.add_argument("--count", type=int)
     intent_start_batch.add_argument("--idea-ids", nargs="+")
     intent_start_batch.add_argument("--agent-thread-id")
@@ -3382,183 +3264,6 @@ def build_parser() -> argparse.ArgumentParser:
     writeup_negative.add_argument("--run-id")
     writeup_negative.add_argument("--reason", required=True)
     writeup_negative.set_defaults(func=cmd_writeup_negative_complete)
-
-    idea = sub.add_parser("idea")
-    idea_sub = idea.add_subparsers(dest="command", required=True)
-    idea_draft = idea_sub.add_parser("draft")
-    idea_draft.add_argument("--run-id")
-    idea_draft.add_argument("--idea-id")
-    add_json_args(idea_draft)
-    idea_draft.set_defaults(func=cmd_idea_draft)
-    idea_revise = idea_sub.add_parser("revise-start")
-    idea_revise.add_argument("--run-id")
-    idea_revise.add_argument("--idea-id", required=True)
-    idea_revise.add_argument("--reason")
-    idea_revise.set_defaults(func=cmd_idea_revise_start)
-    idea_critic = idea_sub.add_parser("critic-record")
-    idea_critic.add_argument("--run-id")
-    idea_critic.add_argument("--idea-id")
-    add_json_args(idea_critic)
-    idea_critic.set_defaults(func=cmd_idea_critic_record)
-    idea_search = idea_sub.add_parser("search-semantic-scholar")
-    idea_search.add_argument("--run-id")
-    idea_search.add_argument("--idea-id")
-    idea_search.add_argument("--query")
-    idea_search.add_argument("--limit", type=int, default=10)
-    idea_search.add_argument("--provider", choices=["auto", "semantic_scholar", "openalex"], default="auto")
-    add_json_args(idea_search)
-    idea_search.set_defaults(func=cmd_idea_search_semantic_scholar)
-    idea_record_evidence_batch = idea_sub.add_parser("record-evidence-batch")
-    idea_record_evidence_batch.add_argument("--run-id")
-    idea_record_evidence_batch.add_argument("--idea-ids", nargs="+", required=True)
-    idea_record_evidence_batch.add_argument("--queries", nargs="+", required=True)
-    idea_record_evidence_batch.add_argument("--limit", type=int, default=10)
-    idea_record_evidence_batch.add_argument("--provider", choices=["auto", "semantic_scholar", "openalex"], default="auto")
-    add_json_args(idea_record_evidence_batch)
-    idea_record_evidence_batch.set_defaults(func=cmd_idea_record_evidence_batch)
-    idea_finalize = idea_sub.add_parser("finalize")
-    idea_finalize.add_argument("--run-id")
-    idea_finalize.add_argument("--idea-id")
-    idea_finalize.set_defaults(func=cmd_idea_finalize)
-    idea_reject = idea_sub.add_parser("reject")
-    idea_reject.add_argument("--run-id")
-    idea_reject.add_argument("--idea-id")
-    idea_reject.add_argument("--reason", required=True)
-    idea_reject.set_defaults(func=cmd_idea_reject)
-    idea_exhaust = idea_sub.add_parser("exhaust")
-    idea_exhaust.add_argument("--run-id")
-    idea_exhaust.add_argument("--idea-id")
-    idea_exhaust.add_argument("--reason", default="reflection_budget_exhausted")
-    idea_exhaust.set_defaults(func=cmd_idea_exhaust)
-
-    node = sub.add_parser("node")
-    node_sub = node.add_subparsers(dest="command", required=True)
-    transition = node_sub.add_parser("transition")
-    transition.add_argument("--run-id")
-    transition.add_argument("--node-id", required=True)
-    transition.add_argument("--status", required=True)
-    transition.add_argument("--reason")
-    add_json_args(transition)
-    transition.set_defaults(func=cmd_node_transition)
-
-    plan_start = node_sub.add_parser("plan-start")
-    plan_start.add_argument("--run-id")
-    plan_start.add_argument("--node-id", required=True)
-    plan_start.add_argument("--plan-id")
-    add_json_args(plan_start)
-    plan_start.set_defaults(func=cmd_node_plan_start)
-    plan_complete = node_sub.add_parser("plan-complete")
-    plan_complete.add_argument("--run-id")
-    plan_complete.add_argument("--plan-id", required=True)
-    add_json_args(plan_complete)
-    plan_complete.set_defaults(func=cmd_node_plan_complete)
-    step_start = node_sub.add_parser("step-start")
-    step_start.add_argument("--run-id")
-    step_start.add_argument("--node-id", required=True)
-    step_start.add_argument("--step-id")
-    step_start.add_argument("--step-index", type=int)
-    step_start.set_defaults(func=cmd_node_step_start)
-    step_complete = node_sub.add_parser("step-complete")
-    step_complete.add_argument("--run-id")
-    step_complete.add_argument("--step-id", required=True)
-    step_complete.add_argument("--reason")
-    add_json_args(step_complete)
-    step_complete.set_defaults(func=cmd_node_step_complete)
-    revision_start = node_sub.add_parser("revision-start")
-    revision_start.add_argument("--run-id")
-    revision_start.add_argument("--node-id", required=True)
-    revision_start.add_argument("--revision-id")
-    add_json_args(revision_start)
-    revision_start.set_defaults(func=cmd_node_revision_start)
-    revision_complete = node_sub.add_parser("revision-complete")
-    revision_complete.add_argument("--run-id")
-    revision_complete.add_argument("--revision-id", required=True)
-    add_json_args(revision_complete)
-    revision_complete.set_defaults(func=cmd_node_revision_complete)
-    revision_critic_start = node_sub.add_parser("revision-critic-start")
-    revision_critic_start.add_argument("--run-id")
-    revision_critic_start.add_argument("--revision-id", required=True)
-    revision_critic_start.add_argument("--critic-id")
-    revision_critic_start.set_defaults(func=cmd_node_revision_critic_start)
-    revision_critic_complete = node_sub.add_parser("revision-critic-complete")
-    revision_critic_complete.add_argument("--run-id")
-    revision_critic_complete.add_argument("--critic-id", required=True)
-    add_json_args(revision_critic_complete)
-    revision_critic_complete.set_defaults(func=cmd_node_revision_critic_complete)
-    branch = node_sub.add_parser("branch")
-    branch.add_argument("--run-id")
-    branch.add_argument("--node-id", required=True)
-    branch.add_argument("--from-node")
-    branch.add_argument("--revision-id")
-    branch.add_argument("--alternative-id")
-    branch.add_argument("--reason")
-    add_json_args(branch)
-    branch.set_defaults(func=cmd_node_branch)
-    critic_start = node_sub.add_parser("critic-start")
-    critic_start.add_argument("--run-id")
-    critic_start.add_argument("--node-id", required=True)
-    critic_start.add_argument("--critic-id")
-    critic_start.add_argument("--role", choices=sorted(CRITIC_ROLES))
-    critic_start.set_defaults(func=cmd_node_critic_start)
-    critic_spawn = node_sub.add_parser("critic-spawn-record")
-    critic_spawn.add_argument("--run-id")
-    critic_spawn.add_argument("--critic-id", required=True)
-    critic_spawn.add_argument("--agent-id", required=True)
-    critic_spawn.add_argument("--model", required=True)
-    critic_spawn.add_argument("--reasoning-effort", required=True)
-    critic_spawn.set_defaults(func=cmd_node_critic_spawn_record)
-    critic_complete = node_sub.add_parser("critic-complete")
-    critic_complete.add_argument("--run-id")
-    critic_complete.add_argument("--critic-id", required=True)
-    add_json_args(critic_complete)
-    critic_complete.set_defaults(func=cmd_node_critic_complete)
-    create_workspace = node_sub.add_parser("create-workspace")
-    create_workspace.add_argument("--run-id")
-    create_workspace.add_argument("--node-id", required=True)
-    create_workspace.add_argument("--reason")
-    create_workspace.set_defaults(func=cmd_node_create_workspace)
-    repair_start = node_sub.add_parser("repair-start")
-    repair_start.add_argument("--run-id")
-    repair_start.add_argument("--node-id", required=True)
-    repair_start.add_argument("--reason")
-    repair_start.add_argument("--required-revision", action="append")
-    repair_start.set_defaults(func=cmd_node_repair_start)
-    repair_complete = node_sub.add_parser("repair-complete")
-    repair_complete.add_argument("--run-id")
-    repair_complete.add_argument("--repair-id", required=True)
-    add_json_args(repair_complete)
-    repair_complete.set_defaults(func=cmd_node_repair_complete)
-
-    subagent = sub.add_parser("subagent")
-    subagent_sub = subagent.add_subparsers(dest="command", required=True)
-    update = subagent_sub.add_parser("update")
-    update.add_argument("--run-id")
-    update.add_argument("--subagent-id", required=True)
-    update.add_argument("--status", required=True)
-    update.add_argument("--node-id")
-    add_json_args(update)
-    update.set_defaults(func=cmd_subagent_update)
-
-    selection = sub.add_parser("selection")
-    selection_sub = selection.add_subparsers(dest="command", required=True)
-    finalize = selection_sub.add_parser("finalize")
-    finalize.add_argument("--run-id")
-    finalize.add_argument("--selected-node")
-    add_json_args(finalize)
-    finalize.set_defaults(func=cmd_selection_finalize)
-
-    finding = sub.add_parser("finding")
-    finding_sub = finding.add_subparsers(dest="command", required=True)
-    finding_record = finding_sub.add_parser("record")
-    finding_record.add_argument("--run-id")
-    finding_record.add_argument("--node-id")
-    finding_record.add_argument("--kind", choices=sorted(FINDING_KINDS))
-    finding_record.add_argument("--summary")
-    finding_record.add_argument("--source-ref")
-    finding_record.add_argument("--transferable", action="store_true")
-    add_json_args(finding_record)
-    finding_record.set_defaults(func=cmd_finding_record)
-
     validation = sub.add_parser("validation")
     validation_sub = validation.add_subparsers(dest="command", required=True)
     validation_record = validation_sub.add_parser("record")
@@ -3578,39 +3283,53 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_record.add_argument("--reason")
     handoff_record.set_defaults(func=cmd_handoff_record)
 
-    workspace = sub.add_parser("workspace")
-    workspace_sub = workspace.add_subparsers(dest="command", required=True)
-    workspace_init = workspace_sub.add_parser("init")
-    workspace_init.add_argument("--run-id")
-    workspace_init.add_argument("--source", default=".")
-    workspace_init.set_defaults(func=cmd_workspace_init)
-
     resource = sub.add_parser("resource")
     resource_sub = resource.add_subparsers(dest="command", required=True)
+    resource_status = resource_sub.add_parser("status")
+    resource_status.add_argument("--run-id")
+    resource_status.set_defaults(func=research_workflow.cmd_resource_status)
+    resource_acquire = resource_sub.add_parser("acquire")
+    resource_acquire.add_argument("--run-id")
+    resource_acquire.add_argument("--task-id", required=True)
+    resource_acquire.add_argument("--gpus", type=int, default=0)
+    resource_acquire.add_argument("--cpu-cores", type=int, default=0)
+    resource_acquire.add_argument("--memory-mb", type=int, default=0)
+    resource_acquire.add_argument("--timeout-sec", type=float, default=0.0)
+    resource_acquire.add_argument("--poll-sec", type=float, default=5.0)
+    resource_acquire.set_defaults(func=research_workflow.cmd_resource_acquire)
+    resource_release = resource_sub.add_parser("release")
+    resource_release.add_argument("--run-id")
+    resource_release.add_argument("--lease-id", required=True)
+    resource_release.set_defaults(func=research_workflow.cmd_resource_release)
     resource_run = resource_sub.add_parser("run")
     resource_run.add_argument("--run-id")
-    resource_run.add_argument("--node-id", required=True)
-    resource_run.add_argument("--trial-id", required=True)
+    resource_run.add_argument("--task-id", required=True)
     resource_run.add_argument("--purpose", default="benchmark")
     resource_run.add_argument("--cwd")
     resource_run.add_argument("--env-json")
     resource_run.add_argument("--metrics-path")
     resource_run.add_argument("--metrics-json")
-    resource_run.add_argument("--seed")
-    resource_run.add_argument("--benchmark-contract-version", default="v1")
     resource_run.add_argument("--notes", default="")
-    resource_run.add_argument("--gpu", action="store_true")
+    resource_run.add_argument("--gpus", type=int, default=0)
+    resource_run.add_argument("--cpu-cores", type=int, default=0)
+    resource_run.add_argument("--memory-mb", type=int, default=0)
+    resource_run.add_argument("--timeout-sec", type=float, default=0.0)
+    resource_run.add_argument("--poll-sec", type=float, default=5.0)
+    resource_run.add_argument("--scheduler", choices=["local", "slurm"])
+    resource_run.add_argument("--partition")
+    resource_run.add_argument("--time", dest="time_limit")
+    resource_run.add_argument("--gres")
+    resource_run.add_argument("--cpus-per-task")
+    resource_run.add_argument("--mem")
+    resource_run.add_argument("--job-name")
+    resource_run.add_argument("--sbatch-arg", action="append", help="Additional raw sbatch argument. Repeat for multiple arguments.")
     resource_run.add_argument("command", nargs=argparse.REMAINDER)
-    resource_run.set_defaults(func=cmd_resource_run)
+    resource_run.set_defaults(func=research_workflow.cmd_resource_run)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    if raw_argv[:2] == ["research-loop", "run"]:
-        from research.loop.orchestrator import main as research_loop_main
-
-        return research_loop_main(raw_argv[2:])
     parser = build_parser()
     args = parser.parse_args(raw_argv)
     try:

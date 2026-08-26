@@ -1,0 +1,7 @@
+interface:
+  display_name: "Research Loop Preflight"
+  short_description: "Validate prerequisites before research-loop starts."
+  default_prompt: "Use $research-loop-preflight to validate prerequisites before starting an AI Scientist research loop."
+
+policy:
+  allow_implicit_invocation: false

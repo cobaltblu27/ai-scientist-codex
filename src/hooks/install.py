@@ -11,9 +11,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from core.state import start_phase
-
-
 def load_json_object(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -192,23 +189,6 @@ def run_hook_smoke(command: str, script: Path) -> None:
     parts = validate_hook_command(command, script)
     with tempfile.TemporaryDirectory(prefix="ai-scientist-hook-check-") as tmp:
         target = Path(tmp)
-        start_phase(
-            target,
-            "check-run",
-            "ideation",
-            {
-                "num_ideas_required": 1,
-                "num_reflections_required": 1,
-                "current_idea_index": 1,
-                "current_reflection_round": 1,
-                "finalized_count": 0,
-                "skipped_count": 0,
-                "s2_query_count": 0,
-                "idea_states": {
-                    "idea-001": {"status": "reflecting", "reflection_count": 0}
-                },
-            },
-        )
         payload = json.dumps({"hook_event_name": "Stop", "cwd": str(target)})
         proc = subprocess.run(
             parts,
@@ -223,8 +203,8 @@ def run_hook_smoke(command: str, script: Path) -> None:
             output = json.loads(proc.stdout)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Stop hook did not emit JSON: {proc.stdout!r}") from exc
-        if output.get("decision") != "block":
-            raise RuntimeError(f"Stop hook smoke expected decision=block, got {output}")
+        if output.get("decision") == "block":
+            raise RuntimeError(f"Stop hook smoke expected allow with no active run, got {output}")
 
 
 def check_install(project_root: Path, python: str, script: Path) -> None:  # noqa: ARG001 - python is kept for CLI compatibility.

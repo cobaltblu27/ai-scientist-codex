@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Literature Search"
+  short_description: "Search the local papers corpus before brainstorming."
+  default_prompt: "Use local-literature-search to find relevant local papers for this revision brainstorm."

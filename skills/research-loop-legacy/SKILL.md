@@ -1,6 +1,6 @@
 ---
 name: research-loop-legacy
-description: Legacy reference for the previous Codex-native research loop with detailed node workspaces, critics, benchmark evidence, and fail-closed phase gates.
+description: DEPRECATED. Legacy reference for the previous Codex-native research loop with detailed node workspaces, critics, benchmark evidence, and fail-closed phase gates.
 ---
 
 # Research Loop

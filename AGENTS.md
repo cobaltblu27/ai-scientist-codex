@@ -10,6 +10,8 @@ This agent orchestration framework will be mostly AI-focused researches. Behavio
 - AI-Scientist-V2 is a repository of automated research harness using llm. this plugin is inspired from it; and design for each step, ideation, research loop and so on are influenced from it.
 - Oh-My-Codex is a codex all-in-one toolkit. We'll adapt its methodology for consistent state managment, agent orchestration, and keeping the loop ongoing until a criteria is met.
 
+## Agent Prompting
+Many specs to add will require change of CLI or prompt. Same feature can be implemented as both, where addition to prompts such as SKILL.md is soft enforcement and change to CLI is a deterministic hard-rule. Sometimes you will need to determine where to change. Good rule of thumb to decide is: If it's related with loop state criteria, such as STOP hook, budget, etc, it belongs in CLI. If its not, it can be either, but prioritize prompt editing first. CLI-based hard rule enforcement is revered when real-world testing proves it is needed.
 
 ## Criteria
 - Each step is a loop that must continue until the criteria is met.
@@ -48,3 +50,9 @@ Ralph is a persistence loop that keeps working on a task until it is fully compl
 
 ## Skills Policy
 Skills in this project are mostly a dedicted tool for specific usuage; do not make them trigger without explicit calling.
+
+## Compatibility
+When editing prompts, you do not usually have to worry to much about backward compatibility, as we rarely have to handle continueing from previous runs. So when editing prompts to change behavior from A to B, refrain from terms like 'do not ~<previous behaviour>' or '~is not ~<previous prompts>', unless previous behavour seems to be a common fail case that can happen unless negative prompt is specified. Most of the time, agent won't know what was the previous version's instruction anyways.
+
+## Prompt Flexibility
+Specify the goal, decision, evidence requirements, and non-negotiable boundaries while leaving report structure and depth flexible. Avoid mandatory return forms with long field lists, especially forms with ten or more fields or repeated per-item schemas, because agents may focus on completing the form instead of producing a strong result. Prefer a few content goals in natural Markdown and request additional sections or details only when relevant. Keep exact machine-readable fields in CLI state or artifact schemas instead of duplicating them in prose reports. Use a rigid output format only when a parser or CLI genuinely requires it, and keep that format to the minimum required fields.

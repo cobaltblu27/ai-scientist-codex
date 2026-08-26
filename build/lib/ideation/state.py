@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
-"""Deterministic state helpers for agent-driven AI Scientist ideation.
+"""Ledger helpers for goal-driven AI Scientist ideation.
 
 This module deliberately does not spawn Codex or own an ideation loop. The
-current Codex session is the orchestrator; these helpers only persist state,
-validate transitions, and compute the next cursor action for the Stop hook.
+current Codex session is the orchestrator; these helpers persist run artifacts,
+track pending subagent work, and validate the final handoff schema.
 """
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 import re
 import tomllib
-import urllib.error
-import urllib.parse
-import urllib.request
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from core.agents import ideation_agent_name
 from core.plugin import plugin_root
 from core.state import (
     ai_root,
@@ -26,7 +23,6 @@ from core.state import (
     atomic_write_json,
     config_path,
     data_hash,
-    has_int_score,
     has_substantive_value,
     load_json_if_exists,
     load_loop_state,
@@ -37,11 +33,12 @@ from core.state import (
     utc_now,
 )
 
-MODES = {"scientist", "researcher", "balanced", "builder", "engineer"}
-INTENT_ROLES = {"generator", "critic", "ranker"}
-TERMINAL_IDEA_STATUSES = {"accepted", "accepted_without_reference", "rejected", "error", "exhausted"}
-TERMINAL_IDEATION_STATUSES = {"COMPLETED", "COMPLETED_BUDGET_EXHAUSTED", "EXHAUSTED_NO_CANDIDATE", "CANCELLED"}
-SUCCESS_TERMINAL_STATUSES = {"COMPLETED", "COMPLETED_BUDGET_EXHAUSTED"}
+MODES = {"scientist", "engineer", "custom"}
+INTENT_ROLES = {"generator", "critic", "selector", "schema_builder"}
+PROMPT_ROLES = ("generator", "critic")
+TERMINAL_IDEA_STATUSES = {"selected", "error"}
+TERMINAL_IDEATION_STATUSES = {"COMPLETED", "EXHAUSTED_NO_CANDIDATE", "CANCELLED"}
+SUCCESS_TERMINAL_STATUSES = {"COMPLETED"}
 IDEA_OUTPUT_SCHEMA = {
     "required": [
         "id",
@@ -50,6 +47,11 @@ IDEA_OUTPUT_SCHEMA = {
         "hypothesis",
         "unique_protocol",
         "expected_metric",
+        "mechanism",
+        "implementation_sketch",
+        "expected_metric_effect",
+        "fit_to_research_contract",
+        "novelty_angle",
         "smoke_runnable_now",
         "requires_implementation",
         "minimum_command",
@@ -58,65 +60,56 @@ IDEA_OUTPUT_SCHEMA = {
         "risk_flags",
     ]
 }
-
-
-DEFAULT_PROMPTS = {
-    "idea_generation_prompt_template": (
-        "You are an AI Scientist idea-generation subagent running in {mode} mode.\n"
-        "Topic: {prompt}\n"
-        "Produce one canonical research idea for slot {idea_id}. Return structured JSON only."
-    ),
-    "critic_prompt_template": (
-        "You are a short-lived critic for {mode} mode. Review idea {idea_id} draft {draft_version}.\n"
-        "Previous verdict: {previous_verdict}\n"
-        "Return JSON only with verdict, score, strengths, weaknesses, required_revisions, mode_specific_assessment, and risk_flags."
-    ),
-    "ranking_prompt_template": (
-        "Rank terminal ideation candidates for {mode} mode. Return JSON only when agent ranking is explicitly requested; default ranking is deterministic."
-    ),
+RESEARCH_CONTRACT_REQUIRED_FIELDS = {
+    "primary_hypothesis",
+    "goal_type",
+    "success_criteria",
+    "failure_criteria",
+    "allowed_rescue_scope",
+    "kill_criteria",
+    "non_drift_definition",
+    "metrics_that_matter",
+    "non_negotiable_comparisons",
 }
+PERFORMANCE_GOAL_TERMS = {"performance", "model_performance", "enhanced_model_performance", "benchmarking"}
+CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS = {
+    "fixed_dataset": ("fixed_dataset", "dataset", "dataset_ref"),
+    "fixed_split": ("fixed_split", "split_protocol", "split_ref", "fixed_split_ref"),
+    "fixed_baseline": ("fixed_baseline", "baseline_reference", "baseline_ref"),
+    "metrics": ("metrics_that_matter", "metrics", "metric"),
+    "evaluator_command": ("evaluator_command", "evaluator", "benchmark_command", "benchmark_plan"),
+}
+
+
+def prompt_path_for(mode: str, role: str) -> str:
+    if mode not in MODES:
+        raise IdeationStateError(f"invalid ideation mode: {mode}")
+    if role not in PROMPT_ROLES:
+        raise IdeationStateError(f"invalid ideation prompt role: {role}")
+    return f"prompts/ideation/{mode}/{role}.md"
+
+
+def default_prompt_refs(mode: str) -> dict[str, str]:
+    return {
+        "generator_agent": ideation_agent_name(mode, "generator"),
+        "generator_prompt_source": prompt_path_for(mode, "generator"),
+        "critic_agent": ideation_agent_name(mode, "critic"),
+        "critic_prompt_source": prompt_path_for(mode, "critic"),
+    }
 
 
 DEFAULT_MODE_PRESETS: dict[str, dict[str, Any]] = {
     "scientist": {
-        "s2_required": True,
-        "allow_accepted_without_reference": False,
-        "allow_selection_without_reference": False,
-        "candidate_evaluations": ["ACCEPTED"],
         "scoring_weights": {"novelty": 0.35, "evidence": 0.25, "feasibility": 0.20, "repo_fit": 0.20},
-        **DEFAULT_PROMPTS,
-    },
-    "researcher": {
-        "s2_required": True,
-        "allow_accepted_without_reference": False,
-        "allow_selection_without_reference": False,
-        "candidate_evaluations": ["ACCEPTED"],
-        "scoring_weights": {"novelty": 0.30, "evidence": 0.30, "feasibility": 0.20, "repo_fit": 0.20},
-        **DEFAULT_PROMPTS,
-    },
-    "balanced": {
-        "s2_required": True,
-        "allow_accepted_without_reference": True,
-        "allow_selection_without_reference": True,
-        "candidate_evaluations": ["ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"],
-        "scoring_weights": {"novelty": 0.25, "evidence": 0.20, "feasibility": 0.30, "repo_fit": 0.25},
-        **DEFAULT_PROMPTS,
+        **default_prompt_refs("scientist"),
     },
     "engineer": {
-        "s2_required": False,
-        "allow_accepted_without_reference": True,
-        "allow_selection_without_reference": True,
-        "candidate_evaluations": ["ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"],
         "scoring_weights": {"performance": 0.45, "feasibility": 0.30, "repo_fit": 0.20, "novelty": 0.05},
-        **DEFAULT_PROMPTS,
+        **default_prompt_refs("engineer"),
     },
-    "builder": {
-        "s2_required": False,
-        "allow_accepted_without_reference": True,
-        "allow_selection_without_reference": True,
-        "candidate_evaluations": ["ACCEPTED", "ACCEPTED_WITHOUT_REFERENCE"],
-        "scoring_weights": {"performance": 0.40, "feasibility": 0.35, "repo_fit": 0.20, "novelty": 0.05},
-        **DEFAULT_PROMPTS,
+    "custom": {
+        "scoring_weights": {"custom_fit": 0.40, "feasibility": 0.30, "repo_fit": 0.20, "evidence": 0.10},
+        **default_prompt_refs("custom"),
     },
 }
 
@@ -125,8 +118,7 @@ DEFAULT_IDEATION_CONFIG: dict[str, Any] = {
     "default_mode": "scientist",
     "num_ideas_required": 10,
     "min_candidates_required": 1,
-    "reflection_budget": 120,
-    "early_stop_allowed": False,
+    "prompt_root": "prompts/ideation",
     "concurrency": {"max_subagents": 6},
     "modes": DEFAULT_MODE_PRESETS,
 }
@@ -159,36 +151,6 @@ def ideation_contract_path(target_repo: Path, run_id: str) -> Path:
 
 def pending_result_path(target_repo: Path, run_id: str, intent_id: str) -> Path:
     return run_logs_dir(target_repo, run_id) / "pending" / f"{intent_id}.json"
-
-
-LITERATURE_PROVIDER_CACHE_DIRS = {
-    "semantic_scholar": "semantic-scholar",
-    "openalex": "openalex",
-}
-LITERATURE_PROVIDER_LOG_DIRS = {
-    "semantic_scholar": "semantic-scholar",
-    "openalex": "openalex",
-}
-LITERATURE_PROVIDERS = frozenset({"auto", "semantic_scholar", "openalex"})
-
-
-def normalize_literature_provider(provider: str | None) -> str:
-    normalized = (provider or "auto").strip().lower().replace("-", "_")
-    if normalized not in LITERATURE_PROVIDERS:
-        raise IdeationStateError(f"invalid literature provider: {provider}")
-    return normalized
-
-
-def evidence_cache_dir(target_repo: Path, provider: str = "semantic_scholar") -> Path:
-    normalized = normalize_literature_provider(provider)
-    if normalized == "auto":
-        normalized = "semantic_scholar"
-    return ai_root(target_repo) / "evidence-cache" / LITERATURE_PROVIDER_CACHE_DIRS[normalized]
-
-
-def evidence_cache_path(target_repo: Path, query: str, limit: int, provider: str = "semantic_scholar") -> Path:
-    key = hashlib.sha256(json.dumps({"query": query.strip(), "limit": limit}, sort_keys=True).encode("utf-8")).hexdigest()[:24]
-    return evidence_cache_dir(target_repo, provider) / f"{key}.json"
 
 
 def load_payload_from_args(json_value: str | None = None, path: Path | None = None) -> dict[str, Any]:
@@ -255,6 +217,12 @@ def validate_max_subagents(value: Any) -> int:
     return value
 
 
+def validate_positive_int(value: Any, name: str) -> int:
+    if not isinstance(value, int) or value <= 0:
+        raise IdeationStateError(f"{name} must be a positive integer")
+    return value
+
+
 def choose_mode(config: dict[str, Any], requested_mode: str | None) -> str:
     ideation = config.get("ideation") if isinstance(config.get("ideation"), dict) else {}
     mode = requested_mode or config.get("strictness_mode") or ideation.get("default_mode") or "scientist"
@@ -269,10 +237,24 @@ def validate_mode_preset(config: dict[str, Any], mode: str) -> dict[str, Any]:
     preset = modes.get(mode)
     if not isinstance(preset, dict):
         raise IdeationStateError(f"missing ideation preset for mode: {mode}")
-    for key in ("idea_generation_prompt_template", "critic_prompt_template", "ranking_prompt_template"):
+    for key in ("generator_agent", "critic_agent"):
         if not isinstance(preset.get(key), str) or not preset[key].strip():
             raise IdeationStateError(f"ideation preset {mode} missing {key}")
     return preset
+
+
+def validate_ideation_prompt_files(config: dict[str, Any], mode: str) -> None:
+    preset = validate_mode_preset(config, mode)
+    root = plugin_root()
+    for key in ("generator_prompt_source", "critic_prompt_source"):
+        value = str(preset.get(key) or preset.get(key.replace("_source", "")) or "")
+        if not value:
+            raise IdeationStateError(f"ideation preset {mode} missing {key}")
+        path = root / value
+        if not path.exists():
+            raise IdeationStateError(f"missing ideation prompt file for {mode} {key}: {value}")
+        if not path.is_file() or not path.read_text().strip():
+            raise IdeationStateError(f"empty ideation prompt file for {mode} {key}: {value}")
 
 
 def frozen_config(
@@ -282,13 +264,12 @@ def frozen_config(
     *,
     num_ideas_required: int | None = None,
     min_candidates_required: int | None = None,
-    reflection_budget: int | None = None,
     max_subagents: int | None = None,
 ) -> dict[str, Any]:
     base = {
         "schema_version": 1,
         "ideation": DEFAULT_IDEATION_CONFIG,
-        "api_budgets": {"semantic_scholar": {"max_calls": 100, "max_results_per_query": 10}},
+        "api_budgets": {},
         "workspace": {"mode": "copy"},
         "dependency_plan": {"mode": "frozen", "planned_dependencies": []},
         "benchmark_contract": {"version": "ideation-v1", "command": None},
@@ -313,9 +294,11 @@ def frozen_config(
         ideation_cfg["num_ideas_required"] = num_ideas_required
     if min_candidates_required is not None:
         ideation_cfg["min_candidates_required"] = min_candidates_required
-    if reflection_budget is not None:
-        ideation_cfg["reflection_budget"] = reflection_budget
-    validate_mode_preset(merged, mode)
+    ideation_cfg.pop("reflection_budget", None)
+    ideation_cfg.pop("reflection_budget_per_idea", None)
+    ideation_cfg.pop("max_attempts_per_slot", None)
+    ideation_cfg.pop("early_stop_allowed", None)
+    validate_ideation_prompt_files(merged, mode)
     merged.update(
         {
             "schema_version": 1,
@@ -399,13 +382,18 @@ def compact_idea_payload(payload: dict[str, Any], idea_id: str, run_id: str) -> 
     if minimum_command is not None:
         minimum_command = str(minimum_command).strip() or None
     family_key = str(payload.get("family_key") or slug_key(title or hypothesis)).strip()
-    return {
+    compact = {
         "id": idea_id,
         "family_key": family_key,
         "title": title,
         "hypothesis": hypothesis,
         "unique_protocol": summarize_protocol(payload),
         "expected_metric": expected_metric,
+        "mechanism": payload.get("mechanism"),
+        "implementation_sketch": payload.get("implementation_sketch"),
+        "expected_metric_effect": payload.get("expected_metric_effect"),
+        "fit_to_research_contract": payload.get("fit_to_research_contract"),
+        "novelty_angle": payload.get("novelty_angle"),
         "smoke_runnable_now": bool(payload.get("smoke_runnable_now")),
         "requires_implementation": requires_implementation,
         "minimum_command": minimum_command,
@@ -414,6 +402,11 @@ def compact_idea_payload(payload: dict[str, Any], idea_id: str, run_id: str) -> 
         "risk_flags": risk_flags,
         "source_run_id": str(payload.get("source_run_id") or run_id),
     }
+    for aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.values():
+        for key in aliases:
+            if key in payload:
+                compact[key] = deepcopy(payload[key])
+    return compact
 
 
 def pyproject_commands(target_repo: Path) -> list[str]:
@@ -537,6 +530,83 @@ def validate_family_dedup(phase_state: dict[str, Any], candidate_id: str) -> Non
             raise IdeationStateError(f"duplicate_idea_family:{candidate_id}:{idea_id}")
 
 
+def contract_goal_type(contract: dict[str, Any]) -> str:
+    return str(contract.get("goal_type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def is_performance_contract(contract: dict[str, Any]) -> bool:
+    goal_type = contract_goal_type(contract)
+    return goal_type in PERFORMANCE_GOAL_TERMS or "performance" in goal_type
+
+
+def contract_has_baseline_reference(contract: dict[str, Any]) -> bool:
+    baseline = contract.get("baseline_reference")
+    if not isinstance(baseline, dict) or not baseline:
+        return False
+    if not has_substantive_value(baseline.get("usability")):
+        return False
+    return any(has_substantive_value(baseline.get(key)) for key in ("title", "paper", "model", "source", "citation", "url", "doi"))
+
+
+def validate_research_contract(contract: Any, *, require_performance_baseline: bool = True) -> None:
+    if not isinstance(contract, dict) or not contract:
+        raise IdeationStateError("research_contract_required")
+    missing = sorted(key for key in RESEARCH_CONTRACT_REQUIRED_FIELDS if not has_substantive_value(contract.get(key)))
+    if missing:
+        raise IdeationStateError(f"research_contract_missing_fields:{','.join(missing)}")
+    if not has_substantive_value(contract.get("success_criteria")):
+        raise IdeationStateError("research_contract_success_criteria_required")
+    if is_performance_contract(contract):
+        if require_performance_baseline and not contract_has_baseline_reference(contract):
+            raise IdeationStateError("performance_contract_baseline_reference_required")
+        if require_performance_baseline and not has_substantive_value(contract.get("benchmark_plan")):
+            raise IdeationStateError("performance_contract_benchmark_plan_required")
+        if require_performance_baseline and not has_substantive_value(contract.get("target_threshold")):
+            raise IdeationStateError("performance_contract_target_threshold_required")
+
+
+def first_substantive_value(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if has_substantive_value(value):
+            return value
+    return None
+
+
+def normalize_contract_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True).lower()
+    if isinstance(value, list):
+        return json.dumps(value, sort_keys=True).lower()
+    return str(value or "").strip().lower()
+
+
+def validate_campaign_research_contract(contract: Any) -> None:
+    validate_research_contract(contract, require_performance_baseline=True)
+    if not isinstance(contract, dict) or not is_performance_contract(contract):
+        raise IdeationStateError("campaign_research_contract_goal_type_must_be_performance")
+    missing = sorted(name for name, aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.items() if not has_substantive_value(first_substantive_value(contract, aliases)))
+    if missing:
+        raise IdeationStateError(f"campaign_research_contract_missing_fields:{','.join(missing)}")
+
+
+def run_research_contract(config: dict[str, Any]) -> dict[str, Any]:
+    contract = config.get("research_contract")
+    return contract if isinstance(contract, dict) else {}
+
+
+def validate_idea_fits_campaign(draft: dict[str, Any], campaign_contract: dict[str, Any]) -> None:
+    if not has_substantive_value(draft.get("fit_to_research_contract")):
+        raise IdeationStateError("idea_fit_to_research_contract_required")
+    for name, aliases in CAMPAIGN_CONTRACT_REQUIREMENT_GROUPS.items():
+        campaign_value = first_substantive_value(campaign_contract, aliases)
+        draft_value = first_substantive_value(draft, aliases)
+        if draft_value is None or campaign_value is None:
+            continue
+        if normalize_contract_value(draft_value) != normalize_contract_value(campaign_value):
+            raise IdeationStateError(f"idea_changes_campaign_{name}")
+
+
 def terminal_ideas(state: dict[str, Any]) -> list[dict[str, Any]]:
     values = []
     for idea in idea_states(state).values():
@@ -546,40 +616,23 @@ def terminal_ideas(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def is_researchable_idea(idea: dict[str, Any], config: dict[str, Any]) -> bool:
-    evaluation = str(idea.get("evaluation") or "").upper()
-    if evaluation == "ACCEPTED":
-        return True
-    if evaluation == "ACCEPTED_WITHOUT_REFERENCE":
-        return bool(mode_preset(config).get("allow_selection_without_reference"))
-    return False
+    return str(idea.get("evaluation") or "").upper() == "ACCEPTED"
 
 
 def researchable_candidates(state: dict[str, Any], config: dict[str, Any]) -> list[dict[str, Any]]:
     return [idea for idea in terminal_ideas(state) if is_researchable_idea(idea, config)]
 
 
-def has_literature_evidence(idea: dict[str, Any]) -> bool:
-    evidence = idea.get("literature_evidence")
-    if isinstance(evidence, list) and evidence:
-        return True
-    if isinstance(evidence, dict) and evidence:
-        return True
-    return int(idea.get("literature_search_count") or 0) > 0
-
-
-def latest_critic_matches(idea: dict[str, Any]) -> bool:
-    critic = idea.get("latest_critic")
-    if not isinstance(critic, dict):
-        return False
-    return (
-        critic.get("draft_version") == idea.get("draft_version")
-        and critic.get("idea_hash") == idea.get("idea_hash")
-    )
-
-
-def reflection_budget_exhausted(phase_state: dict[str, Any]) -> bool:
-    budget = int(phase_state.get("reflection_budget") or 0)
-    return budget > 0 and int(phase_state.get("iterations_used") or 0) >= budget
+def new_idea_slot(idea_id: str, slot_index: int) -> dict[str, Any]:
+    return {
+        "id": idea_id,
+        "slot_index": slot_index,
+        "status": "drafting",
+        "source_run_id": None,
+        "artifacts": [],
+        "created_at": utc_now(),
+        "updated_at": utc_now(),
+    }
 
 
 def next_idea_id(phase_state: dict[str, Any]) -> str:
@@ -635,87 +688,24 @@ def resolve_idea_id(phase_state: dict[str, Any], explicit_idea_id: str | None, a
     raise IdeationStateError(f"{action} requires --idea-id when multiple ideas are active")
 
 
-def terminal_attempts_complete(state: dict[str, Any]) -> bool:
-    ideas = idea_states(state)
-    attempted = int((state.get("state") or {}).get("attempted_slots") or 0)
-    if len(ideas) < attempted:
-        return False
-    return all(isinstance(idea, dict) and str(idea.get("status") or "") in TERMINAL_IDEA_STATUSES for idea in ideas.values())
-
-
 def cursor_for_state(state: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
-    if state.get("phase") != "ideation":
-        return {"next_action": None, "next_action_details": {"reason": "not ideation"}}
     phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
-    if state.get("active") is not True:
-        return {"next_action": None, "next_action_details": {"reason": f"terminal:{state.get('phase_status')}"}}
-    pending = pending_intents(phase_state)
-    if pending:
-        intent_ids = sorted(pending)[:5]
-        return {
-            "next_action": "collect_subagent_results",
-            "next_action_details": {
-                "reason": "subagent intents are pending",
-                "pending_count": len(pending),
-                "intent_ids": intent_ids,
-                "intent_id": intent_ids[0] if intent_ids else None,
-            },
-        }
-    cfg = config or {}
-    preset = mode_preset(cfg) if cfg else DEFAULT_MODE_PRESETS["scientist"]
-    ideas = phase_state.get("idea_states") if isinstance(phase_state.get("idea_states"), dict) else {}
-    active_ids = active_idea_ids(phase_state)
-    if active_ids:
-        missing = [idea_id for idea_id in active_ids if not isinstance(ideas.get(idea_id), dict)]
-        if missing:
-            return {"next_action": "start_generator_batch", "next_action_details": {"reason": "active ideas missing state", "idea_ids": missing}}
-        active_ideas = [ideas[idea_id] for idea_id in active_ids]
-        running = [idea["id"] for idea in active_ideas if str(idea.get("status") or "") in {"generating", "critic_running", "ranking_running"}]
-        if running:
-            return {"next_action": "collect_subagent_results", "next_action_details": {"reason": "active ideas have running subagents without pending intents", "idea_ids": running}}
-        needs_draft = [idea["id"] for idea in active_ideas if not isinstance(idea.get("latest_draft"), dict)]
-        if needs_draft:
-            return {"next_action": "start_generator_batch", "next_action_details": {"reason": "active ideas need drafts", "idea_ids": needs_draft, "count": len(needs_draft)}}
-        needs_s2 = [idea["id"] for idea in active_ideas if preset.get("s2_required") and not has_literature_evidence(idea)]
-        if needs_s2:
-            return {"next_action": "search_semantic_scholar", "next_action_details": {"reason": "mode requires literature evidence", "idea_ids": needs_s2, "idea_id": needs_s2[0]}}
-        needs_critic = [idea["id"] for idea in active_ideas if not latest_critic_matches(idea)]
-        if needs_critic:
-            return {"next_action": "start_critic_batch", "next_action_details": {"reason": "latest drafts need fresh critics", "idea_ids": needs_critic, "count": len(needs_critic)}}
-        revise_or_reject = []
-        ready = []
-        for idea in active_ideas:
-            verdict = str(idea["latest_critic"].get("verdict") or "").upper()
-            if verdict in {"REVISE", "REJECT"}:
-                revise_or_reject.append(idea["id"])
-            else:
-                ready.append(idea["id"])
-        if revise_or_reject:
-            return {"next_action": "revise_or_reject_batch", "next_action_details": {"reason": "critic requested revision or rejection", "idea_ids": revise_or_reject}}
-        if ready:
-            return {"next_action": "finalize_ready_ideas", "next_action_details": {"reason": "critic accepted ready ideas", "idea_ids": ready}}
-    required = int(phase_state.get("num_ideas_required") or 0)
-    attempted = int(phase_state.get("attempted_slots") or 0)
-    early_stop = bool(phase_state.get("early_stop_allowed"))
-    candidates = researchable_candidates(state, cfg) if cfg else []
-    if attempted < required and not reflection_budget_exhausted(phase_state) and not (early_stop and candidates):
-        limit = max_subagents(cfg) if cfg else 6
-        count = min(limit, required - attempted)
-        return {"next_action": "start_generator_batch", "next_action_details": {"reason": "idea slots remain", "next_idea_id": next_idea_id(phase_state), "count": count, "concurrency_limit": limit}}
-    if not terminal_attempts_complete(state):
-        return {"next_action": "revise_or_reject_batch", "next_action_details": {"reason": "attempted ideas must reach terminal states"}}
-    ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
-    if candidates and ranking.get("status") != "final":
-        return {"next_action": "rank_candidates", "next_action_details": {"reason": "researchable candidates need ranking", "candidate_count": len(candidates)}}
-    return {"next_action": "complete_or_exhaust", "next_action_details": {"reason": "slots or budget exhausted", "candidate_count": len(candidates)}}
+    return {
+        "next_action": None,
+        "next_action_details": {
+            "reason": "goal_driven_ideation",
+            "pending_count": len(pending_intents(phase_state)),
+            "selected_count": len(researchable_candidates(state, config or {})),
+        },
+    }
 
 
 def update_cursor(state: dict[str, Any], config: dict[str, Any] | None = None) -> None:
-    cursor = cursor_for_state(state, config)
     phase_state = state.setdefault("state", {})
     orchestrator = phase_state.setdefault("orchestrator", {})
-    orchestrator["next_action"] = cursor.get("next_action")
-    orchestrator["next_action_details"] = cursor.get("next_action_details") or {}
+    orchestrator["control"] = "create_goal"
+    orchestrator.pop("next_action", None)
+    orchestrator.pop("next_action_details", None)
     orchestrator["last_checkpoint_at"] = utc_now()
 
 
@@ -734,13 +724,12 @@ def public_idea_record(idea: dict[str, Any]) -> dict[str, Any]:
         "selected": idea.get("selected") is True,
         "researchable": idea.get("researchable") is True,
         "source_run_id": idea.get("source_run_id"),
-        "reflection_count": int(idea.get("reflection_count") or 0),
-        "literature_search_count": int(idea.get("literature_search_count") or 0),
         "draft_version": idea.get("draft_version"),
         "idea_hash": idea.get("idea_hash"),
         "manual_selection_only": idea.get("manual_selection_only"),
         "draft_ref": idea.get("draft_ref"),
-        "critic_ref": (idea.get("latest_critic") or {}).get("critic_ref") if isinstance(idea.get("latest_critic"), dict) else None,
+        "critic_refs": idea.get("critic_refs") if isinstance(idea.get("critic_refs"), list) else [],
+        "selector_refs": idea.get("selector_refs") if isinstance(idea.get("selector_refs"), list) else [],
         "risks": latest_draft.get("risk_flags", []),
         "normalized": compact,
         "upstream": compact,
@@ -756,6 +745,13 @@ def sync_ideas_archive(target_repo: Path, run_id: str, state: dict[str, Any]) ->
 def write_payload_log(target_repo: Path, run_id: str, subdir: str, filename: str, payload: dict[str, Any]) -> Path:
     path = run_logs_dir(target_repo, run_id) / subdir / filename
     atomic_write_json(path, payload)
+    return path
+
+
+def write_text_log(target_repo: Path, run_id: str, subdir: str, filename: str, text: str) -> Path:
+    path = run_logs_dir(target_repo, run_id) / subdir / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
     return path
 
 
@@ -780,22 +776,25 @@ def start_ideation(
     mode: str | None = None,
     num_ideas_required: int | None = None,
     min_candidates_required: int | None = None,
-    reflection_budget: int | None = None,
     max_subagents: int | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if load_loop_state(target_repo, run_id):
         raise IdeationStateError(f"ideation run already exists: {run_id}")
     if not prompt.strip():
         raise IdeationStateError("ideation prompt is required")
+    payload = payload or {}
+    research_contract = payload.get("research_contract")
+    validate_campaign_research_contract(research_contract)
     cfg = frozen_config(
         target_repo,
         run_id,
         mode,
         num_ideas_required=num_ideas_required,
         min_candidates_required=min_candidates_required,
-        reflection_budget=reflection_budget,
         max_subagents=max_subagents,
     )
+    cfg["research_contract"] = deepcopy(research_contract)
     ideation_cfg = cfg["ideation"]
     initial = {
         "prompt": prompt,
@@ -803,8 +802,6 @@ def start_ideation(
         "orchestrator": {"role": "main_codex_session", "iteration": 0},
         "num_ideas_required": int(ideation_cfg.get("num_ideas_required") or 10),
         "min_candidates_required": int(ideation_cfg.get("min_candidates_required") or 1),
-        "reflection_budget": int(ideation_cfg.get("reflection_budget") or 10),
-        "early_stop_allowed": bool(ideation_cfg.get("early_stop_allowed")),
         "attempted_slots": 0,
         "iterations_used": 0,
         "active_idea_ids": [],
@@ -812,8 +809,9 @@ def start_ideation(
         "intents": {},
         "batches": [],
         "idea_states": {},
-        "ranking": {"status": "pending"},
-        "handoff": {"status": "pending", "candidates": [], "selected_idea_id": None},
+        "artifacts": {"idea_batches": [], "critic_feedback": [], "selector_reports": [], "final_schema": None},
+        "research_contract": deepcopy(research_contract),
+        "handoff": {"status": "pending", "candidates": []},
     }
     state = start_phase(target_repo, run_id, "ideation", initial)
     update_cursor(state, cfg)
@@ -830,33 +828,31 @@ def resume_ideation(target_repo: Path, run_id: str, *, prompt: bool = False) -> 
     cfg = current_config(target_repo, run_id)
     update_cursor(state, cfg)
     atomic_write_json(run_dir(target_repo, run_id) / "loop-state.json", state)
-    cursor = cursor_for_state(state, cfg)
-    append_journal_event(target_repo, run_id, "state_transition", details={"command": "ideation resume", **cursor})
-    response = {"run_id": run_id, **cursor, "phase_status": state.get("phase_status")}
+    phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
+    summary = cursor_for_state(state, cfg)["next_action_details"]
+    append_journal_event(target_repo, run_id, "state_transition", details={"command": "ideation resume", **summary})
+    response = {"run_id": run_id, "phase_status": state.get("phase_status"), "summary": summary}
     if prompt:
-        response["prompt"] = orchestration_prompt(state, cfg, cursor)
+        response["prompt"] = orchestration_prompt(state, cfg)
     return response
 
 
-def orchestration_prompt(state: dict[str, Any], config: dict[str, Any], cursor: dict[str, Any]) -> str:
+def orchestration_prompt(state: dict[str, Any], config: dict[str, Any]) -> str:
     phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
     preset = mode_preset(config)
-    next_action = cursor.get("next_action")
     lines = [
         "You are the main Codex ideation orchestrator for AI Scientist.",
         "Do not run a Python ideation orchestrator or nested codex exec.",
         f"Run id: {state.get('run_id')}",
         f"Mode: {config.get('strictness_mode')}",
+        f"Run-owned research contract: {json.dumps(config.get('research_contract') or {}, sort_keys=True)}",
         f"Shared contract: {ideation_contract_path(Path(str(config.get('target_repo'))), str(state.get('run_id')))}",
-        f"Next action: {next_action}",
-        f"Details: {json.dumps(cursor.get('next_action_details') or {}, sort_keys=True)}",
+        "Control: create_goal owns continuation. Use the ideation skill workflow.",
+        f"Pending intents: {len(pending_intents(phase_state))}",
+        f"Selected ideas: {len(researchable_candidates(state, config))}",
+        f"Generator agent_type: {preset['generator_agent']}",
+        f"Critic agent_type: {preset['critic_agent']}",
     ]
-    if next_action == "start_generator_batch":
-        lines.append(preset["idea_generation_prompt_template"])
-    elif next_action == "start_critic_batch":
-        lines.append(preset["critic_prompt_template"])
-    elif next_action == "rank_candidates":
-        lines.append(preset["ranking_prompt_template"])
     lines.append(f"Original topic: {phase_state.get('prompt')}")
     return "\n".join(lines)
 
@@ -866,7 +862,7 @@ def allocate_idea_if_needed(phase_state: dict[str, Any], idea_id: str | None = N
     if idea_id:
         if idea_id not in ideas:
             phase_state["attempted_slots"] = int(phase_state.get("attempted_slots") or 0) + 1
-            ideas[idea_id] = {"id": idea_id, "slot_index": int(phase_state["attempted_slots"]), "status": "generating"}
+            ideas[idea_id] = new_idea_slot(idea_id, int(phase_state["attempted_slots"]))
         add_active_idea(phase_state, idea_id)
         return idea_id
     active = active_idea_ids(phase_state)
@@ -880,7 +876,7 @@ def allocate_idea_if_needed(phase_state: dict[str, Any], idea_id: str | None = N
         raise IdeationStateError("no idea slots remain")
     new_id = next_idea_id(phase_state)
     phase_state["attempted_slots"] = attempted + 1
-    ideas[new_id] = {"id": new_id, "slot_index": phase_state["attempted_slots"], "status": "generating", "source_run_id": None}
+    ideas[new_id] = new_idea_slot(new_id, int(phase_state["attempted_slots"]))
     add_active_idea(phase_state, new_id)
     return new_id
 
@@ -893,7 +889,7 @@ def allocate_new_idea(phase_state: dict[str, Any]) -> str:
         raise IdeationStateError("no idea slots remain")
     new_id = f"idea-{attempted + 1:03d}"
     phase_state["attempted_slots"] = attempted + 1
-    ideas[new_id] = {"id": new_id, "slot_index": phase_state["attempted_slots"], "status": "generating", "source_run_id": None}
+    ideas[new_id] = new_idea_slot(new_id, int(phase_state["attempted_slots"]))
     add_active_idea(phase_state, new_id)
     return new_id
 
@@ -936,11 +932,11 @@ def start_intent_batch(
         raise IdeationStateError(f"invalid intent role: {role}")
     cfg = current_config(target_repo, run_id)
     limit = max_subagents(cfg)
+    requested_count = count
     batch_holder: dict[str, Any] = {}
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
-        ideas = phase_state.setdefault("idea_states", {})
         pending = pending_intents(phase_state)
         if pending:
             raise IdeationStateError("subagent intents are already pending")
@@ -961,15 +957,13 @@ def start_intent_batch(
             if len(idea_ids) > limit:
                 raise IdeationStateError(f"batch size {len(idea_ids)} exceeds max_subagents {limit}")
             resolved_idea_ids = list(idea_ids)
-        elif role == "ranker":
-            if count not in (None, 1) or idea_ids:
-                raise IdeationStateError("ranker intent is single-agent")
-            candidates = researchable_candidates(state, cfg)
-            if not candidates:
-                raise IdeationStateError("ranker intent requires at least one researchable candidate")
-            if not terminal_attempts_complete(state) or active_idea_ids(phase_state):
-                raise IdeationStateError("ranker intent requires all generator/critic/revision work to be terminal")
-            resolved_idea_ids = [None]
+        elif role in {"selector", "schema_builder"}:
+            role_count = requested_count if requested_count is not None else len(idea_ids or []) or 1
+            if role_count <= 0:
+                raise IdeationStateError(f"{role} batch requires --count > 0")
+            if role_count > limit:
+                raise IdeationStateError(f"batch size {role_count} exceeds max_subagents {limit}")
+            resolved_idea_ids = list(idea_ids or [f"{role}-{index + 1:03d}" for index in range(role_count)])
         else:
             raise IdeationStateError(f"invalid intent role: {role}")
         batch_id = next_batch_id(phase_state)
@@ -985,18 +979,6 @@ def start_intent_batch(
         created: list[dict[str, Any]] = []
         intents = phase_state.setdefault("intents", {})
         for resolved_idea_id in resolved_idea_ids:
-            draft_version = None
-            idea_hash = None
-            if role == "critic":
-                idea = ideas.get(resolved_idea_id)
-                if not isinstance(idea, dict) or not isinstance(idea.get("latest_draft"), dict):
-                    raise IdeationStateError("critic intent requires an existing latest draft")
-                draft_version = idea.get("draft_version")
-                idea_hash = idea.get("idea_hash")
-                idea["status"] = "critic_running"
-                add_active_idea(phase_state, str(resolved_idea_id))
-            elif role == "generator":
-                ideas[str(resolved_idea_id)]["status"] = "generating"
             intent_id = next_intent_id(phase_state)
             result_path = pending_result_path(target_repo, run_id, intent_id)
             result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1009,8 +991,6 @@ def start_intent_batch(
                 "result_path": str(result_path),
                 "status": "running",
                 "agent_thread_id": agent_thread_id,
-                "draft_version": draft_version,
-                "idea_hash": idea_hash,
                 "started_at": utc_now(),
                 "completed_at": None,
                 "reason": None,
@@ -1040,7 +1020,7 @@ def start_intent(target_repo: Path, run_id: str, role: str, *, idea_id: str | No
             phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
             idea_id = resolve_idea_id(phase_state, None, "critic intent")
         return start_intent_batch(target_repo, run_id, role, idea_ids=[idea_id], agent_thread_id=agent_thread_id)["intents"][0]
-    if role == "ranker":
+    if role in {"selector", "schema_builder"}:
         return start_intent_batch(target_repo, run_id, role, count=1, agent_thread_id=agent_thread_id)["intents"][0]
     raise IdeationStateError(f"invalid intent role: {role}")
 
@@ -1088,17 +1068,23 @@ def complete_intent(target_repo: Path, run_id: str, payload: dict[str, Any], *, 
         payload_path = Path(path_value)
         if not payload_path.exists() or not payload_path.read_text().strip():
             raise IdeationStateError(f"pending result_path is empty: {payload_path}")
-        payload = load_payload_from_args(path=payload_path)
+        text = payload_path.read_text()
+        try:
+            parsed = json.loads(text)
+            if not isinstance(parsed, dict):
+                parsed = {"value": parsed}
+            payload = parsed
+        except json.JSONDecodeError:
+            payload = {"text": text}
     role = str(pending.get("role") or "")
     if role == "generator":
-        idea_payload = payload.get("idea") if isinstance(payload.get("idea"), dict) else payload
-        return record_draft(target_repo, run_id, idea_payload, idea_id=pending.get("idea_id"), intent_id=pending.get("intent_id"))
+        return record_draft(target_repo, run_id, payload, idea_id=pending.get("idea_id"), intent_id=pending.get("intent_id"))
     if role == "critic":
-        verdict_payload = payload.get("critic") if isinstance(payload.get("critic"), dict) else payload
-        return record_critic(target_repo, run_id, verdict_payload, idea_id=pending.get("idea_id"), intent_id=pending.get("intent_id"))
-    if role == "ranker":
-        ranking_payload = payload.get("ranking") if isinstance(payload.get("ranking"), dict) else payload
-        return finalize_ranking(target_repo, run_id, ranking_payload)
+        return record_feedback(target_repo, run_id, payload, "critic_feedback", idea_id=pending.get("idea_id"), intent_id=pending.get("intent_id"))
+    if role == "selector":
+        return record_feedback(target_repo, run_id, payload, "selector_reports", idea_id=pending.get("idea_id"), intent_id=pending.get("intent_id"))
+    if role == "schema_builder":
+        return record_feedback(target_repo, run_id, payload, "schema_builder_reports", idea_id=pending.get("idea_id"), intent_id=pending.get("intent_id"))
     raise IdeationStateError(f"unknown pending intent role: {role}")
 
 
@@ -1116,15 +1102,6 @@ def cancel_intent(target_repo: Path, run_id: str, reason: str, *, intent_id: str
         if isinstance(resolved_intent_id, str):
             phase_state.setdefault("intents", {}).setdefault(resolved_intent_id, {}).update(pending)
             pending_map.pop(resolved_intent_id, None)
-        idea_id = pending.get("idea_id")
-        if isinstance(idea_id, str):
-            idea = phase_state.setdefault("idea_states", {}).get(idea_id)
-            if isinstance(idea, dict):
-                idea["status"] = "error"
-                idea["evaluation"] = "ERROR"
-                idea["error"] = reason
-                idea["updated_at"] = utc_now()
-            remove_active_idea(phase_state, idea_id)
         batch_id = pending.get("batch_id")
         refresh_batch_status(phase_state, batch_id if isinstance(batch_id, str) else None)
         increment_iteration(phase_state)
@@ -1146,691 +1123,139 @@ def normalize_idea_payload(payload: dict[str, Any], idea_id: str, run_id: str) -
     return idea
 
 
+def payload_ideas(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(payload.get("idea"), dict):
+        return [payload["idea"]]
+    for key in ("ideas", "idea_batch", "final_ideas", "selected_ideas"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    if any(has_substantive_value(payload.get(key)) for key in IDEA_OUTPUT_SCHEMA["required"]):
+        return [payload]
+    return []
+
+
 def record_draft(target_repo: Path, run_id: str, payload: dict[str, Any], *, idea_id: str | None = None, intent_id: str | None = None) -> dict[str, Any]:
     cfg = current_config(target_repo, run_id)
-    contract = load_ideation_contract(target_repo, run_id)
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
         resolved_id = allocate_idea_if_needed(phase_state, idea_id)
         ideas = phase_state.setdefault("idea_states", {})
         idea = ideas.setdefault(resolved_id, {"id": resolved_id})
-        normalized = normalize_idea_payload(payload, resolved_id, run_id)
-        compact = compact_idea_payload(normalized, resolved_id, run_id)
-        validate_minimum_command(compact, contract)
         draft_version = int(idea.get("draft_version") or 0) + 1
-        idea_hash = data_hash(compact)
-        draft_ref = write_payload_log(target_repo, run_id, "drafts", f"{resolved_id}-v{draft_version:02d}.json", normalized)
-        idea.update(
-            {
-                "id": resolved_id,
-                "source_run_id": run_id,
-                "status": "drafted",
-                "evaluation": None,
-                "latest_draft": compact,
-                "draft_version": draft_version,
-                "idea_hash": idea_hash,
-                "draft_ref": str(draft_ref),
-                "reflection_count": int(idea.get("reflection_count") or 0) + 1,
-                "updated_at": utc_now(),
-            }
-        )
+        if "text" in payload and len(payload) == 1:
+            draft_ref = write_text_log(target_repo, run_id, "drafts", f"{resolved_id}-v{draft_version:02d}.md", str(payload["text"]))
+            normalized = {"text": payload["text"]}
+            compact = {}
+        else:
+            normalized = deepcopy(payload)
+            compact_candidates = payload_ideas(payload)
+            compact = compact_idea_payload(normalize_idea_payload(compact_candidates[0], resolved_id, run_id), resolved_id, run_id) if compact_candidates else {}
+            draft_ref = write_payload_log(target_repo, run_id, "drafts", f"{resolved_id}-v{draft_version:02d}.json", normalized)
+        idea_hash = data_hash(normalized)
+        idea.update({
+            "id": resolved_id,
+            "source_run_id": run_id,
+            "status": "drafted",
+            "latest_draft": compact,
+            "draft_version": draft_version,
+            "idea_hash": idea_hash,
+            "draft_ref": str(draft_ref),
+            "updated_at": utc_now(),
+        })
         idea.setdefault("drafts", []).append({"draft_version": draft_version, "idea_hash": idea_hash, "draft_ref": str(draft_ref)})
-        idea.pop("latest_critic", None)
+        phase_state.setdefault("artifacts", {}).setdefault("idea_batches", []).append(str(draft_ref))
         clear_pending_intent_for_role(phase_state, "generator", resolved_id, intent_id=intent_id)
         increment_iteration(phase_state)
         update_cursor(state, cfg)
 
-    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "idea draft", "idea_id": idea_id}, mutator)
+    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "ideation intent complete", "role": "generator", "idea_id": idea_id}, mutator)
     sync_ideas_archive(target_repo, run_id, updated)
     return updated
 
 
-def start_revision(target_repo: Path, run_id: str, idea_id: str, reason: str | None = None) -> dict[str, Any]:
+def record_feedback(target_repo: Path, run_id: str, payload: dict[str, Any], artifact_key: str, *, idea_id: str | None = None, intent_id: str | None = None) -> dict[str, Any]:
     cfg = current_config(target_repo, run_id)
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
-        ideas = phase_state.setdefault("idea_states", {})
-        idea = ideas.get(idea_id)
-        if not isinstance(idea, dict):
-            raise IdeationStateError(f"unknown idea_id: {idea_id}")
-        if str(idea.get("status") or "") in TERMINAL_IDEA_STATUSES:
-            raise IdeationStateError("terminal idea cannot be revised")
-        add_active_idea(phase_state, idea_id)
-        idea["status"] = "revision_requested"
-        idea["revision_reason"] = reason
-        idea["updated_at"] = utc_now()
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "idea revise-start", "idea_id": idea_id, "reason": reason}, mutator)
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
-
-
-def validate_critic_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    verdict = str(payload.get("verdict") or "").upper()
-    if verdict not in {"ACCEPT", "ACCEPT_WITHOUT_REFERENCE", "REVISE", "REJECT"}:
-        raise IdeationStateError("critic verdict must be ACCEPT, ACCEPT_WITHOUT_REFERENCE, REVISE, or REJECT")
-    score = payload.get("score")
-    if not has_int_score(score):
-        raise IdeationStateError("critic score must be an integer 0..100")
-    critic = deepcopy(payload)
-    critic["verdict"] = verdict
-    return critic
-
-
-def record_critic(target_repo: Path, run_id: str, payload: dict[str, Any], *, idea_id: str | None = None, intent_id: str | None = None) -> dict[str, Any]:
-    cfg = current_config(target_repo, run_id)
-    contract = load_ideation_contract(target_repo, run_id)
-    critic = validate_critic_payload(payload)
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        resolved_id = resolve_idea_id(phase_state, idea_id, "critic-record")
-        ideas = phase_state.setdefault("idea_states", {})
-        idea = ideas.get(resolved_id)
-        if not isinstance(idea, dict):
-            raise IdeationStateError(f"unknown idea_id: {resolved_id}")
-        if not isinstance(idea.get("latest_draft"), dict):
-            raise IdeationStateError("critic-record requires a latest draft")
-        if intent_id:
-            pending = resolve_pending_intent(phase_state, intent_id)
-            if pending.get("draft_version") != idea.get("draft_version") or pending.get("idea_hash") != idea.get("idea_hash"):
-                raise IdeationStateError("critic_stale_for_current_idea")
-        if critic["verdict"] in {"ACCEPT", "ACCEPT_WITHOUT_REFERENCE"}:
-            draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-            validate_minimum_command(draft, contract)
-        critic["idea_id"] = resolved_id
-        critic["draft_version"] = idea.get("draft_version")
-        critic["idea_hash"] = idea.get("idea_hash")
-        critic["recorded_at"] = utc_now()
-        critic_ref = write_payload_log(target_repo, run_id, "critics", f"{resolved_id}-v{int(idea.get('draft_version') or 0):02d}.json", critic)
-        critic["critic_ref"] = str(critic_ref)
-        idea["latest_critic"] = critic
-        idea["score"] = critic["score"]
-        verdict = critic["verdict"]
-        if verdict == "REVISE":
-            idea["status"] = "needs_revision"
-        elif verdict == "REJECT":
-            idea["status"] = "critic_rejected"
-        elif verdict == "ACCEPT_WITHOUT_REFERENCE":
-            idea["status"] = "critic_accepted_without_reference"
+        resolved_id = str(idea_id or "batch")
+        pending = resolve_pending_intent(phase_state, intent_id)
+        role = str(pending.get("role") or artifact_key)
+        subdir = "critics" if artifact_key == "critic_feedback" else "selectors" if artifact_key == "selector_reports" else "schema"
+        index = len(phase_state.setdefault("artifacts", {}).setdefault(artifact_key, [])) + 1
+        if "text" in payload and len(payload) == 1:
+            ref = write_text_log(target_repo, run_id, subdir, f"{resolved_id}-{index:02d}.md", str(payload["text"]))
         else:
-            idea["status"] = "critic_accepted"
-        idea["updated_at"] = utc_now()
-        clear_pending_intent_for_role(phase_state, "critic", resolved_id, intent_id=intent_id)
+            ref = write_payload_log(target_repo, run_id, subdir, f"{resolved_id}-{index:02d}.json", payload)
+        phase_state.setdefault("artifacts", {}).setdefault(artifact_key, []).append(str(ref))
+        if artifact_key == "schema_builder_reports":
+            phase_state.setdefault("artifacts", {})["final_schema"] = str(ref)
+        clear_pending_intent_for_role(phase_state, role, idea_id, intent_id=intent_id)
         increment_iteration(phase_state)
         update_cursor(state, cfg)
 
-    updated = mutate_loop_state(target_repo, run_id, "critic_event", {"command": "idea critic-record", "idea_id": idea_id, "verdict": critic["verdict"]}, mutator)
+    updated = mutate_loop_state(target_repo, run_id, "subagent_event", {"command": "ideation intent complete", "role": artifact_key, "idea_id": idea_id}, mutator)
     sync_ideas_archive(target_repo, run_id, updated)
     return updated
 
 
-def normalize_semantic_scholar_evidence(payload: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data")
-    if data is None:
-        data = []
-    if not isinstance(data, list):
-        raise ValueError("Semantic Scholar response field data must be a list")
-    normalized = dict(payload)
-    normalized["data"] = data
-    return normalized
-
-
-def semantic_scholar_request(query: str, limit: int) -> dict[str, Any]:
-    params = urllib.parse.urlencode({"query": query, "limit": str(limit), "fields": "title,year,citationCount,venue,url,authors"})
-    request = urllib.request.Request(f"https://api.semanticscholar.org/graph/v1/paper/search?{params}")
-    api_key = os.environ.get("S2_API_KEY")
-    if api_key:
-        request.add_header("x-api-key", api_key)
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed public API URL.
-        payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("Semantic Scholar response must be a JSON object")
-    return normalize_semantic_scholar_evidence(payload)
-
-
-def openalex_abstract(inverted_index: Any) -> str:
-    if not isinstance(inverted_index, dict):
-        return ""
-    positions: list[tuple[int, str]] = []
-    for word, indexes in inverted_index.items():
-        if not isinstance(indexes, list):
-            continue
-        for index in indexes:
-            if isinstance(index, int):
-                positions.append((index, str(word)))
-    return " ".join(word for _, word in sorted(positions))
-
-
-def normalize_openalex_work(work: dict[str, Any]) -> dict[str, Any]:
-    authorships = work.get("authorships") if isinstance(work.get("authorships"), list) else []
-    authors: list[str] = []
-    for authorship in authorships:
-        if not isinstance(authorship, dict):
-            continue
-        author = authorship.get("author") if isinstance(authorship.get("author"), dict) else {}
-        name = author.get("display_name")
-        if name:
-            authors.append(str(name))
-    primary_location = work.get("primary_location") if isinstance(work.get("primary_location"), dict) else {}
-    source = primary_location.get("source") if isinstance(primary_location.get("source"), dict) else {}
-    best_oa_location = work.get("best_oa_location") if isinstance(work.get("best_oa_location"), dict) else {}
-    paper = {
-        "title": work.get("title") or work.get("display_name") or "Unknown title",
-        "year": work.get("publication_year"),
-        "citationCount": work.get("cited_by_count") or 0,
-        "venue": source.get("display_name") or "Unknown venue",
-        "url": primary_location.get("landing_page_url") or best_oa_location.get("landing_page_url") or work.get("doi") or work.get("id") or "",
-        "authors": authors,
-        "openalex_id": work.get("id"),
-    }
-    doi = work.get("doi")
-    if doi:
-        paper["doi"] = doi
-    abstract = openalex_abstract(work.get("abstract_inverted_index"))
-    if abstract:
-        paper["abstract"] = abstract
-    return {key: value for key, value in paper.items() if value is not None}
-
-
-def normalize_openalex_evidence(payload: dict[str, Any]) -> dict[str, Any]:
-    results = payload.get("results")
-    if results is None:
-        results = []
-    if not isinstance(results, list):
-        raise ValueError("OpenAlex response field results must be a list")
-    return {"data": [normalize_openalex_work(work) for work in results if isinstance(work, dict)]}
-
-
-def openalex_request(query: str, limit: int) -> dict[str, Any]:
-    params = urllib.parse.urlencode({"search": query, "per-page": str(limit)})
-    request = urllib.request.Request(f"https://api.openalex.org/works?{params}")
-    request.add_header("User-Agent", "ai-scientist-codex/0.1 (mailto:openalex@example.com)")
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed public API URL.
-        payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("OpenAlex response must be a JSON object")
-    return normalize_openalex_evidence(payload)
-
-
-def literature_failure_reason(exc: BaseException) -> str:
-    if isinstance(exc, urllib.error.HTTPError):
-        return f"HTTP {exc.code}: {exc.reason}"
-    return f"{type(exc).__name__}: {exc}"
-
-
-def provider_live_request(provider: str, query: str, limit: int) -> dict[str, Any]:
-    if provider == "semantic_scholar":
-        return semantic_scholar_request(query, limit)
-    if provider == "openalex":
-        return openalex_request(query, limit)
-    raise IdeationStateError(f"invalid live literature provider: {provider}")
-
-
-def provider_evidence(target_repo: Path, query: str, limit: int, provider: str, evidence_payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    normalized_provider = normalize_literature_provider(provider)
-    if normalized_provider == "auto":
-        raise IdeationStateError("provider_evidence requires a concrete provider")
-    cache_path = evidence_cache_path(target_repo, query, limit, normalized_provider)
-    if cache_path.exists():
-        cached = load_json_if_exists(cache_path)
-        if isinstance(cached, dict):
-            evidence = cached.get("evidence") if isinstance(cached.get("evidence"), dict) else cached
-            if isinstance(evidence, dict):
-                return {"evidence": evidence, "provenance": "cache", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
-    if evidence_payload is not None:
-        atomic_write_json(cache_path, {"query": query, "limit": limit, "provider": normalized_provider, "provenance": "precomputed", "evidence": evidence_payload, "cached_at": utc_now()})
-        return {"evidence": evidence_payload, "provenance": "precomputed", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
-    evidence = provider_live_request(normalized_provider, query, limit)
-    atomic_write_json(cache_path, {"query": query, "limit": limit, "provider": normalized_provider, "provenance": "live", "evidence": evidence, "cached_at": utc_now()})
-    return {"evidence": evidence, "provenance": "live", "cache_path": cache_path, "provider": normalized_provider, "fallback_from": None, "fallback_reason": None}
-
-
-def literature_evidence(target_repo: Path, query: str | None, limit: int, evidence_payload: dict[str, Any] | None = None, provider: str = "auto") -> dict[str, Any]:
-    selected_provider = normalize_literature_provider(provider)
-    clean_query = (query or "").strip()
-    if not clean_query and evidence_payload is None:
-        raise IdeationStateError("literature query is required without evidence payload")
-    if evidence_payload is not None:
-        concrete_provider = "semantic_scholar" if selected_provider == "auto" else selected_provider
-        return provider_evidence(target_repo, clean_query, limit, concrete_provider, evidence_payload)
-    if selected_provider != "auto":
-        return provider_evidence(target_repo, clean_query, limit, selected_provider)
-    try:
-        return provider_evidence(target_repo, clean_query, limit, "semantic_scholar")
-    except Exception as s2_exc:
-        fallback_reason = literature_failure_reason(s2_exc)
-        try:
-            result = provider_evidence(target_repo, clean_query, limit, "openalex")
-        except Exception as openalex_exc:
-            raise IdeationStateError(f"literature search failed for semantic_scholar ({fallback_reason}) and openalex ({literature_failure_reason(openalex_exc)})") from openalex_exc
-        result["fallback_from"] = "semantic_scholar"
-        result["fallback_reason"] = fallback_reason
-        return result
-
-
-def semantic_scholar_evidence(target_repo: Path, query: str | None, limit: int, evidence_payload: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, Path | None]:
-    result = literature_evidence(target_repo, query, limit, evidence_payload, provider="semantic_scholar")
-    return result["evidence"], result["provenance"], result["cache_path"]
-
-
-def literature_result_count(evidence: dict[str, Any]) -> int | None:
-    if isinstance(evidence.get("data"), list):
-        return len(evidence["data"])
-    if isinstance(evidence.get("results"), list):
-        return len(evidence["results"])
-    return None
-
-
-def literature_log_dir(provider: str) -> str:
-    return LITERATURE_PROVIDER_LOG_DIRS[normalize_literature_provider(provider)]
-
-
-def literature_evidence_record(query: str | None, evidence_ref: Path, result: dict[str, Any]) -> dict[str, Any]:
-    evidence = result["evidence"]
-    return {
-        "provider": result["provider"],
-        "query": query,
-        "evidence_ref": str(evidence_ref),
-        "cache_ref": str(result["cache_path"]) if result.get("cache_path") is not None else None,
-        "provenance": result["provenance"],
-        "fallback_from": result.get("fallback_from"),
-        "fallback_reason": result.get("fallback_reason"),
-        "result_count": literature_result_count(evidence),
-    }
-
-
-def record_semantic_scholar_search(
-    target_repo: Path,
-    run_id: str,
-    *,
-    idea_id: str | None = None,
-    query: str | None = None,
-    evidence_payload: dict[str, Any] | None = None,
-    limit: int = 10,
-    provider: str = "auto",
-) -> dict[str, Any]:
-    selected_provider = normalize_literature_provider(provider)
-    cfg = current_config(target_repo, run_id)
-    result = literature_evidence(target_repo, query, limit, evidence_payload, selected_provider)
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        resolved_id = resolve_idea_id(phase_state, idea_id, "literature search")
-        ideas = phase_state.setdefault("idea_states", {})
-        idea = ideas.get(resolved_id)
-        if not isinstance(idea, dict):
-            raise IdeationStateError(f"unknown idea_id: {resolved_id}")
-        evidence_ref = write_payload_log(target_repo, run_id, literature_log_dir(result["provider"]), f"{resolved_id}-{int(idea.get('literature_search_count') or 0) + 1:02d}.json", result["evidence"])
-        evidence_record = literature_evidence_record(query, evidence_ref, result)
-        idea.setdefault("literature_evidence", []).append(evidence_record)
-        latest_draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-        latest_draft.setdefault("evidence_refs", [])
-        if isinstance(latest_draft["evidence_refs"], list):
-            latest_draft["evidence_refs"].append(str(evidence_ref))
-        idea["literature_search_count"] = int(idea.get("literature_search_count") or 0) + 1
-        idea["updated_at"] = utc_now()
-        phase_state["s2_query_count"] = int(phase_state.get("s2_query_count") or 0) + 1
-        increment_iteration(phase_state)
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(
-        target_repo,
-        run_id,
-        "api_call",
-        {
-            "command": "idea search-semantic-scholar",
-            "idea_id": idea_id,
-            "query": query,
-            "service": result["provider"],
-            "provider": result["provider"],
-            "requested_provider": selected_provider,
-            "provenance": result["provenance"],
-            "fallback_from": result.get("fallback_from"),
-            "fallback_reason": result.get("fallback_reason"),
-        },
-        mutator,
-    )
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
-
-
-def record_evidence_batch(
-    target_repo: Path,
-    run_id: str,
-    *,
-    idea_ids: list[str],
-    queries: list[str],
-    evidence_payload: dict[str, Any] | None = None,
-    limit: int = 10,
-    provider: str = "auto",
-) -> dict[str, Any]:
-    if not idea_ids or not queries or len(idea_ids) != len(queries):
-        raise IdeationStateError("record-evidence-batch requires equal non-empty --idea-ids and --queries")
-    selected_provider = normalize_literature_provider(provider)
-    cfg = current_config(target_repo, run_id)
-    state = ensure_active_ideation_state(target_repo, run_id)
-    phase_state = state.setdefault("state", {})
-    ideas = phase_state.setdefault("idea_states", {})
-    missing = [idea_id for idea_id in idea_ids if not isinstance(ideas.get(idea_id), dict)]
-    if missing:
-        raise IdeationStateError(f"unknown idea_ids: {', '.join(missing)}")
-    gathered: list[dict[str, Any]] = []
-    for idea_id, query in zip(idea_ids, queries, strict=True):
-        result = literature_evidence(target_repo, query, limit, evidence_payload, selected_provider)
-        gathered.append({"idea_id": idea_id, "query": query, "result": result})
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        ideas = phase_state.setdefault("idea_states", {})
-        for item in gathered:
-            idea = ideas[item["idea_id"]]
-            result = item["result"]
-            evidence_ref = write_payload_log(target_repo, run_id, literature_log_dir(result["provider"]), f"{item['idea_id']}-{int(idea.get('literature_search_count') or 0) + 1:02d}.json", result["evidence"])
-            idea.setdefault("literature_evidence", []).append(literature_evidence_record(item["query"], evidence_ref, result))
-            latest_draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-            latest_draft.setdefault("evidence_refs", [])
-            if isinstance(latest_draft["evidence_refs"], list):
-                latest_draft["evidence_refs"].append(str(evidence_ref))
-            idea["literature_search_count"] = int(idea.get("literature_search_count") or 0) + 1
-            idea["updated_at"] = utc_now()
-        phase_state["s2_query_count"] = int(phase_state.get("s2_query_count") or 0) + len(gathered)
-        increment_iteration(phase_state)
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(
-        target_repo,
-        run_id,
-        "api_call",
-        {
-            "command": "idea record-evidence-batch",
-            "idea_ids": idea_ids,
-            "queries": queries,
-            "service": "literature",
-            "requested_provider": selected_provider,
-            "providers": [item["result"]["provider"] for item in gathered],
-        },
-        mutator,
-    )
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
-
-def finalization_decision(idea: dict[str, Any], preset: dict[str, Any]) -> tuple[str, str]:
-    if not latest_critic_matches(idea):
-        raise IdeationStateError("critic_stale_for_current_idea")
-    critic = idea["latest_critic"]
-    verdict = str(critic.get("verdict") or "").upper()
-    if verdict == "REVISE":
-        raise IdeationStateError("critic requested revision")
-    if verdict == "REJECT":
-        raise IdeationStateError("critic rejected idea; call idea reject or idea revise-start")
-    if verdict == "ACCEPT_WITHOUT_REFERENCE":
-        if not preset.get("allow_accepted_without_reference"):
-            raise IdeationStateError("mode does not allow ACCEPTED_WITHOUT_REFERENCE")
-        return "ACCEPTED_WITHOUT_REFERENCE", "accepted_without_reference"
-    if preset.get("s2_required") and not has_literature_evidence(idea):
-        if preset.get("allow_accepted_without_reference"):
-            return "ACCEPTED_WITHOUT_REFERENCE", "accepted_without_reference"
-        raise IdeationStateError("literature_evidence_required")
-    return "ACCEPTED", "accepted"
-
-
-def apply_finalized_idea(phase_state: dict[str, Any], idea: dict[str, Any], evaluation: str, status: str, preset: dict[str, Any]) -> None:
-    critic = idea["latest_critic"]
-    idea["status"] = status
-    idea["evaluation"] = evaluation
-    idea["score"] = critic["score"]
-    idea["rank"] = None
-    idea["manual_selection_only"] = evaluation == "ACCEPTED_WITHOUT_REFERENCE" and not preset.get("allow_selection_without_reference")
+def apply_finalized_idea(phase_state: dict[str, Any], idea: dict[str, Any], compact: dict[str, Any], rank: int) -> None:
+    idea["latest_draft"] = compact
+    idea["idea_hash"] = data_hash(compact)
+    idea["status"] = "selected"
+    idea["evaluation"] = "ACCEPTED"
+    idea["score"] = compact.get("score") if isinstance(compact.get("score"), int) else 80
+    idea["rank"] = rank
+    idea["selected"] = True
+    idea["researchable"] = True
     idea["updated_at"] = utc_now()
     remove_active_idea(phase_state, str(idea["id"]))
-    key = "accepted_without_reference_count" if evaluation == "ACCEPTED_WITHOUT_REFERENCE" else "accepted_count"
-    phase_state[key] = int(phase_state.get(key) or 0) + 1
+    phase_state["accepted_count"] = int(phase_state.get("accepted_count") or 0) + 1
 
 
-def finalize_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None) -> dict[str, Any]:
+def finalize_ready(target_repo: Path, run_id: str, *, idea_ids: list[str] | None = None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = current_config(target_repo, run_id)
-    preset = mode_preset(cfg)
     contract = load_ideation_contract(target_repo, run_id)
+    campaign_contract = run_research_contract(cfg)
+    final_payload = payload or {}
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
-        resolved_id = resolve_idea_id(phase_state, idea_id, "finalize")
         ideas = phase_state.setdefault("idea_states", {})
-        idea = ideas.get(resolved_id)
-        if not isinstance(idea, dict):
-            raise IdeationStateError(f"unknown idea_id: {resolved_id}")
-        draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-        validate_minimum_command(draft, contract)
-        validate_family_dedup(phase_state, resolved_id)
-        evaluation, status = finalization_decision(idea, preset)
-        apply_finalized_idea(phase_state, idea, evaluation, status, preset)
-        increment_iteration(phase_state)
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "idea finalize", "idea_id": idea_id}, mutator)
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
-
-
-def finalize_ready(target_repo: Path, run_id: str, *, idea_ids: list[str] | None = None) -> dict[str, Any]:
-    cfg = current_config(target_repo, run_id)
-    preset = mode_preset(cfg)
-    contract = load_ideation_contract(target_repo, run_id)
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        active_ids = active_idea_ids(phase_state)
-        resolved_ids = list(idea_ids or active_ids)
-        if not resolved_ids:
-            raise IdeationStateError("finalize-ready requires active ready ideas or --idea-ids")
-        ideas = phase_state.setdefault("idea_states", {})
-        decisions: list[tuple[str, str, str]] = []
+        final_ideas = payload_ideas(final_payload)
+        if not final_ideas and idea_ids:
+            final_ideas = [
+                ideas[item].get("latest_draft")
+                for item in idea_ids
+                if isinstance(ideas.get(item), dict) and isinstance(ideas[item].get("latest_draft"), dict)
+            ]
+        if not final_ideas:
+            raise IdeationStateError("finalize-ready requires final idea schema via --json/--json-file or --idea-ids with schema drafts")
+        selected: list[tuple[str, dict[str, Any]]] = []
         batch_keys: dict[tuple[Any, Any, Any], str] = {}
-        for resolved_id in resolved_ids:
-            idea = ideas.get(resolved_id)
-            if not isinstance(idea, dict):
-                raise IdeationStateError(f"unknown idea_id: {resolved_id}")
-            draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-            validate_minimum_command(draft, contract)
-            validate_family_dedup(phase_state, resolved_id)
-            dedup_key = (draft.get("family_key"), draft.get("unique_protocol"), draft.get("expected_metric"))
+        for index, item in enumerate(final_ideas, start=1):
+            idea_id = str(item.get("id") or f"idea-{index:03d}")
+            compact = compact_idea_payload(normalize_idea_payload(item, idea_id, run_id), idea_id, run_id)
+            validate_minimum_command(compact, contract)
+            validate_idea_fits_campaign(compact, campaign_contract)
+            dedup_key = (compact.get("family_key"), compact.get("unique_protocol"), compact.get("expected_metric"))
             if dedup_key in batch_keys:
-                raise IdeationStateError(f"duplicate_idea_family:{resolved_id}:{batch_keys[dedup_key]}")
-            batch_keys[dedup_key] = resolved_id
-            evaluation, status = finalization_decision(idea, preset)
-            decisions.append((resolved_id, evaluation, status))
-        for resolved_id, evaluation, status in decisions:
-            apply_finalized_idea(phase_state, ideas[resolved_id], evaluation, status, preset)
+                raise IdeationStateError(f"duplicate_idea_family:{idea_id}:{batch_keys[dedup_key]}")
+            batch_keys[dedup_key] = idea_id
+            selected.append((idea_id, compact))
+        for rank, (idea_id, compact) in enumerate(selected, start=1):
+            idea = ideas.setdefault(idea_id, new_idea_slot(idea_id, rank))
+            apply_finalized_idea(phase_state, idea, compact, rank)
+        final_ref = write_payload_log(target_repo, run_id, "final", "selected-ideas.json", {"ideas": [item for _, item in selected]})
+        phase_state.setdefault("artifacts", {})["final_schema"] = str(final_ref)
         increment_iteration(phase_state)
         update_cursor(state, cfg)
 
     updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "ideation finalize-ready", "idea_ids": idea_ids}, mutator)
     sync_ideas_archive(target_repo, run_id, updated)
     return updated
-
-
-def reject_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None, reason: str = "rejected") -> dict[str, Any]:
-    cfg = current_config(target_repo, run_id)
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        resolved_id = resolve_idea_id(phase_state, idea_id, "reject")
-        ideas = phase_state.setdefault("idea_states", {})
-        idea = ideas.get(resolved_id)
-        if not isinstance(idea, dict):
-            raise IdeationStateError(f"unknown idea_id: {resolved_id}")
-        critic = idea.get("latest_critic") if isinstance(idea.get("latest_critic"), dict) else {}
-        idea["status"] = "rejected"
-        idea["evaluation"] = "REJECTED"
-        idea["rejection_reason"] = reason
-        idea["score"] = critic.get("score") if has_int_score(critic.get("score")) else idea.get("score")
-        idea["rank"] = None
-        idea["updated_at"] = utc_now()
-        phase_state["rejected_count"] = int(phase_state.get("rejected_count") or 0) + 1
-        remove_active_idea(phase_state, resolved_id)
-        increment_iteration(phase_state)
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "idea reject", "idea_id": idea_id, "reason": reason}, mutator)
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
-
-
-def exhaust_idea(target_repo: Path, run_id: str, *, idea_id: str | None = None, reason: str = "reflection_budget_exhausted") -> dict[str, Any]:
-    return reject_idea(target_repo, run_id, idea_id=idea_id, reason=reason)
-
-
-def ranking_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    items = payload.get("ranked_ideas") or payload.get("candidates") or payload.get("ideas")
-    if not isinstance(items, list) or not items:
-        raise IdeationStateError("ranking payload requires ranked_ideas/candidates list")
-    normalized: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            raise IdeationStateError("ranking items must be objects")
-        idea_id = item.get("idea_id") or item.get("id")
-        if not isinstance(idea_id, str) or not idea_id:
-            raise IdeationStateError("ranking item missing idea_id")
-        score = item.get("score")
-        if not has_int_score(score):
-            raise IdeationStateError(f"ranking item {idea_id} missing integer score 0..100")
-        normalized.append({**item, "idea_id": idea_id, "score": score})
-    return normalized
-
-
-def deterministic_ranking_payload(state: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
-    candidates = researchable_candidates(state, cfg)
-    if not candidates:
-        raise IdeationStateError("deterministic ranking requires at least one researchable candidate")
-    weights = mode_preset(cfg).get("scoring_weights")
-    if not isinstance(weights, dict):
-        weights = {}
-    family_counts: dict[str, int] = {}
-    scored: list[dict[str, Any]] = []
-    for idea in candidates:
-        draft = idea.get("latest_draft") if isinstance(idea.get("latest_draft"), dict) else {}
-        family = str(draft.get("family_key") or idea.get("id"))
-        family_counts[family] = family_counts.get(family, 0) + 1
-        rubric = draft.get("rubric_scores") if isinstance(draft.get("rubric_scores"), dict) else {}
-        weighted = 0.0
-        weight_total = 0.0
-        for key, weight in weights.items():
-            value = rubric.get(key)
-            if isinstance(value, (int, float)):
-                weighted += float(value) * float(weight)
-                weight_total += float(weight)
-        base_score = weighted / weight_total if weight_total > 0 else float(idea.get("score") or 0)
-        penalties = 0.0
-        if draft.get("smoke_runnable_now") is not True:
-            penalties += 10.0
-        penalties += min(20.0, 5.0 * len(as_string_list(draft.get("requires_implementation"))))
-        if not has_literature_evidence(idea):
-            penalties += 8.0
-        score = max(0, min(100, round(base_score - penalties)))
-        scored.append(
-            {
-                "idea_id": idea["id"],
-                "score": int(score),
-                "score_components": {"base": round(base_score, 2), "penalties": round(penalties, 2), "rubric_scores": rubric},
-                "rationale": "Deterministic weighted rubric ranking with runnable, implementation, duplicate, and evidence penalties.",
-                "risk_flags": draft.get("risk_flags", []),
-                "family_key": family,
-            }
-        )
-    seen_family: dict[str, int] = {}
-    for item in scored:
-        family = item["family_key"]
-        seen_family[family] = seen_family.get(family, 0) + 1
-        if family_counts.get(family, 0) > 1 and seen_family[family] > 1:
-            item["score"] = max(0, int(item["score"]) - 15)
-            item["score_components"]["duplicate_family_penalty"] = 15
-    scored.sort(key=lambda item: (-int(item["score"]), str(item["idea_id"])))
-    for index, item in enumerate(scored, start=1):
-        item["rank"] = index
-    return {"selected_idea_id": scored[0]["idea_id"], "ranked_ideas": scored, "rationale": "deterministic_default"}
-
-
-def rank_candidates(target_repo: Path, run_id: str, *, mode: str = "deterministic") -> dict[str, Any] | dict[str, Any]:
-    if mode == "agent":
-        return {"intent": start_intent(target_repo, run_id, "ranker")}
-    if mode != "deterministic":
-        raise IdeationStateError("rank-candidates mode must be deterministic or agent")
-    state = ensure_active_ideation_state(target_repo, run_id)
-    cfg = current_config(target_repo, run_id)
-    payload = deterministic_ranking_payload(state, cfg)
-    finalize_ranking(target_repo, run_id, payload)
-    return {"ranking": payload}
-
-
-def finalize_ranking(target_repo: Path, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    cfg = current_config(target_repo, run_id)
-    items = ranking_items(payload)
-    selected = payload.get("selected_idea_id") or payload.get("selected") or payload.get("selected_id")
-    if not isinstance(selected, str) or not selected:
-        raise IdeationStateError("ranking payload requires selected_idea_id")
-
-    def mutator(state: dict[str, Any]) -> None:
-        phase_state = state.setdefault("state", {})
-        ideas = phase_state.setdefault("idea_states", {})
-        terminal_ids = {idea["id"] for idea in terminal_ideas(state)}
-        ranked_ids = {item["idea_id"] for item in items}
-        missing = sorted(terminal_ids - ranked_ids)
-        if missing:
-            raise IdeationStateError(f"ranking missing terminal ideas: {', '.join(missing)}")
-        plain_rank = 1
-        for item in items:
-            idea = ideas.get(item["idea_id"])
-            if not isinstance(idea, dict):
-                raise IdeationStateError(f"ranking references unknown idea: {item['idea_id']}")
-            idea["score"] = item["score"]
-            idea["score_components"] = item.get("score_components") or item.get("components")
-            idea["rationale"] = item.get("rationale")
-            idea["risk_flags"] = item.get("risk_flags")
-            if idea.get("evaluation") == "ACCEPTED":
-                idea["rank"] = int(item.get("rank") or plain_rank)
-                plain_rank += 1
-            else:
-                idea["rank"] = None
-            idea["researchable"] = is_researchable_idea(idea, cfg)
-            idea["selected"] = idea["id"] == selected
-        candidates = researchable_candidates(state, cfg)
-        candidate_ids = {idea["id"] for idea in candidates}
-        if selected not in candidate_ids:
-            raise IdeationStateError("selected_idea_id must be researchable under frozen mode config")
-        phase_state["ranking"] = {
-            "status": "final",
-            "selected_idea_id": selected,
-            "ranked_at": utc_now(),
-            "rationale": payload.get("rationale"),
-            "ranking_ref": str(write_payload_log(target_repo, run_id, "ranking", "ranking-final.json", payload)),
-        }
-        phase_state["handoff"] = {
-            "status": "ready",
-            "selected_idea_id": selected,
-            "candidates": [
-                {
-                    "idea_id": idea["id"],
-                    "evaluation": idea.get("evaluation"),
-                    "score": idea.get("score"),
-                    "rank": idea.get("rank"),
-                    "idea_hash": idea.get("idea_hash"),
-                }
-                for idea in candidates
-            ],
-            "config_snapshot": {"strictness_mode": cfg.get("strictness_mode"), "mode_preset": mode_preset(cfg)},
-        }
-        clear_pending_intent_for_role(phase_state, "ranker")
-        increment_iteration(phase_state)
-        update_cursor(state, cfg)
-
-    updated = mutate_loop_state(target_repo, run_id, "selection", {"command": "ideation rank-finalize", "selected_idea_id": selected}, mutator)
-    sync_ideas_archive(target_repo, run_id, updated)
-    return updated
-
 
 def completion_audit(state: dict[str, Any], config: dict[str, Any], status: str) -> dict[str, Any]:
     phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
@@ -1840,7 +1265,7 @@ def completion_audit(state: dict[str, Any], config: dict[str, Any], status: str)
         "status": status,
         "prompt_to_artifact_checklist": [
             f"Attempted {phase_state.get('attempted_slots')} ideation slots",
-            f"Recorded {len(terminal_ideas(state))} terminal idea records",
+            f"Recorded {len(terminal_ideas(state))} selected idea records",
             f"Identified {len(candidates)} researchable candidates",
         ],
         "verification_evidence": [
@@ -1852,45 +1277,36 @@ def completion_audit(state: dict[str, Any], config: dict[str, Any], status: str)
 
 
 def final_summary(state: dict[str, Any]) -> dict[str, Any]:
-    attempted = []
-    for idea in terminal_ideas(state):
-        attempted.append(
-            {
-                "idea_id": idea.get("id"),
-                "evaluation": idea.get("evaluation"),
-                "score": idea.get("score"),
-                "reason": idea.get("rejection_reason") or idea.get("exhaustion_reason"),
-                "critic_verdict": (idea.get("latest_critic") or {}).get("verdict") if isinstance(idea.get("latest_critic"), dict) else None,
-            }
-        )
+    attempted = [{"idea_id": idea.get("id"), "evaluation": idea.get("evaluation"), "score": idea.get("score")} for idea in terminal_ideas(state)]
     return {"attempted_ideas": attempted, "reason": "no researchable candidate was produced"}
 
 
-def complete_ideation(target_repo: Path, run_id: str, *, budget_exhausted: bool = False) -> dict[str, Any]:
+def complete_ideation(target_repo: Path, run_id: str) -> dict[str, Any]:
     cfg = current_config(target_repo, run_id)
+    validate_campaign_research_contract(cfg.get("research_contract"))
 
     def mutator(state: dict[str, Any]) -> None:
         phase_state = state.setdefault("state", {})
         if pending_intents(phase_state):
             raise IdeationStateError("pending subagent intent blocks completion")
-        if active_idea_ids(phase_state):
-            raise IdeationStateError("active idea blocks completion")
-        if not terminal_attempts_complete(state):
-            raise IdeationStateError("all attempted ideas must be terminal before completion")
-        required = int(phase_state.get("num_ideas_required") or 0)
-        attempted = int(phase_state.get("attempted_slots") or 0)
-        if attempted < required and not phase_state.get("early_stop_allowed") and not budget_exhausted:
-            raise IdeationStateError("not all requested idea slots have been attempted")
         candidates = researchable_candidates(state, cfg)
         if len(candidates) < int(phase_state.get("min_candidates_required") or 1):
             raise IdeationStateError("not enough researchable candidates")
-        ranking = phase_state.get("ranking") if isinstance(phase_state.get("ranking"), dict) else {}
-        if ranking.get("status") != "final":
-            raise IdeationStateError("ranking must be finalized before completion")
-        selected = ranking.get("selected_idea_id")
-        if not isinstance(selected, str) or selected not in {idea["id"] for idea in candidates}:
-            raise IdeationStateError("selected idea must be researchable")
-        status = "COMPLETED_BUDGET_EXHAUSTED" if budget_exhausted else "COMPLETED"
+        phase_state["handoff"] = {
+            "status": "ready",
+            "idea_batch": [idea["id"] for idea in candidates],
+            "candidates": [
+                {
+                    "idea_id": idea["id"],
+                    "evaluation": idea.get("evaluation"),
+                    "score": idea.get("score"),
+                    "idea_hash": idea.get("idea_hash"),
+                }
+                for idea in candidates
+            ],
+            "research_contract_hash": data_hash(cfg.get("research_contract")),
+        }
+        status = "COMPLETED"
         state["active"] = False
         state["phase_status"] = status
         state["run_outcome"] = status
@@ -1898,7 +1314,7 @@ def complete_ideation(target_repo: Path, run_id: str, *, budget_exhausted: bool 
         state["completion_audit"] = completion_audit(state, cfg, status)
         update_cursor(state, cfg)
 
-    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "ideation complete", "budget_exhausted": budget_exhausted}, mutator)
+    updated = mutate_loop_state(target_repo, run_id, "state_transition", {"command": "ideation complete"}, mutator)
     sync_ideas_archive(target_repo, run_id, updated)
     append_journal_event(target_repo, run_id, "validation", details={"gate": "ideation_to_research", "exit_code": 0, "validator_exit_code": 0, "command": "ideation complete"})
     append_journal_event(target_repo, run_id, "handoff", details={"gate": "ideation_to_research", "approved": True, "exit_code": 0, "validator_exit_code": 0, "reason": "ideation handoff ready"})
@@ -1910,16 +1326,12 @@ def exhaust_ideation(target_repo: Path, run_id: str) -> dict[str, Any]:
     cfg = current_config(target_repo, run_id)
     state = ensure_active_ideation_state(target_repo, run_id)
     if researchable_candidates(state, cfg):
-        return complete_ideation(target_repo, run_id, budget_exhausted=True)
+        return complete_ideation(target_repo, run_id)
 
     def mutator(new_state: dict[str, Any]) -> None:
         phase_state = new_state.setdefault("state", {})
         if pending_intents(phase_state):
             raise IdeationStateError("pending subagent intent blocks exhaustion")
-        if active_idea_ids(phase_state):
-            raise IdeationStateError("active idea blocks exhaustion; reject or exhaust the idea first")
-        if not terminal_attempts_complete(new_state):
-            raise IdeationStateError("all attempted ideas must be terminal before exhaustion")
         new_state["active"] = False
         new_state["phase_status"] = "EXHAUSTED_NO_CANDIDATE"
         new_state["run_outcome"] = "EXHAUSTED_NO_CANDIDATE"
@@ -1962,260 +1374,3 @@ def cancel_ideation(target_repo: Path, run_id: str, reason: str) -> dict[str, An
     sync_ideas_archive(target_repo, run_id, updated)
     set_active_run(target_repo, run_id, "ideation", "cancelled")
     return updated
-
-
-# Legacy hook-driven ideation compatibility. The current control plane above is
-# batch-intent based; these helpers keep older hooks/tests importable.
-def ai_dir(target_repo: Path) -> Path:
-    return ai_root(target_repo)
-
-
-def read_json(path: Path) -> Any:
-    return json.loads(path.read_text())
-
-
-def write_json(path: Path, payload: dict[str, Any] | list[Any]) -> None:
-    atomic_write_json(path, payload)
-
-
-def append_jsonl(path: Path, record: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, sort_keys=True) + "\n")
-
-
-def append_journal(target_repo: Path, run_id: str, event_type: str, **details: Any) -> None:
-    append_jsonl(run_dir(target_repo, run_id) / "journal.jsonl", {"timestamp": utc_now(), "event_type": event_type, **details})
-
-
-def filesystem_snapshot(target_repo: Path) -> dict[str, Any]:
-    files: dict[str, Any] = {}
-    for path in target_repo.rglob("*"):
-        if ".ai-scientist" in path.parts or path.is_dir():
-            continue
-        rel = str(path.relative_to(target_repo))
-        stat = path.stat()
-        files[rel] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
-    return {"files": files}
-
-
-def diff_snapshot(target_repo: Path, baseline: dict[str, Any]) -> list[str]:
-    before = baseline.get("files") if isinstance(baseline.get("files"), dict) else {}
-    after = filesystem_snapshot(target_repo).get("files", {})
-    changed = set(before) ^ set(after)
-    for rel, info in before.items():
-        if rel in after and after[rel] != info:
-            changed.add(rel)
-    return sorted(changed)
-
-
-def legacy_state_path(target_repo: Path, run_id: str) -> Path:
-    return run_dir(target_repo, run_id) / "ideation-state.json"
-
-
-def save_state(target_repo: Path, state: dict[str, Any]) -> None:
-    atomic_write_json(legacy_state_path(target_repo, state["run_id"]), state)
-
-
-def is_ideation_command(prompt: str) -> bool:
-    text = prompt.strip().lower()
-    return text.startswith("/ideate") or text.startswith("$ai-scientist ideate") or text.startswith("ai-scientist: ideate")
-
-
-def extract_prompt(prompt: str) -> str:
-    text = prompt.strip()
-    for prefix in ("/ideate", "$ai-scientist ideate", "ai-scientist: ideate"):
-        if text.lower().startswith(prefix):
-            return text[len(prefix):].strip()
-    return text
-
-
-def initialize_ideation(
-    target_repo: Path,
-    prompt: str,
-    *,
-    run_id: str = "ideation",
-    target_num_ideas: int | None = None,
-    codex_thread_id: str | None = None,
-    turn_id: str | None = None,
-    max_stop_continuations: int = 12,
-    max_repeated_block_count: int = 3,
-) -> dict[str, Any]:
-    target_repo = target_repo.resolve()
-    current_run = run_dir(target_repo, run_id)
-    current_run.mkdir(parents=True, exist_ok=True)
-    (ai_dir(target_repo) / "state").mkdir(parents=True, exist_ok=True)
-    cfg = frozen_config(target_repo, run_id, None, num_ideas_required=target_num_ideas)
-    atomic_write_json(config_path(target_repo, run_id), cfg)
-    atomic_write_json(current_run / "filesystem-baseline.json", filesystem_snapshot(target_repo))
-    atomic_write_json(current_run / "ideas.json", {"schema_version": 1, "run_id": run_id, "ideas": [], "updated_at": utc_now()})
-    atomic_write_json(ai_dir(target_repo) / "logs" / run_id / "ideation-run.json", {"run_id": run_id, "started_at": utc_now(), "prompt": prompt})
-    state = {
-        "run_id": run_id,
-        "status": "active",
-        "strictness_mode": cfg["strictness_mode"],
-        "prompt": prompt,
-        "current_idea_id": "idea-001",
-        "reflection_round": 0,
-        "target_num_ideas": int(target_num_ideas or cfg["ideation"].get("num_ideas_required") or 10),
-        "max_stop_continuations": max_stop_continuations,
-        "stop_continuations": 0,
-        "max_repeated_block_count": max_repeated_block_count,
-        "block_counts": {},
-        "next_action": {"type": "propose"},
-        "finalized_ideas": [],
-        "skipped_ideas": [],
-        "codex_thread_id": codex_thread_id,
-        "turn_id": turn_id,
-    }
-    save_state(target_repo, state)
-    atomic_write_json(ai_dir(target_repo) / "state" / "active-ideation.json", {"run_id": run_id, "state_file": f".ai-scientist/runs/{run_id}/ideation-state.json"})
-    set_active_run(target_repo, run_id, "ideation", "active")
-    return state
-
-
-def load_active_state(target_repo: Path) -> dict[str, Any] | None:
-    pointer = load_json_if_exists(ai_dir(target_repo) / "state" / "active-ideation.json")
-    if not isinstance(pointer, dict) or not isinstance(pointer.get("state_file"), str):
-        return None
-    state = load_json_if_exists(target_repo / pointer["state_file"])
-    return state if isinstance(state, dict) else None
-
-
-def next_instruction(state: dict[str, Any]) -> str:
-    return (
-        f"AI Scientist ideation run {state.get('run_id')} is active. "
-        f"Next action: {state.get('next_action', {}).get('type', 'continue')}. "
-        "Use SearchSemanticScholar when literature evidence is needed."
-    )
-
-
-def register_stop_block(target_repo: Path, state: dict[str, Any], reason: str) -> dict[str, Any]:
-    counts = state.setdefault("block_counts", {})
-    counts[reason] = int(counts.get(reason) or 0) + 1
-    state["last_block_reason"] = reason
-    if counts[reason] > int(state.get("max_repeated_block_count") or 3):
-        state["status"] = "blocked"
-        state["reason"] = "repeated_stop_hook_block"
-        state["next_user_action_required"] = True
-    save_state(target_repo, state)
-    return state
-
-
-def register_stop_continuation(target_repo: Path, state: dict[str, Any]) -> dict[str, Any]:
-    state["stop_continuations"] = int(state.get("stop_continuations") or 0) + 1
-    if state["stop_continuations"] > int(state.get("max_stop_continuations") or 12):
-        state["status"] = "blocked"
-        state["reason"] = "max_stop_continuations_exceeded"
-        state["next_user_action_required"] = True
-    save_state(target_repo, state)
-    return state
-
-
-def parse_action_text(text: str) -> dict[str, Any]:
-    if "ACTION:" not in text:
-        raise ValueError("missing ACTION block")
-    action_part = text.split("ACTION:", 1)[1].strip()
-    action = action_part.splitlines()[0].strip()
-    arguments: dict[str, Any] = {}
-    if "ARGUMENTS:" in text:
-        raw_args = text.split("ARGUMENTS:", 1)[1].strip()
-        arguments = json.loads(raw_args) if raw_args else {}
-    return {"action": action, "arguments": arguments}
-
-
-def record_action(target_repo: Path, state: dict[str, Any], text: str, payload: dict[str, Any]) -> tuple[dict[str, Any], Path]:
-    actions_dir = run_dir(target_repo, state["run_id"]) / "actions"
-    turn_id = str(payload.get("turn_id") or "turn")
-    path = actions_dir / f"{turn_id}-0001.json"
-    record = {"text": text, "parsed_action": parse_action_text(text), "recorded_at": utc_now()}
-    atomic_write_json(path, record)
-    state["last_action_file"] = str(path.relative_to(run_dir(target_repo, state["run_id"])))
-    save_state(target_repo, state)
-    return state, path
-
-
-def mark_blocked(target_repo: Path, state: dict[str, Any], reason: str) -> dict[str, Any]:
-    state["status"] = "blocked"
-    state["reason"] = reason
-    state["next_user_action_required"] = True
-    save_state(target_repo, state)
-    return state
-
-
-def snapshot_reflection(target_repo: Path, state: dict[str, Any], text: str) -> None:
-    write_payload_log(target_repo, state["run_id"], "reflections", f"{state.get('current_idea_id', 'idea')}-{int(state.get('reflection_round') or 0):02d}.json", {"text": text})
-
-
-def save_draft(target_repo: Path, state: dict[str, Any], idea: dict[str, Any]) -> tuple[dict[str, Any], Path]:
-    path = write_payload_log(target_repo, state["run_id"], "drafts", f"{state.get('current_idea_id', 'idea-001')}-legacy.json", idea)
-    state["latest_draft"] = idea
-    state["draft_ref"] = str(path)
-    save_state(target_repo, state)
-    return state, path
-
-
-def advance_after_search(target_repo: Path, state: dict[str, Any], cache_path: Path) -> dict[str, Any]:
-    run_root = run_dir(target_repo, state["run_id"])
-    state["last_search_file"] = str(cache_path.relative_to(run_root)) if cache_path.is_relative_to(run_root) else str(cache_path)
-    state["reflection_round"] = int(state.get("reflection_round") or 0) + 1
-    state["next_action"] = {"type": "reflect_or_finalize"}
-    save_state(target_repo, state)
-    append_journal_event(target_repo, state["run_id"], "api_call", details={"service": "semantic_scholar", "cache_file": state["last_search_file"]})
-    return state
-
-
-def add_finalized_idea(target_repo: Path, state: dict[str, Any], idea: dict[str, Any]) -> dict[str, Any]:
-    finalized = deepcopy(idea)
-    finalized.setdefault("id", state.get("current_idea_id", "idea-001"))
-    finalized.setdefault("status", "accepted")
-    finalized.setdefault("evaluation", "ACCEPTED")
-    finalized.setdefault("score", 80)
-    finalized.setdefault("rank", len(state.get("finalized_ideas") or []) + 1)
-    finalized.setdefault("reflection_count", max(1, int(state.get("reflection_round") or 0)))
-    finalized.setdefault("literature_search_count", 1 if state.get("last_search_file") else 0)
-    finalized.setdefault("researchable", True)
-    state.setdefault("finalized_ideas", []).append(finalized)
-    state["status"] = "ready_to_finalize"
-    state["next_action"] = {"type": "finalize"}
-    cfg = current_config(target_repo, state["run_id"])
-    loop_state = {
-        "schema_version": 1,
-        "run_id": state["run_id"],
-        "phase": "ideation",
-        "active": False,
-        "phase_status": "COMPLETED",
-        "run_outcome": "COMPLETED",
-        "completed_at": utc_now(),
-        "state": {
-            "num_ideas_required": len(state["finalized_ideas"]),
-            "attempted_slots": len(state["finalized_ideas"]),
-            "min_candidates_required": 1,
-            "active_idea_ids": [],
-            "pending_intents": {},
-            "ranking": {"status": "final", "selected_idea_id": finalized["id"]},
-            "handoff": {"status": "ready", "selected_idea_id": finalized["id"]},
-            "idea_states": {item["id"]: item for item in state["finalized_ideas"]},
-        },
-        "completion_audit": completion_audit(
-            {
-                "run_id": state["run_id"],
-                "state": {
-                    "attempted_slots": len(state["finalized_ideas"]),
-                    "idea_states": {item["id"]: item for item in state["finalized_ideas"]},
-                },
-            },
-            cfg,
-            "COMPLETED",
-        ),
-    }
-    atomic_write_json(run_dir(target_repo, state["run_id"]) / "loop-state.json", loop_state)
-    sync_ideas_archive(target_repo, state["run_id"], loop_state)
-    save_state(target_repo, state)
-    return state
-
-
-def skip_current_idea(target_repo: Path, state: dict[str, Any], reason: str) -> dict[str, Any]:
-    state.setdefault("skipped_ideas", []).append({"id": state.get("current_idea_id"), "reason": reason})
-    save_state(target_repo, state)
-    return state
