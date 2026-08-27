@@ -38,7 +38,7 @@ Use this skill for the explicit run-level review phase after research-loop artif
 
 ## Workflow
 
-1. Read `.ai-scientist/config.json`, `run-status.json`, node evidence, and `journal.json`.
+1. Read `.ai-scientist/config.json`, node evidence, and `journal.jsonl`.
 2. Confirm benchmark/split was not changed unless explicitly part of setup.
 3. Confirm no train/test leakage and no deceptive metric selection.
 4. Compare the best accepted node to the baseline and check the contract's scientific acceptance criteria.

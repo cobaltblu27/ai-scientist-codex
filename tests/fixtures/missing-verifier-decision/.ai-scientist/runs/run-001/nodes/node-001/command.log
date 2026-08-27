@@ -1,2 +1,0 @@
-python train.py --experiment node-001
-exit_code=0

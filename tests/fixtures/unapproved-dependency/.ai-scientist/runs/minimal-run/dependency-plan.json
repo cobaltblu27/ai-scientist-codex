@@ -1,8 +1,0 @@
-{
-  "planned_dependencies": [
-    {
-      "name": "numpy",
-      "status": "pending"
-    }
-  ]
-}

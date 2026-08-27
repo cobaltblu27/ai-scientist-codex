@@ -1,7 +1,0 @@
-{
-  "status": "pass",
-  "evidence": [
-    "dedupe clean",
-    "no label leakage"
-  ]
-}

@@ -13,7 +13,6 @@ from core.state import (
     open_resource_queue_ids,
 )
 
-MODES = {"scientist", "engineer", "custom"}
 REQUIRED_CONTRACT_KEYS = {
     "goal_type",
     "primary_hypothesis",
@@ -74,12 +73,8 @@ def pick_run(root: Path, run_id: str | None) -> Path:
 def check_config(root: Path, run: Path) -> dict[str, Any]:
     cfg_path = run / "config.json"
     cfg = load_json(cfg_path if cfg_path.exists() else root / "config.json")
-    if cfg.get("strictness_mode") not in MODES:
-        raise ValidationError("config.json strictness_mode must be scientist, engineer, or custom")
     if not cfg.get("target_repo"):
         raise ValidationError("config.json target_repo is required")
-    if cfg.get("strictness_mode") == "custom" and not cfg.get("custom_criteria"):
-        raise ValidationError("custom mode requires custom_criteria")
     return cfg
 
 def check_loop_completion(root: Path, run: Path, expected_phase: str) -> None:
@@ -117,8 +112,6 @@ def check_research_loop_state(root: Path, run: Path) -> None:
     phase_state = loop_state.get("state")
     if not isinstance(phase_state, dict):
         raise ValidationError("loop-state.json state must be an object")
-    if phase_state.get("mode") != cfg.get("strictness_mode"):
-        raise ValidationError("loop-state.json mode must match config.json strictness_mode")
     if campaign_mode:
         if not isinstance(phase_state.get("idea_batch"), list) or not phase_state["idea_batch"]:
             raise ValidationError("campaign loop-state requires idea_batch")
@@ -175,7 +168,7 @@ def check_review_to_writeup(root: Path, run: Path) -> None:
     review = load_json(run / "review" / "structured-review.json")
     verdict = review.get("verdict")
     verdict_obj = verdict if isinstance(verdict, dict) else {}
-    for key in ["verdict", "leakage", "split_integrity", "baseline_comparison", "strictness_mode_criteria"]:
+    for key in ["verdict", "leakage", "split_integrity", "baseline_comparison"]:
         if key not in review and key not in verdict_obj:
             raise ValidationError(f"structured review missing {key}")
     decision = verdict_obj.get("decision", verdict)

@@ -1,2 +1,0 @@
-python train.py --baseline
-exit_code=0

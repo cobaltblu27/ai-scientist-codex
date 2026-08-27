@@ -1,3 +1,0 @@
-{"event": "enqueue", "node_id": "node-001", "action": "improve"}
-{"event": "start", "node_id": "node-001", "action": "improve"}
-{"event": "finish", "node_id": "node-001", "action": "improve", "status": "completed"}

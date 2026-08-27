@@ -27,7 +27,6 @@ absolute interpreter path. Do not assume a specific environment manager.
   - [Step 3: Review the run](#step-3-review-the-run)
   - [Step 4: Write the final report](#step-4-write-the-final-report)
 - [Artifact contract](#artifact-contract)
-- [Strictness modes](#strictness-modes)
 - [Phase gates](#phase-gates)
   - [Ideation to research](#ideation-to-research)
   - [Research to review](#research-to-review)
@@ -68,7 +67,6 @@ It helps with:
 
 - defining the research goal
 - clarifying benchmark and split constraints
-- choosing a strictness mode
 - optionally using Semantic Scholar through `S2_API_KEY` (missing keys warn loudly for live searches)
 - producing ranked structured JSON ideas with `ACCEPTED`, `ACCEPTED_WITHOUT_REFERENCE`, or `REJECTED` evaluation
 - initializing non-invasive `.ai-scientist/` metadata
@@ -111,7 +109,6 @@ It checks:
 - split integrity evidence
 - leakage evidence
 - baseline comparison
-- strictness-mode criteria
 - command and evidence trail
 - whether the result should be accepted, revised, rejected, or marked as a negative result
 
@@ -130,7 +127,6 @@ Use this only after review artifacts and final launch checks are available.
 A writeup must include:
 
 - explicit AI Scientist / Codex assistance disclosure
-- strictness mode
 - benchmark and split details
 - result limitations
 - failed attempts or negative findings
@@ -146,21 +142,20 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 ├── .codex-plugin/plugin.json
 ├── README.md
 ├── GUIDELINES.md
-├── hooks.json
 ├── pyproject.toml
 ├── references/
 │   └── artifact-contract.md
 ├── schemas/
+│   ├── active-run.schema.json
 │   ├── config.schema.json
 │   ├── journal.schema.json
-│   ├── active-run.schema.json
 │   ├── loop-state.schema.json
-│   └── run-status.schema.json
+│   ├── node.schema.json
+│   └── selection.schema.json
 ├── prompts/
 │   └── research-loop/
 ├── skills/
 │   ├── ideation/SKILL.md
-│   ├── research-loop-legacy/SKILL.md
 │   ├── research-loop/SKILL.md
 │   ├── review/SKILL.md
 │   └── writeup/SKILL.md
@@ -209,14 +204,6 @@ uv run ai-scientist --help
 
 A successful run prints a `PASS` message.
 
-You can also confirm that negative fixtures fail closed. For example, this should fail because leakage evidence is missing:
-
-```bash
-uv run ai-scientist validate run \
-  tests/fixtures/missing-leakage-evidence \
-  --gate research_to_review
-```
-
 ## Ideation orchestrator
 
 The `ideation` skill is goal-driven and has no CLI lifecycle. The current Codex
@@ -236,7 +223,6 @@ Example prompt:
 
 ```text
 Use ideation to propose experiments for improving this model on the current benchmark.
-Use scientist mode unless another mode is justified.
 ```
 
 Expected artifacts are file-driven rather than CLI state:
@@ -257,7 +243,7 @@ Example prompt:
 
 ```text
 Run research-loop for idea-001 on this repository.
-Preserve the benchmark split, use scientist mode, and run experiments through resource leases.
+Preserve the benchmark split and run experiments through resource leases.
 ```
 
 Expected artifacts include:
@@ -308,7 +294,7 @@ Example prompt:
 
 ```text
 Write up the accepted AI Scientist run.
-Include disclosure, strictness mode, benchmark split, limitations, and reproducibility notes.
+Include disclosure, benchmark split, limitations, and reproducibility notes.
 ```
 
 Before publication or final launch, validate:
@@ -347,17 +333,14 @@ See the detailed contract in:
 references/artifact-contract.md
 ```
 
-## Strictness modes
+## Acceptance criteria
 
-The canonical research loop supports three modes:
+The research loop holds one evidence standard: multi-seed reproducibility, strict
+ablation, hypothesis-causality evidence, and leakage/split checks. A run may supply
+`custom_criteria` in its start payload to add a run-specific acceptance bar on top of
+those universal integrity rules; nothing may weaken them.
 
-| Mode | Purpose | Acceptance meaning |
-| --- | --- | --- |
-| `scientist` | Strongest evidence standard: multi-seed reproducibility, strict ablation, hypothesis-causality evidence, leakage/split checks. | Credible research claim. |
-| `engineer` | Aggressive tuning and selection allowed with fixed benchmark/split and tuning log. | Strong usable model, not a paper claim. |
-| `custom` | User-provided `custom_criteria` define the acceptance bar. | Accepted only against those criteria and universal integrity rules. |
-
-No mode permits leakage, split manipulation, or deceptive metrics.
+Leakage, split manipulation, and deceptive metrics are never permitted.
 
 ## Phase gates
 
@@ -390,7 +373,6 @@ Requires:
 - leakage assessment
 - split integrity assessment
 - baseline comparison
-- strictness-mode criteria
 - approved `journal.jsonl` handoff record
 - passing validator result
 
@@ -485,8 +467,7 @@ When changing the artifact contract, update these together:
 1. `references/artifact-contract.md`
 2. schemas in `schemas/`
 3. `uv run ai-scientist validate run`
-4. positive and negative fixtures in `tests/fixtures/`
-5. skill instructions that mention the changed contract
+4. skill instructions that mention the changed contract
 
 Before claiming a change is complete, run at least:
 
