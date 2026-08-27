@@ -27,7 +27,7 @@ All modes must preserve these invariants:
 - No accepted score without command logs and evidence artifacts.
 - No final positive writeup when verifier decision is `no_go` or blockers are present.
 
-Strictness modes may differ in required evidence, but none may weaken leakage, split, or evidence-trail requirements.
+A run may add its own acceptance criteria, but none may weaken leakage, split, or evidence-trail requirements.
 
 ## Artifact requirements
 
@@ -51,8 +51,7 @@ If the artifact contract changes, update all of these together:
 1. `references/artifact-contract.md`
 2. Relevant schema files in `schemas/`
 3. `src/validation/run.py`
-4. Positive and negative fixtures in `tests/fixtures/`
-5. Skill instructions that mention the changed contract
+4. Skill instructions that mention the changed contract
 
 ## Dependency and API policy
 
@@ -69,18 +68,15 @@ Before claiming a change is complete, run at minimum:
 
 ```bash
 python3 -m json.tool .codex-plugin/plugin.json >/dev/null
-python3 -m json.tool hooks.json >/dev/null
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
-
-For gate changes, also run the relevant positive and negative fixtures. Negative fixtures must fail for the intended reason class.
 
 ## Documentation standards
 
 - Keep README examples runnable from the repository root.
 - Prefer explicit artifact paths over vague descriptions.
 - Document limitations and negative-result behavior.
-- Do not imply the plugin can produce a credible research claim unless the selected strictness mode and verifier evidence support it.
+- Do not imply the plugin can produce a credible research claim unless the verifier evidence supports it.
 
 ## Commit hygiene
 

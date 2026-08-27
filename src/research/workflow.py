@@ -38,7 +38,6 @@ from core.state import (
     write_loop_state,
 )
 
-ACTIVE_MODES = {"scientist", "engineer", "custom"}
 WORK_TERMINAL_STATUSES = {"completed", "cancelled", "failed", "abandoned", "accepted", "rejected"}
 TASK_TERMINAL_STATUSES = WORK_TERMINAL_STATUSES
 LEASE_ACTIVE_STATUSES = {"acquired", "running"}
@@ -93,7 +92,7 @@ def active_run(target: Path, run_id: str | None = None) -> tuple[str, dict[str, 
     return rid, state
 
 
-def prompt_path_for(mode: str, kind: str) -> str | None:
+def prompt_path_for(kind: str) -> str | None:
     if kind == "orchestrator":
         return "skills/research-loop/SKILL.md"
     if kind == "worker":
@@ -103,14 +102,8 @@ def prompt_path_for(mode: str, kind: str) -> str | None:
     if kind == "ranker":
         return "prompts/research-loop/ranker.md"
     if kind == "revision-worker":
-        return f"prompts/research-loop/{mode}/revision-worker.md"
+        return "prompts/research-loop/revision-worker.md"
     return None
-
-
-def validate_mode(mode: str) -> str:
-    if mode not in ACTIVE_MODES:
-        raise ResearchError(f"invalid strictness mode: {mode}")
-    return mode
 
 
 def custom_criteria_from(payload: dict[str, Any]) -> Any:
@@ -160,7 +153,7 @@ def research_contract_from(payload: dict[str, Any], selected_idea: Any) -> Any:
     return None
 
 
-def frozen_arguments(target: Path, args: argparse.Namespace, payload: dict[str, Any], selected_idea: Any, idea_batch: list[dict[str, Any]], mode: str) -> dict[str, Any]:
+def frozen_arguments(target: Path, args: argparse.Namespace, payload: dict[str, Any], selected_idea: Any, idea_batch: list[dict[str, Any]]) -> dict[str, Any]:
     provided = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
     selected_idea_id = getattr(args, "selected_idea_id", None) or (selected_idea.get("id") if isinstance(selected_idea, dict) else None)
     return {
@@ -169,16 +162,12 @@ def frozen_arguments(target: Path, args: argparse.Namespace, payload: dict[str, 
         "selected_idea_id": selected_idea_id,
         "idea_batch_ids": [idea["id"] for idea in idea_batch],
         "python_environment": provided.get("python_environment", payload.get("python_environment")),
-        "mode": mode,
         "target_venue": deepcopy(provided.get("target_venue", payload.get("target_venue"))),
     }
 
 
 def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, Any]) -> dict[str, Any]:
-    mode = validate_mode(str(args.strictness_mode or "scientist"))
     criteria = custom_criteria_from(payload)
-    if mode == "custom" and not criteria:
-        raise ResearchError("custom mode requires custom_criteria in research start JSON payload")
     resources = load_resource_config(payload)
     selected_idea = selected_idea_from(payload)
     idea_batch = idea_batch_from(payload, selected_idea)
@@ -201,38 +190,35 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
         "schema_version": 1,
         "run_id": args.run_id,
         "target_repo": str(target),
-        "strictness_mode": mode,
         "selected_idea_id": selected_idea_id,
         "selected_idea": selected_idea,
         "idea_batch": idea_batch,
         "campaign_mode": len(idea_batch) > 1 or selected_idea is None,
         "learning_notes_ref": str(run_dir(target, args.run_id) / "learning-notes.jsonl"),
         "discovery_notes_ref": str(run_dir(target, args.run_id) / "discovery-notes.md"),
-        "arguments": frozen_arguments(target, args, payload, selected_idea, idea_batch, mode),
+        "arguments": frozen_arguments(target, args, payload, selected_idea, idea_batch),
         "research_contract": research_contract,
         "custom_criteria": criteria,
         "resources": resources,
         "research": {
-            "mode": mode,
             "prompt_root": "prompts/research-loop",
-            "orchestrator_prompt": prompt_path_for(mode, "orchestrator"),
-            "worker_agent": research_agent_name(mode, "worker"),
-            "worker_prompt_source": prompt_path_for(mode, "worker"),
-            "baseline_worker_agent": research_agent_name(mode, "baseline-worker"),
-            "baseline_worker_prompt_source": prompt_path_for(mode, "baseline-worker"),
-            "ranker_agent": research_agent_name(mode, "ranker"),
-            "ranker_prompt_source": prompt_path_for(mode, "ranker"),
+            "orchestrator_prompt": prompt_path_for("orchestrator"),
+            "worker_agent": research_agent_name("worker"),
+            "worker_prompt_source": prompt_path_for("worker"),
+            "baseline_worker_agent": research_agent_name("baseline-worker"),
+            "baseline_worker_prompt_source": prompt_path_for("baseline-worker"),
+            "ranker_agent": research_agent_name("ranker"),
+            "ranker_prompt_source": prompt_path_for("ranker"),
             "ranking_top_n": ranking_top_n,
             "active_node_cap": active_node_cap,
-            "revision_worker_agent": research_agent_name(mode, "revision-worker"),
-            "revision_worker_prompt_source": prompt_path_for(mode, "revision-worker"),
+            "revision_worker_agent": research_agent_name("revision-worker"),
+            "revision_worker_prompt_source": prompt_path_for("revision-worker"),
             "revision_brainstorm_skill": REVISION_BRAINSTORM_SKILL,
         },
         "created_at": utc_now(),
     }
     extra_config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     cfg.update(extra_config)
-    cfg["strictness_mode"] = mode
     cfg["resources"] = resources
     cfg["selected_idea"] = selected_idea
     cfg["idea_batch"] = idea_batch
@@ -240,50 +226,25 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
     cfg["learning_notes_ref"] = str(run_dir(target, args.run_id) / "learning-notes.jsonl")
     cfg["discovery_notes_ref"] = str(run_dir(target, args.run_id) / "discovery-notes.md")
     cfg["selected_idea_id"] = selected_idea_id
-    cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, idea_batch, mode)
+    cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, idea_batch)
     research = cfg.setdefault("research", {})
     if isinstance(research, dict):
-        research.pop("critic_agent", None)
-        research.pop("critic_prompt_source", None)
-        research.pop("critic_gate", None)
-        research.setdefault("worker_agent", research_agent_name(mode, "worker"))
-        research.setdefault("worker_prompt_source", prompt_path_for(mode, "worker"))
-        research.setdefault("baseline_worker_agent", research_agent_name(mode, "baseline-worker"))
-        research.setdefault("baseline_worker_prompt_source", prompt_path_for(mode, "baseline-worker"))
-        research.setdefault("ranker_agent", research_agent_name(mode, "ranker"))
-        research.setdefault("ranker_prompt_source", prompt_path_for(mode, "ranker"))
+        research.setdefault("worker_agent", research_agent_name("worker"))
+        research.setdefault("worker_prompt_source", prompt_path_for("worker"))
+        research.setdefault("baseline_worker_agent", research_agent_name("baseline-worker"))
+        research.setdefault("baseline_worker_prompt_source", prompt_path_for("baseline-worker"))
+        research.setdefault("ranker_agent", research_agent_name("ranker"))
+        research.setdefault("ranker_prompt_source", prompt_path_for("ranker"))
         research.setdefault("ranking_top_n", ranking_top_n)
         research.setdefault("active_node_cap", active_node_cap)
-        research.setdefault("revision_worker_agent", research_agent_name(mode, "revision-worker"))
-        research.setdefault("revision_worker_prompt_source", prompt_path_for(mode, "revision-worker"))
+        research.setdefault("revision_worker_agent", research_agent_name("revision-worker"))
+        research.setdefault("revision_worker_prompt_source", prompt_path_for("revision-worker"))
         research.setdefault("revision_brainstorm_skill", REVISION_BRAINSTORM_SKILL)
     if research_contract is not None:
         cfg["research_contract"] = research_contract
     if criteria is not None:
         cfg["custom_criteria"] = criteria
     return cfg
-
-
-def migrate_research_ranker_config(target: Path, run_id: str, mode: str) -> bool:
-    path = config_path(target, run_id)
-    cfg = load_json_if_exists(path)
-    if not isinstance(cfg, dict):
-        return False
-    research = cfg.setdefault("research", {})
-    if not isinstance(research, dict):
-        return False
-    before = deepcopy(research)
-    research.pop("critic_agent", None)
-    research.pop("critic_prompt_source", None)
-    research.pop("critic_gate", None)
-    research.setdefault("ranker_agent", research_agent_name(mode, "ranker"))
-    research.setdefault("ranker_prompt_source", prompt_path_for(mode, "ranker"))
-    research.setdefault("ranking_top_n", 3)
-    research.setdefault("active_node_cap", research["ranking_top_n"])
-    if research == before:
-        return False
-    atomic_write_json(path, cfg)
-    return True
 
 
 def phase_state_or_error(state: dict[str, Any] | None, run_id: str) -> dict[str, Any]:
@@ -640,9 +601,7 @@ def cmd_research_start(args: argparse.Namespace) -> int:
     target = target_repo(args)
     payload = load_payload(args)
     cfg = initial_config(target, args, payload)
-    mode = cfg["strictness_mode"]
     initial_state = {
-        "mode": mode,
         "custom_criteria": cfg.get("custom_criteria"),
         "selected_idea_id": cfg.get("selected_idea_id"),
         "idea_batch": deepcopy(cfg.get("idea_batch") or []),
@@ -659,7 +618,7 @@ def cmd_research_start(args: argparse.Namespace) -> int:
             "role": "main_codex_session",
             "next_action": "plan",
             "next_action_details": {"reason": "research run started"},
-            "prompt_path": prompt_path_for(mode, "orchestrator"),
+            "prompt_path": prompt_path_for("orchestrator"),
             "last_checkpoint_at": utc_now(),
         },
         "tasks": {},
@@ -722,15 +681,13 @@ def cmd_research_start(args: argparse.Namespace) -> int:
                 encoding="utf-8",
             )
     append_journal_event(target, args.run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
-    return emit("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)), mode=mode)
+    return emit("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)))
 
 
 def cmd_research_resume(args: argparse.Namespace) -> int:
     target = target_repo(args)
     run_id, state = active_run(target, args.run_id)
     phase_state = phase_state_or_error(state, run_id)
-    mode = validate_mode(str(phase_state.get("mode") or "scientist"))
-    migrated_ranker_config = migrate_research_ranker_config(target, run_id, mode)
     orchestrator = phase_state.get("orchestrator") if isinstance(phase_state.get("orchestrator"), dict) else {}
     append_journal_event(
         target,
@@ -739,14 +696,12 @@ def cmd_research_resume(args: argparse.Namespace) -> int:
         details={
             "command": "research resume",
             "next_action": orchestrator.get("next_action"),
-            "migrated_ranker_config": migrated_ranker_config,
         },
     )
     set_active_run(target, run_id, "research", "active")
     return emit(
         "ok",
         run_id=run_id,
-        mode=phase_state.get("mode"),
         next_action=orchestrator.get("next_action"),
         next_action_details=orchestrator.get("next_action_details", {}),
         open_work=open_work_ids(phase_state),

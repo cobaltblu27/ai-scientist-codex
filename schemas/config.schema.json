@@ -4,7 +4,6 @@
   "required": [
     "schema_version",
     "run_id",
-    "strictness_mode",
     "target_repo"
   ],
   "properties": {
@@ -13,13 +12,6 @@
     },
     "run_id": {
       "type": "string"
-    },
-    "strictness_mode": {
-      "enum": [
-        "scientist",
-        "engineer",
-        "custom"
-      ]
     },
     "target_repo": {
       "type": "string"
@@ -110,16 +102,36 @@
       "description": "Frozen research contract shared by the active research modes.",
       "type": "object",
       "properties": {
-        "goal_type": {"type": "string"},
-        "primary_hypothesis": {"type": "string"},
-        "dataset": {"type": "object"},
-        "split_protocol": {"type": "string"},
-        "allowed_inputs": {"type": "array"},
-        "forbidden_inputs": {"type": "array"},
-        "metrics": {"type": "object"},
-        "metrics_that_matter": {"type": "array"},
-        "non_negotiable_comparisons": {"type": "array"},
-        "baseline_reference": {"type": "object"},
+        "goal_type": {
+          "type": "string"
+        },
+        "primary_hypothesis": {
+          "type": "string"
+        },
+        "dataset": {
+          "type": "object"
+        },
+        "split_protocol": {
+          "type": "string"
+        },
+        "allowed_inputs": {
+          "type": "array"
+        },
+        "forbidden_inputs": {
+          "type": "array"
+        },
+        "metrics": {
+          "type": "object"
+        },
+        "metrics_that_matter": {
+          "type": "array"
+        },
+        "non_negotiable_comparisons": {
+          "type": "array"
+        },
+        "baseline_reference": {
+          "type": "object"
+        },
         "benchmark_plan": {},
         "evaluator_command": {},
         "success_criteria": {},
@@ -161,11 +173,14 @@
       "description": "Frozen research-loop skill arguments for the run.",
       "type": "object",
       "properties": {
-        "target_repo": {"type": "string"},
+        "target_repo": {
+          "type": "string"
+        },
         "target_idea": {},
-        "selected_idea_id": {"type": "string"},
+        "selected_idea_id": {
+          "type": "string"
+        },
         "python_environment": {},
-        "mode": {"enum": ["scientist", "engineer", "custom"]},
         "target_venue": {}
       },
       "additionalProperties": true

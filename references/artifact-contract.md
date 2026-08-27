@@ -14,7 +14,6 @@ Target repositories keep all plugin state in `.ai-scientist/` so ordinary projec
 - `.ai-scientist/runs/<run-id>/loop-state.json` — mutable progress state, orchestrator work records/checkpoints, shared baseline state, lightweight node/outcome summaries, resource leases, orchestration cursor, and Stop-hook gate state.
 - `.ai-scientist/runs/<run-id>/journal.jsonl` — append-only audit stream for orchestration decisions, API calls, Stop-hook events, resource events, handoff events, and notable validations.
 - `.ai-scientist/runs/<run-id>/selection.json` — final selected accepted node/outcome details, evidence refs, and acceptance rationale.
-- `.ai-scientist/runs/<run-id>/run-status.json` — optional derived user-facing status snapshot; not a source of truth.
 - `.ai-scientist/runs/<run-id>/baseline/` — shared baseline unit for frozen dataset splits, cloned baseline-paper repositories, baseline score calculations, and `baseline.json`.
 
 Do not create separate v1 research-loop ledgers for dependency plans, API calls,

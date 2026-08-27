@@ -304,7 +304,6 @@ def build_parser() -> argparse.ArgumentParser:
     research_sub = research.add_subparsers(dest="command", required=True)
     research_start = research_sub.add_parser("start")
     research_start.add_argument("--run-id", required=True)
-    research_start.add_argument("--strictness-mode", required=True, choices=sorted(research_workflow.ACTIVE_MODES))
     research_start.add_argument("--selected-idea-id")
     add_json_file_arg(research_start)
     research_start.set_defaults(func=research_workflow.cmd_research_start)

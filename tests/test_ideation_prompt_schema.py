@@ -78,14 +78,12 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertNotIn("ideation finalize-ready", skill)
 
     def test_ideation_generated_agent_prompts_exist(self) -> None:
-        for mode in {"scientist", "engineer", "custom"}:
-            generator = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "generator.md").read_text()
-            critic = (PLUGIN_ROOT / "prompts" / "ideation" / mode / "critic.md").read_text()
-            self.assertIn("contract", generator.lower())
-            self.assertIn("contract", critic.lower())
-        scientist_critic = (PLUGIN_ROOT / "prompts" / "ideation" / "scientist" / "critic.md").read_text()
-        self.assertIn("constructive feedback provider, not an acceptance gate", scientist_critic)
-        self.assertIn("Do not accept", scientist_critic)
+        generator = (PLUGIN_ROOT / "prompts" / "ideation" / "generator.md").read_text()
+        critic = (PLUGIN_ROOT / "prompts" / "ideation" / "critic.md").read_text()
+        self.assertIn("contract", generator.lower())
+        self.assertIn("contract", critic.lower())
+        self.assertIn("constructive feedback provider, not an acceptance gate", critic)
+        self.assertIn("Do not accept", critic)
 
 if __name__ == "__main__":
     unittest.main()

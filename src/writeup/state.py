@@ -133,42 +133,9 @@ def _journal_gate_ready(target_repo: Path, run_id: str, gate: str) -> bool:
     )
 
 
-def _legacy_status_gate_ready(run: Path, gate: str) -> bool:
-    status = load_json_if_exists(run / "run-status.json")
-    if not isinstance(status, dict):
-        return False
-    validations = status.get("last_validations") if isinstance(status.get("last_validations"), dict) else {}
-    validation = validations.get(gate) if isinstance(validations, dict) else None
-    if not isinstance(validation, dict):
-        validation = status.get("last_validation") if isinstance(status.get("last_validation"), dict) else None
-    if not isinstance(validation, dict):
-        return False
-    return validation.get("gate") == gate and validation.get("exit_code", validation.get("validator_exit_code")) == 0
-
-
-def _legacy_handoff_gate_ready(run: Path, gate: str) -> bool:
-    path = run / "handoff.jsonl"
-    if not path.exists():
-        return False
-    for line in path.read_text().splitlines():
-        if not line.strip():
-            continue
-        record = json.loads(line)
-        if not isinstance(record, dict):
-            continue
-        if record.get("gate") != gate:
-            continue
-        if record.get("approved") is True and record.get("validator_exit_code", record.get("exit_code")) == 0:
-            return True
-    return False
-
-
 def review_to_writeup_ready(target_repo: Path, run_id: str) -> bool:
-    run = _run_root(target_repo, run_id)
-    _load_review(run)
-    return _journal_gate_ready(target_repo, run_id, "review_to_writeup") or (
-        _legacy_status_gate_ready(run, "review_to_writeup") and _legacy_handoff_gate_ready(run, "review_to_writeup")
-    )
+    _load_review(_run_root(target_repo, run_id))
+    return _journal_gate_ready(target_repo, run_id, "review_to_writeup")
 
 
 def _selection(target_repo: Path, run_id: str) -> dict[str, Any]:
@@ -231,7 +198,6 @@ def evidence_context(target_repo: Path, run_id: str) -> dict[str, Any]:
         "schema_version": 1,
         "run_id": run_id,
         "created_at": utc_now(),
-        "strictness_mode": cfg.get("strictness_mode"),
         "target_repo": cfg.get("target_repo"),
         "selected_node": selected_node,
         "metric_key": metric_key or "score",
@@ -253,7 +219,6 @@ def _evidence_pack_markdown(context: dict[str, Any]) -> str:
             "# AI Scientist Writeup Evidence Pack",
             "",
             f"- Run: {context.get('run_id')}",
-            f"- Strictness mode: {context.get('strictness_mode')}",
             f"- Selected node: {context.get('selected_node')}",
             f"- Metric: {context.get('metric_key')}",
             f"- Baseline metric: {context.get('baseline_metric')}",
@@ -300,7 +265,6 @@ def start_writeup(target_repo: Path, run_id: str, *, require_pdf: bool = True) -
                 "next_action_details": {"reason": "writeup requires at least one final-paper plot"},
             },
             "selected_node": context.get("selected_node"),
-            "strictness_mode": context.get("strictness_mode"),
             "require_pdf": require_pdf,
             "artifacts": {
                 "evidence_context": "writeup/evidence-context.json",

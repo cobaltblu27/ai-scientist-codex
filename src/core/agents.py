@@ -10,9 +10,7 @@ from core.plugin import plugin_root
 
 MANAGED_MARKER_PREFIX = "# ai-scientist agent: "
 AGENT_DIR = "agents"
-OBSOLETE_MANAGED_AGENT_NAMES = tuple(
-    f"ai-scientist-research-critic-{mode}" for mode in ("scientist", "engineer", "custom")
-)
+MANAGED_GLOB = "ai-scientist-*.toml"
 
 
 class AgentInstallError(RuntimeError):
@@ -36,54 +34,51 @@ class AgentSpec:
 
 
 def _specs() -> list[AgentSpec]:
-    specs: list[AgentSpec] = []
-    for mode in ("scientist", "engineer", "custom"):
-        specs.append(
-            AgentSpec(
-                name=f"ai-scientist-ideation-generator-{mode}",
-                description=f"AI Scientist ideation generator for {mode} mode.",
-                prompt_source=f"prompts/ideation/{mode}/generator.md",
-                model_reasoning_effort="xhigh",
-            )
-        )
-        specs.append(
-            AgentSpec(
-                name=f"ai-scientist-ideation-critic-{mode}",
-                description=f"AI Scientist ideation critic for {mode} mode.",
-                prompt_source=f"prompts/ideation/{mode}/critic.md",
-                model_reasoning_effort="xhigh",
-            )
-        )
-        specs.append(
-            AgentSpec(
-                name=f"ai-scientist-research-revision-worker-{mode}",
-                description=f"AI Scientist research revision worker for {mode} mode.",
-                prompt_source=f"prompts/research-loop/{mode}/revision-worker.md",
-                model_reasoning_effort="xhigh",
-            )
-        )
-    specs.extend(
-        [
-            AgentSpec(
-                name="ai-scientist-research-baseline-worker",
-                description="AI Scientist research baseline and fixed-split worker.",
-                prompt_source="prompts/research-loop/baseline-worker.md",
-                model_reasoning_effort="medium",
-            ),
-            AgentSpec(
-                name="ai-scientist-research-worker",
-                description="AI Scientist research node worker.",
-                prompt_source="prompts/research-loop/worker.md",
-                model_reasoning_effort="xhigh",
-            ),
-            AgentSpec(
-                name="ai-scientist-research-ranker",
-                description="AI Scientist comparative research branch ranker.",
-                prompt_source="prompts/research-loop/ranker.md",
-                model_reasoning_effort="xhigh",
-            ),
-        ]
-    )
+    """One agent per prompt file."""
+    specs = [
+        AgentSpec(
+            name="ai-scientist-ideation-generator",
+            description="AI Scientist ideation generator.",
+            prompt_source="prompts/ideation/generator.md",
+            model_reasoning_effort="xhigh",
+        ),
+        AgentSpec(
+            name="ai-scientist-ideation-critic",
+            description="AI Scientist ideation critic.",
+            prompt_source="prompts/ideation/critic.md",
+            model_reasoning_effort="xhigh",
+        ),
+        AgentSpec(
+            name="ai-scientist-ideation-ranker",
+            description="AI Scientist ideation candidate ranker.",
+            prompt_source="prompts/ideation/ranker.md",
+            model_reasoning_effort="xhigh",
+        ),
+        AgentSpec(
+            name="ai-scientist-research-baseline-worker",
+            description="AI Scientist research baseline and fixed-split worker.",
+            prompt_source="prompts/research-loop/baseline-worker.md",
+            model_reasoning_effort="medium",
+        ),
+        AgentSpec(
+            name="ai-scientist-research-worker",
+            description="AI Scientist research node worker.",
+            prompt_source="prompts/research-loop/worker.md",
+            model_reasoning_effort="xhigh",
+        ),
+        AgentSpec(
+            name="ai-scientist-research-ranker",
+            description="AI Scientist comparative research branch ranker.",
+            prompt_source="prompts/research-loop/ranker.md",
+            model_reasoning_effort="xhigh",
+        ),
+        AgentSpec(
+            name="ai-scientist-research-revision-worker",
+            description="AI Scientist research revision worker.",
+            prompt_source="prompts/research-loop/revision-worker.md",
+            model_reasoning_effort="xhigh",
+        ),
+    ]
     return sorted(specs, key=lambda spec: spec.name)
 
 
@@ -94,26 +89,20 @@ def agent_names() -> list[str]:
     return [spec.name for spec in AGENT_SPECS]
 
 
-def ideation_agent_name(mode: str, role: str) -> str:
-    if mode not in {"scientist", "engineer", "custom"}:
-        raise AgentInstallError(f"invalid ideation mode: {mode}")
-    if role not in {"generator", "critic"}:
+IDEATION_ROLES = frozenset({"generator", "critic", "ranker"})
+RESEARCH_ROLES = frozenset({"baseline-worker", "worker", "ranker", "revision-worker"})
+
+
+def ideation_agent_name(role: str) -> str:
+    if role not in IDEATION_ROLES:
         raise AgentInstallError(f"invalid ideation agent role: {role}")
-    return f"ai-scientist-ideation-{role}-{mode}"
+    return f"ai-scientist-ideation-{role}"
 
 
-def research_agent_name(mode: str, role: str) -> str:
-    if role == "baseline-worker":
-        return "ai-scientist-research-baseline-worker"
-    if role == "worker":
-        return "ai-scientist-research-worker"
-    if role == "ranker":
-        return "ai-scientist-research-ranker"
-    if mode not in {"scientist", "engineer", "custom"}:
-        raise AgentInstallError(f"invalid research mode: {mode}")
-    if role == "revision-worker":
-        return f"ai-scientist-research-revision-worker-{mode}"
-    raise AgentInstallError(f"invalid research agent role: {role}")
+def research_agent_name(role: str) -> str:
+    if role not in RESEARCH_ROLES:
+        raise AgentInstallError(f"invalid research agent role: {role}")
+    return f"ai-scientist-research-{role}"
 
 
 def strip_frontmatter(text: str) -> str:
@@ -169,15 +158,30 @@ def is_managed_agent_file(path: Path, spec: AgentSpec) -> bool:
     return bool(first and first[0].strip() == spec.marker)
 
 
+def sweep_obsolete_agents(agents_dir: Path) -> list[Path]:
+    """Managed agent files that no current spec claims.
+
+    Replaces a hardcoded rename list: any file we previously wrote is obsolete
+    once it drops out of AGENT_SPECS, so match on the marker instead.
+    """
+    if not agents_dir.is_dir():
+        return []
+    current = {spec.filename for spec in AGENT_SPECS}
+    obsolete: list[Path] = []
+    for path in sorted(agents_dir.glob(MANAGED_GLOB)):
+        if path.name in current:
+            continue
+        first = path.read_text().splitlines()[:1]
+        if first and first[0].strip().startswith(MANAGED_MARKER_PREFIX):
+            obsolete.append(path)
+    return obsolete
+
+
 def install_agents(*, codex_home: Path | None = None, target_repo: Path | None = None, force: bool = False, root: Path | None = None) -> list[dict[str, str]]:
     agents_dir = target_agents_dir(codex_home, target_repo)
     agents_dir.mkdir(parents=True, exist_ok=True)
-    for name in OBSOLETE_MANAGED_AGENT_NAMES:
-        obsolete_path = agents_dir / f"{name}.toml"
-        if obsolete_path.exists():
-            first_line = obsolete_path.read_text().splitlines()[:1]
-            if first_line and first_line[0].strip() == f"{MANAGED_MARKER_PREFIX}{name}":
-                obsolete_path.unlink()
+    for obsolete_path in sweep_obsolete_agents(agents_dir):
+        obsolete_path.unlink()
     installed: list[dict[str, str]] = []
     for spec in AGENT_SPECS:
         path = agents_dir / spec.filename

@@ -16,14 +16,19 @@ from core import agents
 class AgentGenerationTests(unittest.TestCase):
     def test_expected_agent_names_and_reasoning_effort(self) -> None:
         listed = {item["name"]: item for item in agents.list_agents()}
-        self.assertIn("ai-scientist-ideation-generator-scientist", listed)
-        self.assertIn("ai-scientist-ideation-critic-engineer", listed)
-        self.assertIn("ai-scientist-research-baseline-worker", listed)
-        self.assertIn("ai-scientist-research-worker", listed)
-        self.assertIn("ai-scientist-research-ranker", listed)
-        self.assertNotIn("ai-scientist-research-critic-custom", listed)
-        self.assertIn("ai-scientist-research-revision-worker-scientist", listed)
-        self.assertEqual(listed["ai-scientist-ideation-generator-scientist"]["model_reasoning_effort"], "xhigh")
+        self.assertEqual(
+            set(listed),
+            {
+                "ai-scientist-ideation-generator",
+                "ai-scientist-ideation-critic",
+                "ai-scientist-ideation-ranker",
+                "ai-scientist-research-baseline-worker",
+                "ai-scientist-research-worker",
+                "ai-scientist-research-ranker",
+                "ai-scientist-research-revision-worker",
+            },
+        )
+        self.assertEqual(listed["ai-scientist-ideation-generator"]["model_reasoning_effort"], "xhigh")
         self.assertEqual(listed["ai-scientist-research-baseline-worker"]["model_reasoning_effort"], "medium")
         self.assertEqual(listed["ai-scientist-research-worker"]["model_reasoning_effort"], "xhigh")
         self.assertEqual(listed["ai-scientist-research-ranker"]["prompt_source"], "prompts/research-loop/ranker.md")
@@ -50,11 +55,11 @@ class AgentGenerationTests(unittest.TestCase):
     def test_cli_install_check_and_conflict_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             codex_home = Path(tmp) / "codex"
-            obsolete_critic = codex_home / "agents" / "ai-scientist-research-critic-scientist.toml"
+            obsolete_critic = codex_home / "agents" / "ai-scientist-research-revision-worker-scientist.toml"
             obsolete_critic.parent.mkdir(parents=True)
             obsolete_critic.write_text(
-                "# ai-scientist agent: ai-scientist-research-critic-scientist\n"
-                'name = "ai-scientist-research-critic-scientist"\n'
+                "# ai-scientist agent: ai-scientist-research-revision-worker-scientist\n"
+                'name = "ai-scientist-research-revision-worker-scientist"\n'
             )
             install = subprocess.run(
                 [*AI_SCIENTIST_CMD, "agents", "install", "--codex-home", str(codex_home)],

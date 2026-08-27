@@ -5,11 +5,11 @@ import importlib.util
 import json
 import os
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from core.state import append_journal_event
 from test_support import AI_SCIENTIST_CMD, VALIDATE_RUN_ARGS, read_json, run_python, write_json, write_minimal_research_run
 
 CLI_ARGS = AI_SCIENTIST_CMD
@@ -47,7 +47,9 @@ def fake_tex_env(target: Path) -> dict[str, str]:
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
     return env
 
-def add_review_to_writeup_gate(run: Path) -> None:
+def add_review_to_writeup_gate(target: Path, run_id: str = "run-001") -> None:
+    """Open the writeup gate the way the CLI does: a passing validation plus an approved handoff in journal.jsonl."""
+    run = target / ".ai-scientist" / "runs" / run_id
     write_json(
         run / "review" / "structured-review.json",
         {
@@ -55,25 +57,10 @@ def add_review_to_writeup_gate(run: Path) -> None:
             "leakage": {"passed": True},
             "split_integrity": {"passed": True},
             "baseline_comparison": {"passed": True},
-            "strictness_mode_criteria": {"passed": True},
         },
     )
-    status_path = run / "run-status.json"
-    status = read_json(status_path)
-    review_validation = {"gate": "review_to_writeup", "exit_code": 0, "validator_exit_code": 0}
-    validations = status.setdefault("last_validations", {})
-    validations["review_to_writeup"] = review_validation
-    status["last_validation"] = review_validation
-    write_json(status_path, status)
-    with (run / "handoff.jsonl").open("a") as handle:
-        handle.write(json.dumps({
-            "gate": "review_to_writeup",
-            "from_phase": "review",
-            "to_phase": "writeup",
-            "approved": True,
-            "validator_exit_code": 0,
-            "approved_at": "2026-05-30T00:00:00Z",
-        }) + "\n")
+    append_journal_event(target, run_id, "validation", details={"gate": "review_to_writeup", "exit_code": 0, "validator_exit_code": 0})
+    append_journal_event(target, run_id, "handoff", details={"gate": "review_to_writeup", "approved": True, "exit_code": 0, "validator_exit_code": 0})
 
 
 
@@ -126,7 +113,7 @@ class WriteupStateTests(unittest.TestCase):
             target = Path(td) / "target"
             target.mkdir()
             run = write_minimal_research_run(target)
-            add_review_to_writeup_gate(run)
+            add_review_to_writeup_gate(target)
 
             started = run_cli(target, "writeup", "start", "--run-id", "run-001")
             self.assertEqual(started.returncode, 0, started.stderr + started.stdout)
@@ -155,7 +142,7 @@ class WriteupStateTests(unittest.TestCase):
             target = Path(td) / "target"
             target.mkdir()
             run = write_minimal_research_run(target)
-            add_review_to_writeup_gate(run)
+            add_review_to_writeup_gate(target)
 
             self.assertEqual(run_cli(target, "writeup", "start", "--run-id", "run-001").returncode, 0)
             figures = run_cli(target, "writeup", "collect-figures", "--run-id", "run-001")
