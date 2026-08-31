@@ -118,7 +118,7 @@ def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def render_agent_toml(spec: AgentSpec, *, root: Path | None = None) -> str:
+def load_agent_prompt(spec: AgentSpec, *, root: Path | None = None) -> str:
     source_root = root or plugin_root()
     prompt_path = source_root / spec.prompt_source
     if not prompt_path.exists():
@@ -126,6 +126,30 @@ def render_agent_toml(spec: AgentSpec, *, root: Path | None = None) -> str:
     prompt = strip_frontmatter(prompt_path.read_text())
     if not prompt.strip():
         raise AgentInstallError(f"empty agent prompt source for {spec.name}: {spec.prompt_source}")
+    return prompt
+
+
+def render_agent_md(spec: AgentSpec, *, root: Path | None = None) -> str:
+    """Claude Code subagent: YAML frontmatter plus the prompt body.
+
+    Claude has no reasoning-effort field, so spec.model_reasoning_effort is
+    Codex-only and intentionally dropped here.
+    """
+    prompt = load_agent_prompt(spec, root=root)
+    return "\n".join(
+        [
+            "---",
+            f"name: {spec.name}",
+            f"description: {_toml_string(spec.description)}",
+            "---",
+            "",
+            prompt if prompt.endswith("\n") else prompt + "\n",
+        ]
+    )
+
+
+def render_agent_toml(spec: AgentSpec, *, root: Path | None = None) -> str:
+    prompt = load_agent_prompt(spec, root=root)
     lines = [
         spec.marker,
         f"name = {_toml_string(spec.name)}",
@@ -135,6 +159,27 @@ def render_agent_toml(spec: AgentSpec, *, root: Path | None = None) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def build_claude_agents(*, out_dir: Path | None = None, root: Path | None = None) -> list[dict[str, str]]:
+    """Write the committed agents/ directory Claude Code discovers by convention.
+
+    Unlike the Codex path there is no install step: the files live in the plugin,
+    so this regenerates them wholesale from prompts/ and needs no managed marker.
+    """
+    source_root = root or plugin_root()
+    agents_dir = out_dir or (source_root / AGENT_DIR)
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    current = {f"{spec.name}.md" for spec in AGENT_SPECS}
+    for stale in sorted(agents_dir.glob("ai-scientist-*.md")):
+        if stale.name not in current:
+            stale.unlink()
+    written: list[dict[str, str]] = []
+    for spec in AGENT_SPECS:
+        path = agents_dir / f"{spec.name}.md"
+        path.write_text(render_agent_md(spec, root=source_root))
+        written.append({"name": spec.name, "path": str(path), "prompt_source": spec.prompt_source})
+    return written
 
 
 def codex_home_from(codex_home: Path | None = None, target_repo: Path | None = None) -> Path:

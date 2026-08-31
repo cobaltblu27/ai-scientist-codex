@@ -122,6 +122,11 @@ def cmd_agents_install(args: argparse.Namespace) -> int:
     return response("ok", agents_dir=str(agents_dir), installed=installed)
 
 
+def cmd_agents_build(args: argparse.Namespace) -> int:
+    written = core_agents.build_claude_agents(out_dir=args.out)
+    return response("ok", agents_dir=str(Path(written[0]["path"]).parent), written=written)
+
+
 def cmd_agents_check(args: argparse.Namespace) -> int:
     result = core_agents.check_agents(codex_home=args.codex_home, target_repo=args.agent_target_repo)
     return response("ok" if result["ok"] else "error", **result)
@@ -295,6 +300,9 @@ def build_parser() -> argparse.ArgumentParser:
     agents_install.add_argument("--target-repo", dest="agent_target_repo", type=Path)
     agents_install.add_argument("--force", action="store_true")
     agents_install.set_defaults(func=cmd_agents_install)
+    agents_build = agents_sub.add_parser("build", help="Regenerate the committed Claude Code agents/ directory.")
+    agents_build.add_argument("--out", type=Path, help="Output directory. Defaults to <plugin-root>/agents.")
+    agents_build.set_defaults(func=cmd_agents_build)
     agents_check = agents_sub.add_parser("check")
     agents_check.add_argument("--codex-home", type=Path)
     agents_check.add_argument("--target-repo", dest="agent_target_repo", type=Path)

@@ -1,3 +1,8 @@
+---
+name: ai-scientist-research-worker
+description: "AI Scientist research node worker."
+---
+
 # Research Loop Worker
 
 <Purpose>

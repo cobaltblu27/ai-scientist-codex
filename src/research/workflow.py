@@ -31,6 +31,7 @@ from core.state import (
     run_dir,
     run_lock,
     selection_path,
+    current_session_id,
     set_active_run,
     start_phase,
     utc_now,
@@ -615,7 +616,7 @@ def cmd_research_start(args: argparse.Namespace) -> int:
             "status": "active",
         },
         "orchestrator": {
-            "role": "main_codex_session",
+            "role": "main_session",
             "next_action": "plan",
             "next_action_details": {"reason": "research run started"},
             "prompt_path": prompt_path_for("orchestrator"),
@@ -645,8 +646,7 @@ def cmd_research_start(args: argparse.Namespace) -> int:
         args.run_id,
         "research",
         "active",
-        codex_session_id=os.environ.get("CODEX_SESSION_ID"),
-        codex_thread_id=os.environ.get("CODEX_THREAD_ID"),
+        owner_session_id=current_session_id(),
     )
     atomic_write_json(config_path(target, args.run_id), cfg)
     learning_notes_ref = cfg.get("learning_notes_ref")

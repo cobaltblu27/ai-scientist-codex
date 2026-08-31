@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed validator for Codex-native AI Scientist run artifacts."""
+"""Fail-closed validator for AI Scientist run artifacts."""
 from __future__ import annotations
 
 import argparse

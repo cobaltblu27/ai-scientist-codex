@@ -468,15 +468,12 @@ def set_active_run(
     run_id: str,
     phase: str,
     status: str = "active",
-    codex_session_id: str | None = None,
-    codex_thread_id: str | None = None,
+    owner_session_id: str | None = None,
 ) -> dict[str, Any]:
     current = load_active_run(target_repo)
     if current and current.get("run_id") == run_id:
-        if codex_session_id is None and isinstance(current.get("codex_session_id"), str):
-            codex_session_id = current["codex_session_id"]
-        if codex_thread_id is None and isinstance(current.get("codex_thread_id"), str):
-            codex_thread_id = current["codex_thread_id"]
+        if owner_session_id is None and isinstance(current.get("owner_session_id"), str):
+            owner_session_id = current["owner_session_id"]
     payload = {
         "schema_version": 1,
         "run_id": run_id,
@@ -484,8 +481,7 @@ def set_active_run(
         "status": status,
         "updated_at": utc_now(),
         "target_repo": str(target_repo.resolve()),
-        "codex_session_id": codex_session_id,
-        "codex_thread_id": codex_thread_id,
+        "owner_session_id": owner_session_id,
     }
     atomic_write_json(active_run_path(target_repo), payload)
     return payload
@@ -950,19 +946,21 @@ def payload_identity_value(payload: dict[str, Any], keys: tuple[str, ...], env_k
     return None
 
 
-def stop_caller_identity(payload: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
-    payload = payload or {}
-    session_id = payload_identity_value(
-        payload,
-        ("codex_session_id", "codexSessionId", "session_id", "sessionId"),
-        ("CODEX_SESSION_ID", "CODEX_SESSION"),
-    )
-    thread_id = payload_identity_value(
-        payload,
-        ("codex_thread_id", "codexThreadId", "thread_id", "threadId"),
-        ("CODEX_THREAD_ID", "CODEX_THREAD"),
-    )
-    return session_id, thread_id
+SESSION_PAYLOAD_KEYS = ("session_id", "sessionId", "owner_session_id", "codex_session_id", "codexSessionId")
+SESSION_ENV_KEYS = ("CODEX_SESSION_ID", "CODEX_SESSION", "CLAUDE_CODE_SESSION_ID")
+
+
+def stop_caller_identity(payload: dict[str, Any] | None = None) -> str | None:
+    """Identify the session a Stop hook fired for.
+
+    Codex passes codex_session_id, Claude Code passes session_id; both runtimes
+    also export an env var for CLI calls made outside a hook payload.
+    """
+    return payload_identity_value(payload or {}, SESSION_PAYLOAD_KEYS, SESSION_ENV_KEYS)
+
+
+def current_session_id() -> str | None:
+    return payload_identity_value({}, (), SESSION_ENV_KEYS)
 
 
 def stop_is_worker_context(payload: dict[str, Any] | None = None) -> bool:
@@ -974,19 +972,13 @@ def stop_is_worker_context(payload: dict[str, Any] | None = None) -> bool:
 
 
 def active_run_owned_by_caller(active: dict[str, Any], payload: dict[str, Any] | None = None) -> bool | None:
-    owner_session = active.get("codex_session_id")
-    owner_thread = active.get("codex_thread_id")
-    has_owner = isinstance(owner_session, str) and bool(owner_session.strip()) or isinstance(owner_thread, str) and bool(owner_thread.strip())
-    if not has_owner:
+    owner_session = active.get("owner_session_id")
+    if not isinstance(owner_session, str) or not owner_session.strip():
         return None
-    caller_session, caller_thread = stop_caller_identity(payload)
-    if isinstance(owner_session, str) and owner_session.strip() and caller_session == owner_session.strip():
+    caller_session = stop_caller_identity(payload)
+    if caller_session is None:
         return True
-    if isinstance(owner_thread, str) and owner_thread.strip() and caller_thread == owner_thread.strip():
-        return True
-    if caller_session or caller_thread:
-        return False
-    return True
+    return caller_session == owner_session.strip()
 
 
 def evaluate_stop_decision(target_repo: Path, payload: dict[str, Any] | None = None) -> StopDecision:

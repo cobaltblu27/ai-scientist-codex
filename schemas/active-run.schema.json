@@ -28,13 +28,8 @@
     "target_repo": {
       "type": "string"
     },
-    "codex_session_id": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "codex_thread_id": {
+    "owner_session_id": {
+      "description": "Session that owns this run. Codex session id or Claude Code session id, whichever runtime started it.",
       "type": [
         "string",
         "null"

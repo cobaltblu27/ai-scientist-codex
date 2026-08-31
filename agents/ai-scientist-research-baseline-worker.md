@@ -1,3 +1,8 @@
+---
+name: ai-scientist-research-baseline-worker
+description: "AI Scientist research baseline and fixed-split worker."
+---
+
 # Research Loop Baseline Worker
 
 <Purpose>
