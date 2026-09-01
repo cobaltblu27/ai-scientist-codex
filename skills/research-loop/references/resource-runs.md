@@ -9,7 +9,7 @@ The orchestrator owns resource queue decisions; workers execute released jobs.
 - Before release, inspect recorded leases, the resource queue, and current host capacity.
 - A worker receives a resource-heavy job only after the orchestrator records it as `released` with its worker/thread ID, assignment ref, result path, working directory, command, and requested resources.
 - Record every official command under `logs/resources/<work-id>/<lease-id>/`: command specification, allocation, stdout, stderr, exit status, and release details.
-- Record resource decisions and outcomes through `$research-loop-checkpoint` so workers, the orchestrator, and the ranker can distinguish scientific failure from environment or capacity failure.
+- Record resource decisions and outcomes through `ai-scientist:research-loop-checkpoint` so workers, the orchestrator, and the ranker can distinguish scientific failure from environment or capacity failure.
 
 ## Queue Handling
 

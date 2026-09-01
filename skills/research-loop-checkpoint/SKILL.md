@@ -1,6 +1,6 @@
 ---
 name: research-loop-checkpoint
-description: Persists a research-loop orchestration transition into loop-state.json and journal.jsonl so the run can resume and the Stop hook can enforce continuation. Use only when explicitly called by the research-loop orchestrator.
+description: Persists a research-loop orchestration transition into loop-state.json and journal.jsonl so the `/goal` campaign can resume reliably. Use only when explicitly called by the research-loop orchestrator.
 ---
 
 # Research Loop Checkpoint

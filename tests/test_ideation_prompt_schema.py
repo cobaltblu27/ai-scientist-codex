@@ -15,6 +15,7 @@ class IdeationPromptSchemaTests(unittest.TestCase):
     def test_create_contract_skill_is_explicit_and_state_free(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "create-contract" / "SKILL.md").read_text()
         self.assertIn("name: create-contract", skill)
+        self.assertIn("disable-model-invocation: true", skill)
         self.assertIn("Explicit-only", skill)
         self.assertIn("Use this skill ONLY when the user explicitly asks", skill)
         self.assertIn(".ai-scientist/contracts/<contract-id>/research-contract.json", skill)
@@ -65,10 +66,13 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         ]:
             self.assertIsInstance(contract[field], list)
 
-    def test_ideation_skill_is_goal_and_artifact_driven(self) -> None:
+    def test_ideation_skill_is_claude_agent_and_artifact_driven(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
-        self.assertIn("create_goal", skill)
-        self.assertIn("installed Codex agent roles", skill)
+        self.assertIn("disable-model-invocation: true", skill)
+        self.assertIn("Claude Code's Agent tool", skill)
+        self.assertIn("ai-scientist:ai-scientist-ideation-generator", skill)
+        self.assertIn("`/goal`", skill)
+        self.assertNotIn("create_goal", skill)
         self.assertNotIn("ai-scientist agents check", skill)
         self.assertIn("contract.json", skill)
         self.assertIn("ideas/<idea-id>.md", skill)

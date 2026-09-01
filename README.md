@@ -1,6 +1,6 @@
-# AI Scientist Codex Plugin
+# AI Scientist Plugin
 
-A Codex-native plugin for auditable research workflows: **ideation**, **bounded experiment loops**, **evidence review**, and **final writeups**. It is inspired by AI Scientist-style automation, but it does **not** wrap, import, invoke, vendor, or depend on `AI-Scientist-v2` at runtime.
+A Claude Code and Codex plugin for auditable research workflows: **ideation**, **bounded experiment loops**, **evidence review**, and **final writeups**. It is inspired by AI Scientist-style automation, but it does **not** wrap, import, invoke, vendor, or depend on `AI-Scientist-v2` at runtime.
 
 The plugin is intentionally evidence-first: research state is written to local `.ai-scientist/` artifacts, phase transitions are validated by a deterministic helper, and final claims require explicit verifier approval.
 
@@ -41,7 +41,7 @@ absolute interpreter path. Do not assume a specific environment manager.
 
 ## Overview
 
-This repository is a Codex plugin root. It gives Codex a structured workflow for research-style experimentation inside a target repository.
+This repository is a Claude Code and Codex plugin root. It gives the active coding agent a structured workflow for research-style experimentation inside a target repository.
 
 Instead of operating as a black-box paper generator, the plugin requires explicit artifacts for each stage:
 
@@ -88,7 +88,7 @@ Use this when you want Codex to run bounded experiments for a selected idea whil
 
 It manages:
 
-- an orchestrator cursor kept alive by the Stop hook
+- an orchestrator cursor persisted through `/goal` and durable run artifacts
 - checkpointed worker, comparative ranker, and revision-worker records
 - committed constant definitions for every Codex subagent role under `agents/`
 - explicit resource leases for experiment commands
@@ -139,7 +139,10 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 
 ```text
 .
+├── .claude-plugin/plugin.json
 ├── .codex-plugin/plugin.json
+├── agents/
+├── bin/ai-scientist
 ├── README.md
 ├── GUIDELINES.md
 ├── pyproject.toml
@@ -161,7 +164,6 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 ├── src/
 │   ├── cli/
 │   ├── core/
-│   ├── hooks/
 │   ├── research/
 │   ├── validation/
 │   └── writeup/
@@ -173,44 +175,45 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 
 Use this repository root as the plugin root.
 
-The plugin manifest is:
+For Claude Code development, no install script is needed:
 
 ```bash
+claude --plugin-dir .
+```
+
+Claude discovers `skills/`, `agents/`, and `bin/` from the plugin root. `install.sh` is the Codex installer and should not be used for Claude Code.
+
+The manifests are:
+
+```bash
+.claude-plugin/plugin.json
 .codex-plugin/plugin.json
 ```
 
-For local development, point your Codex/plugin tooling at this checkout or copy this checkout into your local plugin workspace.
+For Codex development, point your plugin tooling at this checkout or copy this checkout into your local plugin workspace.
 
-For hard continuation, install the project-local Codex Stop hook in the target repository:
-
-```bash
-uv run ai-scientist hooks install --project-root <target-repo>
-uv run ai-scientist hooks check --project-root <target-repo>
-```
-
-The hook is standalone and reads `.ai-scientist/active-run.json` plus
-`.ai-scientist/runs/<run-id>/loop-state.json`. It returns `decision: "block"`
-while a run is active or lacks passing completion audit evidence.
+Run each long-lived workflow under `/goal` in Claude Code or Codex. The goal provides persistence, while `.ai-scientist/active-run.json` and the run artifacts provide durable resume context and completion evidence.
 
 ## Quick start
 
-From this repository root, verify the plugin manifest and active CLI:
+From this repository root, verify the Claude Code components and bundled CLI:
 
 ```bash
-uv run python -m json.tool .codex-plugin/plugin.json >/dev/null
-uv run ai-scientist --help
+claude plugin validate .claude-plugin/plugin.json
+claude plugin validate agents
+claude plugin validate skills
+bin/ai-scientist --help
 ```
-
-A successful run prints a `PASS` message.
 
 ## Ideation orchestrator
 
-The `ideation` skill is goal-driven and has no CLI lifecycle. The current Codex
-session creates a goal, freezes `contract.json`, delegates generator, critic, and
-pilot work through native agents, and writes Markdown idea files plus a lightweight
-`ideas.json` index. Progress and completion are recorded in `run.md`.
+The `ideation` skill has no CLI lifecycle. The current session freezes
+`contract.json`, delegates generator, critic, and pilot work through native agents,
+and writes Markdown idea files plus a lightweight `ideas.json` index. Progress and
+completion are recorded in `run.md`.
 
-The Codex installer copies the committed agent definitions into the Codex agent directory.
+The Codex compatibility installer copies the committed TOML agent definitions into
+the Codex agent directory; Claude Code loads the committed Markdown definitions directly.
 
 ## Typical workflow
 

@@ -24,7 +24,7 @@ Generator subagents should use this skill directly when they need literature raw
 <Source_Flexibility>
 Use the best available search surface for the question. Acceptable sources include scholarly search engines, venue pages, paper PDFs, arXiv pages, benchmark docs, dataset/model cards, GitHub repositories, local `papers/` corpora, existing repo docs, and general web search when it leads to primary sources.
 
-When the target repo has a curated local paper corpus, use `skills/local-literature-search/SKILL.md` alongside external search so local priors and source hooks are not missed.
+When the target repo has a curated local paper corpus, invoke `ai-scientist:local-literature-search` through the Skill tool alongside external search so local priors and source hooks are not missed.
 
 Do not force one provider. Prefer primary sources over summaries:
 

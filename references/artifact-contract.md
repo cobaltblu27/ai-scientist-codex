@@ -4,20 +4,20 @@ Target repositories keep all plugin state in `.ai-scientist/` so ordinary projec
 
 ## Required root and run artifacts
 
-- `.ai-scientist/active-run.json` — current run pointer used by the AI Scientist Codex Stop hook.
+- `.ai-scientist/active-run.json` — current run pointer used for durable `/goal` resume context.
 - `.ai-scientist/runs/<run-id>/contract.json` — frozen ideation contract copied from the standalone contract artifact.
 - `.ai-scientist/runs/<run-id>/run.md` — ideation progress, reflection rounds, selected ids, manual checks, and completion status.
 - `.ai-scientist/runs/<run-id>/ideas.json` — lightweight selected-idea index containing ids, titles, idea-file refs, and pilot-report refs.
 - `.ai-scientist/runs/<run-id>/ideas/<idea-id>.md` — detailed idea handoff document.
 - `.ai-scientist/runs/<run-id>/logs/pilots/<idea-id>/report.md` — pilot viability evidence for a selected idea.
 - `.ai-scientist/runs/<run-id>/config.json` — frozen run configuration, active mode, selected idea snapshot, optional custom criteria, prompt paths, and explicit resource caps.
-- `.ai-scientist/runs/<run-id>/loop-state.json` — mutable progress state, orchestrator work records/checkpoints, shared baseline state, lightweight node/outcome summaries, resource leases, orchestration cursor, and Stop-hook gate state.
-- `.ai-scientist/runs/<run-id>/journal.jsonl` — append-only audit stream for orchestration decisions, API calls, Stop-hook events, resource events, handoff events, and notable validations.
+- `.ai-scientist/runs/<run-id>/loop-state.json` — mutable progress state, orchestrator work records/checkpoints, shared baseline state, lightweight node/outcome summaries, resource leases, and orchestration cursor.
+- `.ai-scientist/runs/<run-id>/journal.jsonl` — append-only audit stream for orchestration decisions, API calls, resource events, handoff events, and notable validations.
 - `.ai-scientist/runs/<run-id>/selection.json` — final selected accepted node/outcome details, evidence refs, and acceptance rationale.
 - `.ai-scientist/runs/<run-id>/baseline/` — shared baseline unit for frozen dataset splits, cloned baseline-paper repositories, baseline score calculations, and `baseline.json`.
 
 Do not create separate v1 research-loop ledgers for dependency plans, API calls,
-Stop-hook events, handoffs, resource state, or orchestrator locks. Store those
+handoffs, resource state, or orchestrator locks. Store those
 under `config.json`, `journal.jsonl`, or `loop-state.json` as appropriate.
 Normal state mutation must go through the `ai-scientist` CLI; hand-editing
 `loop-state.json` is a manual recovery path, not normal orchestration.
@@ -41,7 +41,7 @@ lease events are auditable.
 
 All phase transitions run `ai-scientist validate run`. A non-zero validator exit blocks the next phase.
 
-Hard continuation also requires the project-local Codex Stop hook installed by `ai-scientist hooks install`. The hook reads `active-run.json` and `loop-state.json`; active phases or terminal phases without a passing `completion_audit` return `decision: "block"` to Codex.
+Run long-lived workflows under `/goal` in Claude Code or Codex. The goal continues until the workflow's explicit terminal condition is met; `active-run.json`, `loop-state.json`, and `journal.jsonl` provide durable resume and audit context.
 
 ### Ideation to research
 
@@ -55,7 +55,7 @@ its manual artifact checks and `status: complete` in `run.md`.
 Requires completed research loop state, no unresolved checkpointed work, no active resource
 leases, final selection pointing at an accepted node/outcome, and a passing
 completion audit. After validation passes, record validation and approved handoff
-journal evidence so the Stop hook can release the orchestrator.
+journal evidence before completing the goal.
 
 ### Review to writeup
 

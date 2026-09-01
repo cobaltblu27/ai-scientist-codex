@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""State helpers for AI Scientist continuation and Stop-hook gates."""
+"""State helpers for durable AI Scientist run artifacts."""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,6 @@ ALLOW_WITH_REASON_STATUSES = {"cancelled", "blocked_on_user", "failed"}
 JOURNAL_EVENT_TYPES = {
     "state_transition",
     "api_call",
-    "stop_hook",
     "resource_event",
     "subagent_event",
     "critic_event",
@@ -94,28 +93,6 @@ class CompletionResult:
     complete: bool
     reason: str
     state: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class StopDecision:
-    decision: str
-    reason: str
-    system_message: str = ""
-    run_id: str | None = None
-    phase: str | None = None
-    state_path: str | None = None
-
-    def to_hook_output(self) -> dict[str, Any]:
-        if self.decision == "allow":
-            return {}
-        output = {
-            "decision": "block",
-            "reason": self.reason,
-            "stopReason": self.reason,
-        }
-        if self.system_message:
-            output["systemMessage"] = self.system_message
-        return output
 
 
 def utc_now() -> str:
@@ -468,12 +445,7 @@ def set_active_run(
     run_id: str,
     phase: str,
     status: str = "active",
-    owner_session_id: str | None = None,
 ) -> dict[str, Any]:
-    current = load_active_run(target_repo)
-    if current and current.get("run_id") == run_id:
-        if owner_session_id is None and isinstance(current.get("owner_session_id"), str):
-            owner_session_id = current["owner_session_id"]
     payload = {
         "schema_version": 1,
         "run_id": run_id,
@@ -481,7 +453,6 @@ def set_active_run(
         "status": status,
         "updated_at": utc_now(),
         "target_repo": str(target_repo.resolve()),
-        "owner_session_id": owner_session_id,
     }
     atomic_write_json(active_run_path(target_repo), payload)
     return payload
@@ -535,7 +506,6 @@ def start_phase(
         "updated_at": now,
         "completed_at": None,
         "run_outcome": None,
-        "stop_policy": "block_until_completion_audit",
         "completion_audit": None,
         "state": initial_state or {},
         "completed_phases": completed_phases,
@@ -826,7 +796,7 @@ def phase_gate(phase: str) -> str | None:
     return None
 
 
-def has_stop_release_evidence(target_repo: Path, run_id: str, phase: str) -> bool:
+def has_release_evidence(target_repo: Path, run_id: str, phase: str) -> bool:
     gate = phase_gate(phase)
     if gate is None:
         return True
@@ -904,159 +874,3 @@ def cancel_phase(target_repo: Path, run_id: str, reason: str) -> dict[str, Any]:
     write_loop_state(target_repo, run_id, state)
     clear_active_run(target_repo, run_id)
     return state
-
-
-def reopen_for_verification(target_repo: Path, run_id: str, reason: str) -> dict[str, Any]:
-    state = load_loop_state(target_repo, run_id)
-    if not state:
-        raise FileNotFoundError(f"missing loop-state.json for run {run_id}")
-    state["active"] = True
-    state["phase_status"] = "verifying"
-    state["reopened_by_stop_hook"] = True
-    state["reopen_reason"] = reason
-    state["completed_at"] = None
-    write_loop_state(target_repo, run_id, state)
-    set_active_run(target_repo, run_id, str(state.get("phase") or "unknown"), "active")
-    return state
-
-
-def resolve_target_repo_from_payload(payload: dict[str, Any], cwd: Path | None = None) -> Path:
-    candidates = [
-        payload.get("cwd"),
-        payload.get("working_directory"),
-        payload.get("workingDirectory"),
-        payload.get("workspace_root"),
-        payload.get("workspaceRoot"),
-    ]
-    for candidate in candidates:
-        if isinstance(candidate, str) and candidate.strip():
-            return Path(candidate).resolve()
-    return (cwd or Path.cwd()).resolve()
-
-
-def payload_identity_value(payload: dict[str, Any], keys: tuple[str, ...], env_keys: tuple[str, ...]) -> str | None:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    for key in env_keys:
-        value = os.environ.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-SESSION_PAYLOAD_KEYS = ("session_id", "sessionId", "owner_session_id", "codex_session_id", "codexSessionId")
-SESSION_ENV_KEYS = ("CODEX_SESSION_ID", "CODEX_SESSION", "CLAUDE_CODE_SESSION_ID")
-
-
-def stop_caller_identity(payload: dict[str, Any] | None = None) -> str | None:
-    """Identify the session a Stop hook fired for.
-
-    Codex passes codex_session_id, Claude Code passes session_id; both runtimes
-    also export an env var for CLI calls made outside a hook payload.
-    """
-    return payload_identity_value(payload or {}, SESSION_PAYLOAD_KEYS, SESSION_ENV_KEYS)
-
-
-def current_session_id() -> str | None:
-    return payload_identity_value({}, (), SESSION_ENV_KEYS)
-
-
-def stop_is_worker_context(payload: dict[str, Any] | None = None) -> bool:
-    payload = payload or {}
-    marker = payload.get("ai_scientist_worker") or payload.get("aiScientistWorker")
-    if marker is True or (isinstance(marker, str) and marker.strip().lower() in {"1", "true", "yes"}):
-        return True
-    return os.environ.get("AI_SCIENTIST_WORKER", "").strip().lower() in {"1", "true", "yes"}
-
-
-def active_run_owned_by_caller(active: dict[str, Any], payload: dict[str, Any] | None = None) -> bool | None:
-    owner_session = active.get("owner_session_id")
-    if not isinstance(owner_session, str) or not owner_session.strip():
-        return None
-    caller_session = stop_caller_identity(payload)
-    if caller_session is None:
-        return True
-    return caller_session == owner_session.strip()
-
-
-def evaluate_stop_decision(target_repo: Path, payload: dict[str, Any] | None = None) -> StopDecision:
-    active = load_active_run(target_repo)
-    if not active:
-        return StopDecision("allow", "no_active_ai_scientist_run")
-    active_reason = validate_active_run_contract(active)
-    if active_reason:
-        return StopDecision("block", f"active_run_invalid:{active_reason}", "AI Scientist active-run.json is malformed; repair it before stopping.")
-    run_id = active.get("run_id")
-    phase = active.get("phase")
-    if not isinstance(run_id, str) or not run_id.strip():
-        return StopDecision("block", "active_run_missing_run_id", "AI Scientist active-run.json is malformed; repair it before stopping.")
-    state_path = loop_state_path(target_repo, run_id)
-    state = load_loop_state(target_repo, run_id)
-    if not state:
-        return StopDecision("block", "missing_loop_state", f"AI Scientist active run {run_id} has no loop-state.json. Restore state or cancel explicitly before stopping.", run_id, phase, str(state_path))
-    phase = str(state.get("phase") or phase or "unknown")
-    if active.get("status") == "validating":
-        message = f"AI Scientist {phase} is validating run {run_id}. Continue until validation clears active-run.json."
-        return StopDecision("block", f"ai_scientist_{phase}_validating", message, run_id, phase, str(state_path))
-    if state.get("active") is True:
-        if phase == "research" and stop_is_worker_context(payload):
-            return StopDecision("allow", "ai_scientist_research_worker_stop_ignored", run_id=run_id, phase=phase, state_path=str(state_path))
-        if phase == "research" and active_run_owned_by_caller(active, payload) is False:
-            return StopDecision("allow", "ai_scientist_research_non_orchestrator_stop_ignored", run_id=run_id, phase=phase, state_path=str(state_path))
-        phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
-        cursor = ""
-        if phase in {"research", "writeup"}:
-            orchestrator = phase_state.get("orchestrator") if isinstance(phase_state.get("orchestrator"), dict) else {}
-            next_action = orchestrator.get("next_action")
-            details = orchestrator.get("next_action_details") if isinstance(orchestrator.get("next_action_details"), dict) else {}
-            current_node = orchestrator.get("current_node") or phase_state.get("current_node") or phase_state.get("selected_node")
-            if next_action:
-                reason = details.get("reason") or details.get("audit_verdict")
-                cursor = f" Run: {run_id}. Next action: {next_action}."
-                if current_node:
-                    cursor += f" Node: {current_node}."
-                pending_audit = details.get("pending_audit")
-                if pending_audit:
-                    cursor += f" Pending audit: {pending_audit}."
-                if reason:
-                    cursor += f" Reason: {reason}."
-        if not cursor:
-            cursor = f" Run: {run_id}. Status: {state.get('phase_status', 'active')}."
-        message = f"AI Scientist {phase} is still active.{cursor} Continue from {state_path} and do not report completion until completion_audit passes."
-        return StopDecision("block", f"ai_scientist_{phase}_active", message, run_id, phase, str(state_path))
-    result = evaluate_completion(target_repo, run_id)
-    phase_status = str(state.get("phase_status") or "").lower()
-    if result.complete:
-        if phase_status in ALLOW_WITH_REASON_STATUSES and terminal_reason_present(state):
-            return StopDecision("allow", f"{phase_status}_with_reason", run_id=run_id, phase=phase, state_path=str(state_path))
-        if not has_stop_release_evidence(target_repo, run_id, phase):
-            message = f"AI Scientist {phase} completion state is complete but validation/handoff journal evidence is missing. Continue verification before stopping."
-            return StopDecision("block", f"ai_scientist_{phase}_missing_release_evidence", message, run_id, phase, str(state_path))
-        return StopDecision("allow", result.reason, run_id=run_id, phase=phase, state_path=str(state_path))
-    if phase_status in ALLOW_WITH_REASON_STATUSES and terminal_reason_present(state):
-        return StopDecision("allow", f"{phase_status}_with_reason", run_id=run_id, phase=phase, state_path=str(state_path))
-    if phase_status in TERMINAL_PHASE_STATUSES or phase_status == "verifying":
-        reopen_for_verification(target_repo, run_id, result.reason)
-        message = f"AI Scientist {phase} completion audit is incomplete ({result.reason}). Continue verification and update completion_audit before stopping."
-        return StopDecision("block", f"ai_scientist_{phase}_completion_audit_blocked", message, run_id, phase, str(state_path))
-    message = f"AI Scientist {phase} is not terminal ({phase_status or 'unknown'}). Continue the phase before stopping."
-    return StopDecision("block", f"ai_scientist_{phase}_not_terminal", message, run_id, phase, str(state_path))
-
-
-def log_stop_decision(target_repo: Path, decision: StopDecision, payload: dict[str, Any] | None = None) -> None:
-    if not decision.run_id:
-        return
-    append_journal_event(
-        target_repo,
-        decision.run_id,
-        "stop_hook",
-        details={
-            "phase": decision.phase,
-            "decision": decision.decision,
-            "reason": decision.reason,
-            "state_path": decision.state_path,
-            "hook_event_name": (payload or {}).get("hook_event_name") or (payload or {}).get("hookEventName"),
-        },
-    )

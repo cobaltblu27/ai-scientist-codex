@@ -1,6 +1,6 @@
 # Checkpointing
 
-Use `$research-loop-checkpoint` as resumable memory for the orchestrator. It is a durable patch to `loop-state.json` plus a matching `journal.jsonl` transition, not a report and not a workflow engine.
+Use `ai-scientist:research-loop-checkpoint` through Claude Code's Skill tool as resumable memory for the orchestrator. It is a durable patch to `loop-state.json` plus a matching `journal.jsonl` transition, not a report and not a workflow engine.
 
 ## When To Checkpoint
 
@@ -47,6 +47,6 @@ Add these only when they change:
 
 ## Merge Behavior
 
-`$research-loop-checkpoint` merges top-level `baseline`, `work`, `tasks`, `resources`, `selection`, `resource_queue`, `nodes`, and `orchestrator` fields into `loop-state.json` and records the transition in `journal.jsonl`.
+`ai-scientist:research-loop-checkpoint` merges top-level `baseline`, `work`, `tasks`, `resources`, `selection`, `resource_queue`, `nodes`, and `orchestrator` fields into `loop-state.json` and records the transition in `journal.jsonl`.
 
 Use stable ids for `work` and `nodes`. Reusing the same id updates that record.

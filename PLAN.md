@@ -9,7 +9,7 @@ Convert the workflow from "select one idea, then research it" into a run-owned p
 - Extend `ideation start` to accept `--json/--json-file` payloads containing a required top-level `research_contract`.
 - Keep `--prompt` as the human topic/context, but make the binding benchmark goal come from `research_contract`.
 - Change ideation completion/handoff so `ideation_to_research` requires a valid run-owned `research_contract`, at least `min_candidates` accepted ideas, no pending generator/critic intents, and no ranking requirement.
-- Keep `ideation rank-candidates` and `rank-finalize` available only as legacy/manual commands, but remove them from normal prompts, cursor flow, completion gates, and Stop-hook requirements.
+- Keep `ideation rank-candidates` and `rank-finalize` available only as legacy/manual commands, but remove them from normal prompts, cursor flow, and completion gates.
 - Change `research start` so `--selected-idea-id` is optional. Require either a new campaign payload with `research_contract` plus `idea_batch`, or a legacy payload with `selected_idea` plus optional `--selected-idea-id`.
 
 ## Implementation Changes
@@ -23,7 +23,7 @@ Convert the workflow from "select one idea, then research it" into a run-owned p
 - Keep scientist mode paper-worthy: prefer novelty and big-picture finding potential, but do not require each individual idea to already be a complete paper claim.
 - Remove ranker from `skills/ideation/SKILL.md` normal flow.
 - Update `ideation_to_research` validator and completion audit to check accepted idea batch instead of final ranking.
-- Update Stop-hook completion evaluation to allow ideation completion without ranking when batch handoff is ready.
+- Let the `/goal` ideation workflow complete without ranking when batch handoff is ready.
 - Freeze `research_contract`, `idea_batch`, mode, resource policy, and `learning_notes_ref` in research config.
 - Initialize research state with an empty node forest plus enough metadata for the orchestrator to create one initial node per idea.
 - Keep baseline unit code, but do not require or trigger it when the contract already provides fixed dataset, split, baseline, and evaluator.
@@ -48,7 +48,7 @@ Convert the workflow from "select one idea, then research it" into a run-owned p
 - Legacy rank commands still validate/manual-record when called directly.
 - `ideation_to_research` passes with contract plus accepted idea batch plus approved handoff.
 - `ideation_to_research` fails when contract is missing, no accepted ideas exist, or pending intents remain.
-- Stop hook allows completed ideation without `selected_idea_id`.
+- `/goal` completion allows completed ideation without `selected_idea_id`.
 - `research start` accepts `idea_batch` and freezes it into config.
 - Legacy single selected idea start still works.
 - Initial research state can record multiple nodes seeded from different ideas.

@@ -1,9 +1,14 @@
 ---
 name: review
 description: Explicit-only final AI Scientist run-level evidence review; do not use for idea, draft, node, revision, paper, or code critic/review tasks. DO NOT USE; this skill is explicit-usuage ONLY.
+disable-model-invocation: true
 ---
 
 # Review
+
+<Persistence>
+Run the final run-level review under `/goal` in both Claude Code and Codex. Complete the goal only after the verdict and required audit artifacts are written.
+</Persistence>
 
 <Use_When>
 Use this skill ONLY when the user explicitly triggers the AI Scientist review skill for a final run-level review. This skill audits completed AI Scientist artifacts after the research loop, and after writeup when a writeup exists, to decide whether the run evidence supports the claimed outcome.

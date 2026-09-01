@@ -27,13 +27,6 @@
     },
     "target_repo": {
       "type": "string"
-    },
-    "owner_session_id": {
-      "description": "Session that owns this run. Codex session id or Claude Code session id, whichever runtime started it.",
-      "type": [
-        "string",
-        "null"
-      ]
     }
   }
 }

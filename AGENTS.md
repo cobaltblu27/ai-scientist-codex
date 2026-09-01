@@ -15,10 +15,9 @@ Many specs to add will require change of CLI or prompt. Same feature can be impl
 
 Default to the prompt. Skills own the loop: they choose actions, write run artifacts under `.ai-scientist/runs/<run-id>/`, and decide when a phase is done. A skill writing `loop-state.json` or `active-run.json` directly is the normal path, not a workaround.
 
-Reserve the CLI for the two things a prompt cannot guarantee:
+Use `/goal` for workflow persistence in both Claude Code and Codex.
 
-1. **Enforcement that must hold even when the model misbehaves.** The Stop hook is the clearest case: it decides whether a session is allowed to stop, so it cannot live in prose the same session is free to ignore.
-2. **Artifact shape.** Because skills hand-write state, the CLI is what keeps that state parseable and comparable across runs. Validation of a written artifact belongs here even though the writing does not.
+Reserve the CLI for artifact shape. Because skills hand-write state, the CLI is what keeps that state parseable and comparable across runs. Validation of a written artifact belongs here even though the writing does not.
 
 Everything else, including orchestration policy, branching and ranking decisions, resource pacing, and evidence standards, belongs in prompts. Move a rule into the CLI only when real-world runs prove the prompt version does not hold.
 

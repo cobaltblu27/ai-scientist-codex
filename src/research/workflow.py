@@ -31,7 +31,6 @@ from core.state import (
     run_dir,
     run_lock,
     selection_path,
-    current_session_id,
     set_active_run,
     start_phase,
     utc_now,
@@ -646,7 +645,6 @@ def cmd_research_start(args: argparse.Namespace) -> int:
         args.run_id,
         "research",
         "active",
-        owner_session_id=current_session_id(),
     )
     atomic_write_json(config_path(target, args.run_id), cfg)
     learning_notes_ref = cfg.get("learning_notes_ref")

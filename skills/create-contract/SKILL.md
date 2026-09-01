@@ -1,6 +1,7 @@
 ---
 name: create-contract
 description: Draft and write a standalone AI Scientist research_contract JSON artifact for later ideation or research-loop use. Explicit-only; do not start any loop.
+disable-model-invocation: true
 ---
 
 # Create Contract

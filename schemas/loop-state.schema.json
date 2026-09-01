@@ -8,7 +8,6 @@
     "phase",
     "phase_status",
     "updated_at",
-    "stop_policy",
     "state"
   ],
   "properties": {
@@ -63,9 +62,6 @@
         "string",
         "null"
       ]
-    },
-    "stop_policy": {
-      "const": "block_until_completion_audit"
     },
     "completion_audit": {
       "type": [

@@ -1,2 +1,0 @@
-"""Codex hook helpers."""
-

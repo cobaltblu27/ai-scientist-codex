@@ -14,7 +14,7 @@ from core.state import (
     audit_block_reason,
     block_for_manual_recovery,
     clear_active_run,
-    has_stop_release_evidence,
+    has_release_evidence,
     load_active_run,
     load_loop_state,
     run_dir,
@@ -88,28 +88,6 @@ def cmd_validate_run(args: argparse.Namespace) -> int:
     if args.run_id:
         argv.extend(["--run-id", args.run_id])
     return validate_run_main(argv)
-
-
-def cmd_hooks_install(args: argparse.Namespace) -> int:
-    from hooks.install import main as install_main
-
-    return install_main(["--project-root", str(args.project_root), "--python", args.python])
-
-
-def cmd_hooks_check(args: argparse.Namespace) -> int:
-    from hooks.install import main as install_main
-
-    return install_main(["--project-root", str(args.project_root), "--python", args.python, "--check"])
-
-
-def cmd_hooks_stop_gate(args: argparse.Namespace) -> int:
-    """Internal entrypoint retained for already-installed CLI-style hooks."""
-    from hooks.stop_gate import main as stop_gate_main
-
-    argv: list[str] = []
-    if args.target_repo:
-        argv.extend(["--target-repo", str(args.target_repo)])
-    return stop_gate_main(argv)
 
 
 def cmd_agents_install(args: argparse.Namespace) -> int:
@@ -246,7 +224,7 @@ def cmd_handoff_record(args: argparse.Namespace) -> int:
         args.approved
         and state
         and state.get("phase_status") == "complete"
-        and has_stop_release_evidence(target, run_id, str(state.get("phase") or "research"))
+        and has_release_evidence(target, run_id, str(state.get("phase") or "research"))
     ):
         clear_active_run(target, run_id)
     return response("ok", run_id=run_id, gate=args.gate, approved=args.approved)
@@ -268,20 +246,6 @@ def build_parser() -> argparse.ArgumentParser:
     validate_run.add_argument("--gate", choices=["research_to_review", "review_to_writeup", "launch"], required=True)
     validate_run.add_argument("--run-id")
     validate_run.set_defaults(func=cmd_validate_run)
-
-    hooks = sub.add_parser("hooks")
-    hooks_sub = hooks.add_subparsers(dest="command", required=True)
-    hooks_install = hooks_sub.add_parser("install")
-    hooks_install.add_argument("--project-root", type=Path, default=Path.cwd())
-    hooks_install.add_argument("--python", default=sys.executable)
-    hooks_install.set_defaults(func=cmd_hooks_install)
-    hooks_check = hooks_sub.add_parser("check")
-    hooks_check.add_argument("--project-root", type=Path, default=Path.cwd())
-    hooks_check.add_argument("--python", default=sys.executable)
-    hooks_check.set_defaults(func=cmd_hooks_check)
-    stop_gate = hooks_sub.add_parser("stop-gate", help=argparse.SUPPRESS)
-    stop_gate.add_argument("--target-repo", type=Path)
-    stop_gate.set_defaults(func=cmd_hooks_stop_gate)
 
     agents = sub.add_parser("agents")
     agents_sub = agents.add_subparsers(dest="command", required=True)

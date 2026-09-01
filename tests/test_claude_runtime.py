@@ -1,25 +1,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
 
 from test_support import PLUGIN_ROOT
-
-from core.state import active_run_owned_by_caller, stop_caller_identity
-
-
-class SessionIdentityTests(unittest.TestCase):
-    def test_identity_reads_both_runtime_payload_shapes(self) -> None:
-        self.assertEqual(stop_caller_identity({"session_id": "claude-1"}), "claude-1")
-        self.assertEqual(stop_caller_identity({"codex_session_id": "codex-1"}), "codex-1")
-
-    def test_ownership_holds_the_owner_and_releases_other_sessions(self) -> None:
-        active = {"owner_session_id": "owner"}
-        self.assertIs(active_run_owned_by_caller(active, {"session_id": "owner"}), True)
-        self.assertIs(active_run_owned_by_caller(active, {"session_id": "worker"}), False)
-
-    def test_unowned_run_is_not_attributed_to_any_session(self) -> None:
-        self.assertIsNone(active_run_owned_by_caller({"owner_session_id": None}, {"session_id": "x"}))
 
 
 class ClaudePluginManifestTests(unittest.TestCase):
@@ -30,11 +15,32 @@ class ClaudePluginManifestTests(unittest.TestCase):
         self.assertIn("description", plugin)
         self.assertEqual([p["name"] for p in marketplace["plugins"]], [plugin["name"]])
 
-    def test_stop_hook_is_the_only_wired_event(self) -> None:
-        hooks = json.loads((PLUGIN_ROOT / "hooks" / "hooks.json").read_text())["hooks"]
-        self.assertEqual(list(hooks), ["Stop"])
-        command = hooks["Stop"][0]["hooks"][0]["command"]
-        self.assertIn("hooks stop-gate", command)
+    def test_plugin_does_not_ship_hooks(self) -> None:
+        self.assertFalse((PLUGIN_ROOT / "hooks" / "hooks.json").exists())
+
+    def test_bundled_cli_launcher_runs_without_a_global_install(self) -> None:
+        launcher = PLUGIN_ROOT / "bin" / "ai-scientist"
+        result = subprocess.run(
+            [launcher, "--help"],
+            cwd=PLUGIN_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("AI Scientist", result.stdout)
+        self.assertNotIn("hooks", result.stdout)
+
+    def test_research_loop_uses_claude_native_routing(self) -> None:
+        skill = (PLUGIN_ROOT / "skills" / "research-loop" / "SKILL.md").read_text()
+        bootstrap = (PLUGIN_ROOT / "skills" / "research-loop-bootstrap" / "SKILL.md").read_text()
+        worker = (PLUGIN_ROOT / "agents" / "ai-scientist-research-worker.md").read_text()
+        self.assertIn("disable-model-invocation: true", skill)
+        self.assertIn("ai-scientist:ai-scientist-research-worker", skill)
+        self.assertNotIn("update_goal", skill)
+        self.assertIn("`/goal`", skill)
+        self.assertIn("`/goal`", bootstrap)
+        self.assertIn("ai-scientist --target-repo <target-repo> resource run", worker)
 
 
 if __name__ == "__main__":

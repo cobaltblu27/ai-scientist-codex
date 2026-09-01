@@ -43,7 +43,7 @@ The orchestrator assigns you when the selected idea or `research_contract` requi
 - Write or update `baseline/baseline.json` as the run-level authoritative baseline manifest with `status`, `fixed_split_dir`, `split_manifest_ref`, `split_refs`, `repo_refs`, `baseline_score_refs`, and readiness notes.
 - If you create per-split manifests under `baseline/splits/<split-id>/...`, reference them from `baseline/baseline.json`; node workers should be able to find the exact split through the run-level manifest.
 - If a baseline-paper repository is needed, clone it into `baseline/repos/<repo-id>/` and record URL, commit, branch/tag, and any required checkpoint/source notes.
-- If a baseline score must be computed, run the apples-to-apples command through `resource run`, write calculation artifacts under `baseline/calculations/<calculation-id>/`, and return the resource command refs.
+- If a baseline score must be computed, run the apples-to-apples command through `ai-scientist --target-repo <target-repo> resource run` with the assigned run ID and calculation workspace, write artifacts under `baseline/calculations/<calculation-id>/`, and return the resource command refs.
 </Responsibilities>
 
 <Node_Contract>

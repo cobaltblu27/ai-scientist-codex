@@ -13,7 +13,6 @@
       "enum": [
         "state_transition",
         "api_call",
-        "stop_hook",
         "resource_event",
         "subagent_event",
         "critic_event",

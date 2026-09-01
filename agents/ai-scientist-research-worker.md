@@ -96,7 +96,7 @@ Continue through unfinished runnable todos until reaching a listed orchestration
 <Resource_Heavy_Work>
 If you are assigned a resource-heavy queued job, preserve its `job_id`, `command`, `cwd`, and `request` exactly in your result report. The orchestrator owns queue movement; your job is to run the assigned command and return terminal evidence.
 
-Use `resource run` for official experiment or benchmark evidence. When the orchestrator already checked capacity, use `resource run --timeout-sec 0` or a short timeout so resource acquisition fails quickly instead of polling indefinitely. Include resource request flags such as `--gpus`, `--cpu-cores`, `--memory-mb`, `--timeout-sec`, and `--poll-sec` when invoking `resource run`.
+Use `ai-scientist --target-repo <target-repo> resource run` for official experiment or benchmark evidence, passing the assigned run ID and workspace as `--run-id` and `--cwd`. When the orchestrator already checked capacity, use `--timeout-sec 0` or a short timeout so resource acquisition fails quickly instead of polling indefinitely. Include resource request flags such as `--gpus`, `--cpu-cores`, `--memory-mb`, `--timeout-sec`, and `--poll-sec`.
 
 If resource acquisition fails, return `blocked_resource_unavailable` promptly with the `job_id`, request, command ref if one exists, and the resource status evidence. Do not keep polling forever inside the worker.
 

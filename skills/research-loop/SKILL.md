@@ -3,6 +3,7 @@ name: research-loop
 description: >
   Runs the canonical orchestrator-led AI Scientist research loop with worker-owned nodes, resource leases, native agents, and durable continuation.
   Use only when the user explicitly invokes research-loop; never auto-select it.
+disable-model-invocation: true
 ---
 
 <GreenField_Rule>
@@ -14,6 +15,10 @@ Each run is a independent campaign, and previous runs may include artifacts crea
 
 # Research Loop
 
+<Persistence>
+Run the research campaign under `/goal` in both Claude Code and Codex. Define the goal as reaching one of the explicit `Terminal_Conditions` with the required completion audit and handoff evidence. Durable run artifacts remain the resume source of truth.
+</Persistence>
+
 <Big_Picture>
 This is an orchestrator-led, durable research campaign.
 Bootstrap a new run or resume `.ai-scientist/runs/<run-id>/`; the artifacts, not conversation memory, are the source of truth.
@@ -23,7 +28,7 @@ The loop continues while justified runnable work remains and ends only under `Te
 </Big_Picture>
 
 <Startup>
-For a new run, call `$research-loop-preflight`, then `$research-loop-bootstrap`.
+For a new run, invoke `ai-scientist:research-loop-preflight`, then `ai-scientist:research-loop-bootstrap`, through Claude Code's Skill tool.
 They freeze `config.md`, including the idea batch, Python environment, research contract, resource policy, and available agent types.
 Do not repeat them when resuming.
 Choose a stable `<run-id>` and do not rename it.
@@ -38,7 +43,7 @@ Use stable IDs for nodes and work.
 Store worker reports under `logs/workers/<node-id>/<worker-id>/result.md`, baseline reports under `logs/baseline/<work-id>/result.md`, ranker reports under `logs/rankings/<ranking-id>/result.md`, and revision reports under
 `logs/revisions/<node-id>/<revision-id>/result.md`.
 
-`$research-loop-checkpoint` is durable resume memory, not a workflow engine or scientific judgment.
+`ai-scientist:research-loop-checkpoint` is durable resume memory, not a workflow engine or scientific judgment.
 Keep patches small and link reports rather than copying them.
 Mark requirements and actions by authority: `binding_contract`, `binding_amendment`, `current_plan`, `advisory`, or `superseded`.
 A checkpoint never promotes a plan or recommendation into a binding requirement.
@@ -60,7 +65,7 @@ The orchestrator decides what enters it.
   Initial ideas each receive a node worker.
 - The frozen config, state, journal, and selection artifact are authoritative; linked reports are evidence, and chat memory is not evidence.
 - Checkpoint every durable transition: assignment, meaningful worker return, resource release/completion, ranking or revision decision, branch, acceptance, abandonment, and terminal transition.
-  Use `$research-loop-checkpoint` and [checkpointing.md](references/checkpointing.md).
+  Invoke `ai-scientist:research-loop-checkpoint` through the Skill tool and follow [checkpointing.md](references/checkpointing.md).
 - Never wait while independent justified work is runnable.
   Idle capacity does not justify inventing work.
 </Non_Negotiable_Invariants>
@@ -137,7 +142,7 @@ Confirm the plateau when the same dominant failure decomposition appears in at l
 On a plateau, structurally explore: replace or reorganize major trainable pathways, jointly retrain upstream modules, train from scratch, change the learning objective, or add a contract-compatible auxiliary dataset.
 Do not answer it with another post-hoc module.
 
-For every tried node, call `$architecture-tree` and measure its distance from its direct parent as the minimum number of canonical tree add, remove, or replace edits.
+For every tried node, invoke `ai-scientist:architecture-tree` through the Skill tool and measure its distance from its direct parent as the minimum number of canonical tree add, remove, or replace edits.
 On a plateau, the next exploratory branch must have distance at least `max(3, 2 * median(previous_four_parent_distances))` from its selected parent.
 It must change a representation, fusion, training, supervision, or data pathway; predictor-only changes and post-hoc modules do not qualify.
 Record the parent, edit script, distance, target failure decomposition, and architecture-level hypothesis.
@@ -152,16 +157,16 @@ correction.
 </Progress_Portfolio_And_Stagnation>
 
 <Agent_Routing>
-Use native agents after verifying the role is available.
+Use Claude Code's Agent tool after verifying the plugin-scoped role is available. Give each long-lived worker a stable name; resume it with SendMessage using its returned agent ID or name.
 Pass only dynamic assignment context; do not read or paste prompt files into assignments.
 
-- Baseline: `ai-scientist-research-baseline-worker` when the contract needs a frozen split or missing comparable baseline evidence.
-- Node: `ai-scientist-research-worker` for each initial or branched node.
-- Ranker: `ai-scientist-research-ranker` for a comparable completed cohort.
-- Revision: `ai-scientist-research-revision-worker` for open-ended failure analysis or scientific redesign.
-  It uses `revision-brainstorm`; use `data-insight-revision` when fresh data/model/benchmark diagnosis is needed.
+- Baseline: `ai-scientist:ai-scientist-research-baseline-worker` when the contract needs a frozen split or missing comparable baseline evidence.
+- Node: `ai-scientist:ai-scientist-research-worker` for each initial or branched node.
+- Ranker: `ai-scientist:ai-scientist-research-ranker` for a comparable completed cohort.
+- Revision: `ai-scientist:ai-scientist-research-revision-worker` for open-ended failure analysis or scientific redesign.
+  It invokes `ai-scientist:revision-brainstorm`; use `ai-scientist:data-insight-revision` when fresh data/model/benchmark diagnosis is needed.
 
-For a new node, record its seed idea, frozen contract, resource policy, workspace, expected result path, relevant baseline refs, and current evidence.
+For a new node, record its seed idea, frozen contract, target repository, resource policy, workspace, expected result path, relevant baseline refs, and current evidence.
 The first node-worker return is an ordered, amendable execution todo list; review it, then resume the same worker to execute useful todos sequentially.
 Workers return at a resource-heavy boundary, decision-worthy result, blocker, direction-changing finding, or planned-work completion.
 Resume the same node worker when practical.
@@ -223,8 +228,7 @@ Before any terminal transition, harvest/retire outstanding work, drain or explic
 Do not call a failed experiment `exhausted` while a contract-relevant diagnostic, revision, branch, or rerun remains justified and fits the frozen policy.
 Do not continue after an `exhausted` decision merely because capacity is idle.
 For `success`, write `selection.json` with the accepted node, evidence refs, and acceptance rationale after a completion audit verifies the binding positive criteria.
-For every outcome, checkpoint the audit, reason, terminal `phase_status`, and handoff evidence.
-Mark the goal `complete` for `success`, `exhausted`, or `cancelled`; for `blocked`, use `update_goal` with `status: blocked` only when its blocking rule is satisfied.
+For every outcome, checkpoint the audit, reason, terminal `phase_status`, top-level `active: false`, and handoff evidence before completing the goal.
 Do not create an accepted selection for `exhausted`, `cancelled`, or `blocked`.
 </Terminal_Conditions>
 
