@@ -96,13 +96,13 @@ def prompt_path_for(kind: str) -> str | None:
     if kind == "orchestrator":
         return "skills/research-loop/SKILL.md"
     if kind == "worker":
-        return "prompts/research-loop/worker.md"
+        return "agents/ai-scientist-research-worker.toml"
     if kind == "baseline-worker":
-        return "prompts/research-loop/baseline-worker.md"
+        return "agents/ai-scientist-research-baseline-worker.toml"
     if kind == "ranker":
-        return "prompts/research-loop/ranker.md"
+        return "agents/ai-scientist-research-ranker.toml"
     if kind == "revision-worker":
-        return "prompts/research-loop/revision-worker.md"
+        return "agents/ai-scientist-research-revision-worker.toml"
     return None
 
 
@@ -201,7 +201,7 @@ def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, An
         "custom_criteria": criteria,
         "resources": resources,
         "research": {
-            "prompt_root": "prompts/research-loop",
+            "prompt_root": "agents",
             "orchestrator_prompt": prompt_path_for("orchestrator"),
             "worker_agent": research_agent_name("worker"),
             "worker_prompt_source": prompt_path_for("worker"),

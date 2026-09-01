@@ -68,7 +68,8 @@ class IdeationPromptSchemaTests(unittest.TestCase):
     def test_ideation_skill_is_goal_and_artifact_driven(self) -> None:
         skill = (PLUGIN_ROOT / "skills" / "ideation" / "SKILL.md").read_text()
         self.assertIn("create_goal", skill)
-        self.assertIn("ai-scientist agents check", skill)
+        self.assertIn("installed Codex agent roles", skill)
+        self.assertNotIn("ai-scientist agents check", skill)
         self.assertIn("contract.json", skill)
         self.assertIn("ideas/<idea-id>.md", skill)
         self.assertIn("logs/pilots/<idea-id>/report.md", skill)
@@ -77,9 +78,9 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertNotIn("ai-scientist ideation start", skill)
         self.assertNotIn("ideation finalize-ready", skill)
 
-    def test_ideation_generated_agent_prompts_exist(self) -> None:
-        generator = (PLUGIN_ROOT / "prompts" / "ideation" / "generator.md").read_text()
-        critic = (PLUGIN_ROOT / "prompts" / "ideation" / "critic.md").read_text()
+    def test_ideation_agent_prompts_exist(self) -> None:
+        generator = (PLUGIN_ROOT / "agents" / "ai-scientist-ideation-generator.toml").read_text()
+        critic = (PLUGIN_ROOT / "agents" / "ai-scientist-ideation-critic.toml").read_text()
         self.assertIn("contract", generator.lower())
         self.assertIn("contract", critic.lower())
         self.assertIn("constructive feedback provider, not an acceptance gate", critic)

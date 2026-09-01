@@ -46,7 +46,6 @@ def test_research_config_uses_shared_ranker(tmp_path) -> None:
     cfg = initial_config(tmp_path, args, payload)
     research = cfg["research"]
     assert research["ranker_agent"] == "ai-scientist-research-ranker"
-    assert research["ranker_prompt_source"] == "prompts/research-loop/ranker.md"
+    assert research["ranker_prompt_source"] == "agents/ai-scientist-research-ranker.toml"
     assert research["ranking_top_n"] == 3
     assert research["active_node_cap"] == 3
-

@@ -178,11 +178,7 @@ unclear and the command is required, ask or fail fast with a clear blocker.
 <Startup>
 Create `.ai-scientist/runs/<run-id>/`, its `ideas/` and `logs/` directories, the frozen `contract.json`, and `run.md`. Record the original request and resolved arguments in `run.md`.
 
-Then install/check generated Codex native agents before spawning subagents:
-
-```bash
-ai-scientist agents check --target-repo <target-repo> || ai-scientist agents install --target-repo <target-repo>
-```
+Verify the installed Codex agent roles are available before spawning subagents.
 </Startup>
 
 <Prompting>
