@@ -90,7 +90,7 @@ It manages:
 
 - an orchestrator cursor kept alive by the Stop hook
 - checkpointed worker, comparative ranker, and revision-worker records
-- shared ranker and mode-specific revision prompt paths under `prompts/research-loop/`
+- committed constant definitions for every Codex subagent role under `agents/`
 - explicit resource leases for experiment commands
 - command, metric, and result evidence in `journal.jsonl`
 - final selection and completion audit evidence
@@ -152,8 +152,7 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 │   ├── loop-state.schema.json
 │   ├── node.schema.json
 │   └── selection.schema.json
-├── prompts/
-│   └── research-loop/
+├── agents/
 ├── skills/
 │   ├── ideation/SKILL.md
 │   ├── research-loop/SKILL.md
@@ -211,7 +210,7 @@ session creates a goal, freezes `contract.json`, delegates generator, critic, an
 pilot work through native agents, and writes Markdown idea files plus a lightweight
 `ideas.json` index. Progress and completion are recorded in `run.md`.
 
-The only CLI commands used by ideation are `agents check` and `agents install`.
+The Codex installer copies the committed agent definitions into the Codex agent directory.
 
 ## Typical workflow
 

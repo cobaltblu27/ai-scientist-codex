@@ -2,52 +2,10 @@ from __future__ import annotations
 
 import json
 import unittest
-from pathlib import Path
-from tempfile import TemporaryDirectory
 
-import yaml
 from test_support import PLUGIN_ROOT
 
-from core import agents
 from core.state import active_run_owned_by_caller, stop_caller_identity
-
-
-class ClaudeAgentRenderTests(unittest.TestCase):
-    def test_rendered_agents_are_valid_frontmatter_documents(self) -> None:
-        for spec in agents.AGENT_SPECS:
-            rendered = agents.render_agent_md(spec)
-            self.assertTrue(rendered.startswith("---\n"), spec.name)
-            frontmatter, body = rendered[4:].split("\n---\n", 1)
-            meta = yaml.safe_load(frontmatter)
-            self.assertEqual(set(meta), {"name", "description"}, spec.name)
-            self.assertEqual(meta["name"], spec.name)
-            self.assertEqual(meta["description"], spec.description)
-            self.assertTrue(body.strip(), spec.name)
-            self.assertNotIn("model_reasoning_effort", rendered)
-
-    def test_build_writes_one_file_per_spec_and_prunes_stale(self) -> None:
-        with TemporaryDirectory() as tmp:
-            out = Path(tmp) / "agents"
-            out.mkdir()
-            stale = out / "ai-scientist-research-worker-scientist.md"
-            stale.write_text("---\nname: old\n---\nstale\n")
-            written = agents.build_claude_agents(out_dir=out)
-            self.assertEqual(len(written), len(agents.AGENT_SPECS))
-            self.assertFalse(stale.exists())
-            self.assertEqual(
-                {p.stem for p in out.glob("*.md")},
-                {spec.name for spec in agents.AGENT_SPECS},
-            )
-
-    def test_committed_agents_match_current_prompts(self) -> None:
-        for spec in agents.AGENT_SPECS:
-            path = PLUGIN_ROOT / "agents" / f"{spec.name}.md"
-            self.assertTrue(path.exists(), f"{path} missing; run `ai-scientist agents build`")
-            self.assertEqual(
-                path.read_text(),
-                agents.render_agent_md(spec),
-                f"{path} is stale; run `ai-scientist agents build`",
-            )
 
 
 class SessionIdentityTests(unittest.TestCase):
