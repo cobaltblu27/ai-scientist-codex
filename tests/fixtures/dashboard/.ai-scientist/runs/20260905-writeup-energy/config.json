@@ -1,0 +1,36 @@
+{
+  "run_id": "20260905-writeup-energy",
+  "target_repo": "/data2/project/cobalt/ai-scientist/ai-scientist-claude/tests/fixtures/dashboard",
+  "research_contract": {
+    "goal_type": "performance",
+    "goal": "Hourly energy demand forecasting, 24h horizon",
+    "dataset": {
+      "name": "uci-electricity",
+      "version": "1.0"
+    },
+    "split_protocol": "official train/test split, 10% of train held out for validation, seed 13",
+    "allowed_inputs": [
+      "train_inputs",
+      "train_labels"
+    ],
+    "forbidden_inputs": [
+      "test_labels",
+      "external_pretrained_weights"
+    ],
+    "metrics": {
+      "primary": "neg_mae",
+      "secondary": [
+        "loss",
+        "wall_clock_sec"
+      ]
+    },
+    "baseline_reference": {
+      "name": "seasonal-naive",
+      "neg_mae": -0.184
+    },
+    "evaluator_command": "python eval.py --split test",
+    "success_criteria": "neg_mae >= -0.15 on the official test split",
+    "target_threshold": -0.15,
+    "non_drift_definition": "same dataset, split, evaluator and metric as this contract"
+  }
+}

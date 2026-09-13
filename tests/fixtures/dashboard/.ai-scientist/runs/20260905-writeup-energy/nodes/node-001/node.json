@@ -1,0 +1,44 @@
+{
+  "node_id": "node-001",
+  "status": "accepted",
+  "benchmark_contract_version": "1",
+  "metrics": {
+    "neg_mae": -0.141,
+    "loss": 1.059,
+    "wall_clock_sec": 4800
+  },
+  "split_integrity": {
+    "pass": true,
+    "summary": "official split verified"
+  },
+  "leakage_check": {
+    "pass": true,
+    "summary": "no test samples in train set"
+  },
+  "result_summary": "Seasonal decomposition + gradient-boosted residuals",
+  "mode_deliverables": {},
+  "outcome_type": "ACCEPT_FINAL",
+  "current_claim": "Seasonal decomposition + gradient-boosted residuals",
+  "trials": [
+    {
+      "trial_id": "node-001-t0",
+      "seed": 13
+    },
+    {
+      "trial_id": "node-001-t1",
+      "seed": 14
+    },
+    {
+      "trial_id": "node-001-t2",
+      "seed": 15
+    },
+    {
+      "trial_id": "node-001-t3",
+      "seed": 16
+    },
+    {
+      "trial_id": "node-001-t4",
+      "seed": 17
+    }
+  ]
+}

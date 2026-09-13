@@ -1,0 +1,6 @@
+{"event_type": "phase_start", "timestamp": "2026-09-13T06:44:49Z", "run_id": "20260913-ideation-agnews", "details": {"phase": "ideation"}}
+{"event_type": "subagent", "timestamp": "2026-09-13T07:44:49Z", "run_id": "20260913-ideation-agnews", "details": {"status": "completed", "ideas": 3}, "subagent_id": "generator-1"}
+{"event_type": "subagent", "timestamp": "2026-09-13T08:14:49Z", "run_id": "20260913-ideation-agnews", "details": {"status": "completed", "verdict": "ACCEPT"}, "subagent_id": "critic-1"}
+{"event_type": "subagent", "timestamp": "2026-09-13T08:44:49Z", "run_id": "20260913-ideation-agnews", "details": {"status": "completed", "ideas": 3}, "subagent_id": "generator-2"}
+{"event_type": "subagent", "timestamp": "2026-09-13T09:14:49Z", "run_id": "20260913-ideation-agnews", "details": {"status": "completed", "verdict": "REJECT"}, "subagent_id": "critic-2"}
+{"event_type": "subagent", "timestamp": "2026-09-13T09:40:49Z", "run_id": "20260913-ideation-agnews", "details": {"status": "running"}, "subagent_id": "critic-3"}

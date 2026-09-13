@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "run_id": "20260905-writeup-energy",
+  "active": false,
+  "phase": "writeup",
+  "phase_status": "complete",
+  "started_at": "2026-09-11T03:44:49Z",
+  "updated_at": "2026-09-11T07:44:49Z",
+  "completed_at": "2026-09-11T07:44:49Z",
+  "run_outcome": "positive",
+  "completion_audit": null,
+  "completed_phases": {
+    "ideation": {
+      "completed_at": "2026-09-11T06:44:49Z"
+    },
+    "research": {
+      "completed_at": "2026-09-11T06:44:49Z"
+    },
+    "review": {
+      "completed_at": "2026-09-11T06:44:49Z"
+    },
+    "writeup": {
+      "completed_at": "2026-09-11T06:44:49Z"
+    }
+  },
+  "state": {
+    "orchestrator": {
+      "next_action": "done"
+    },
+    "selected_node": "node-001"
+  }
+}

@@ -230,6 +230,13 @@ def cmd_handoff_record(args: argparse.Namespace) -> int:
     return response("ok", run_id=run_id, gate=args.gate, approved=args.approved)
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    from dashboard.server import serve
+
+    serve(target_repo(args), host=args.host, port=args.port, open_browser=args.open)
+    return 0
+
+
 def add_json_file_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json-file", type=Path, required=True, help="Path to a JSON object payload.")
 
@@ -337,6 +344,12 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_record.add_argument("--approved", action="store_true")
     handoff_record.add_argument("--reason")
     handoff_record.set_defaults(func=cmd_handoff_record)
+
+    dashboard = sub.add_parser("dashboard", help="Serve the monitoring dashboard over .ai-scientist/ artifacts.")
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8765)
+    dashboard.add_argument("--open", action="store_true", help="Open the dashboard in a browser.")
+    dashboard.set_defaults(func=cmd_dashboard)
 
     resource = sub.add_parser("resource")
     resource_sub = resource.add_subparsers(dest="command", required=True)

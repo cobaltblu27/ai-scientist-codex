@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "run_id": "20260910-review-housing",
+  "selection_status": "accepted",
+  "provisional": false,
+  "selected_node": "node-003",
+  "ranked_nodes": [
+    "node-003",
+    "node-001"
+  ],
+  "manual_override": null,
+  "rationale": "lowest RMSE with clean leakage check",
+  "updated_at": "2026-09-12T23:44:49Z"
+}

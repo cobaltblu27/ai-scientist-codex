@@ -1,0 +1,32 @@
+{
+  "node_id": "node-002",
+  "status": "running",
+  "benchmark_contract_version": "1",
+  "metrics": {
+    "accuracy": 0.934,
+    "loss": 0.266,
+    "wall_clock_sec": 3000
+  },
+  "split_integrity": {
+    "pass": true,
+    "summary": "official split verified"
+  },
+  "leakage_check": {
+    "pass": true,
+    "summary": "no test samples in train set"
+  },
+  "result_summary": "Label smoothing + cosine LR, second seed sweep running",
+  "mode_deliverables": {},
+  "outcome_type": null,
+  "current_claim": "Label smoothing + cosine LR, second seed sweep running",
+  "trials": [
+    {
+      "trial_id": "node-002-t0",
+      "seed": 13
+    },
+    {
+      "trial_id": "node-002-t1",
+      "seed": 14
+    }
+  ]
+}

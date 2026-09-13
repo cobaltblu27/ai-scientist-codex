@@ -1,0 +1,28 @@
+{
+  "node_id": "node-004",
+  "status": "rejected",
+  "benchmark_contract_version": "1",
+  "metrics": {
+    "accuracy": 0.951,
+    "loss": 0.249,
+    "wall_clock_sec": 2400
+  },
+  "split_integrity": {
+    "pass": false,
+    "summary": "official split verified"
+  },
+  "leakage_check": {
+    "pass": false,
+    "summary": "test samples found in augmentation cache"
+  },
+  "result_summary": "Leakage: test images in augmentation cache",
+  "mode_deliverables": {},
+  "outcome_type": "KILL",
+  "current_claim": "Leakage: test images in augmentation cache",
+  "trials": [
+    {
+      "trial_id": "node-004-t0",
+      "seed": 13
+    }
+  ]
+}

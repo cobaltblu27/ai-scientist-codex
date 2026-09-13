@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "run_id": "20260911-research-ogbn-blocked",
+  "active": true,
+  "phase": "research",
+  "phase_status": "blocked_manual_recovery",
+  "started_at": "2026-09-13T04:09:49Z",
+  "updated_at": "2026-09-13T08:09:49Z",
+  "completed_at": null,
+  "run_outcome": null,
+  "completion_audit": null,
+  "completed_phases": {
+    "ideation": {
+      "completed_at": "2026-09-13T07:09:49Z"
+    }
+  },
+  "state": {
+    "orchestrator": {
+      "next_action": "manual_recovery",
+      "current_node": "node-002",
+      "iteration": 6
+    },
+    "nodes": {
+      "node-001": {
+        "status": "accepted"
+      },
+      "node-002": {
+        "status": "failed"
+      }
+    },
+    "selected_node": null
+  },
+  "blocked_reason": "journal hash mismatch at transition t-6: loop-state.json edited outside checkpoint"
+}

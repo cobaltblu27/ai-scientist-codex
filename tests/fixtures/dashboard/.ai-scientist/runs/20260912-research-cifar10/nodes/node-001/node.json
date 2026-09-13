@@ -1,0 +1,36 @@
+{
+  "node_id": "node-001",
+  "status": "accepted",
+  "benchmark_contract_version": "1",
+  "metrics": {
+    "accuracy": 0.931,
+    "loss": 0.269,
+    "wall_clock_sec": 3600
+  },
+  "split_integrity": {
+    "pass": true,
+    "summary": "official split verified"
+  },
+  "leakage_check": {
+    "pass": true,
+    "summary": "no test samples in train set"
+  },
+  "result_summary": "Mixup + cutout schedule lifts accuracy +0.019 over baseline",
+  "mode_deliverables": {},
+  "outcome_type": "PROMISING_CONTINUE",
+  "current_claim": "Mixup + cutout schedule lifts accuracy +0.019 over baseline",
+  "trials": [
+    {
+      "trial_id": "node-001-t0",
+      "seed": 13
+    },
+    {
+      "trial_id": "node-001-t1",
+      "seed": 14
+    },
+    {
+      "trial_id": "node-001-t2",
+      "seed": 15
+    }
+  ]
+}

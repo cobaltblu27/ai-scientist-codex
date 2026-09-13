@@ -1,0 +1,40 @@
+{
+  "node_id": "node-006",
+  "status": "accepted",
+  "benchmark_contract_version": "1",
+  "metrics": {
+    "accuracy": 0.928,
+    "loss": 0.272,
+    "wall_clock_sec": 4200
+  },
+  "split_integrity": {
+    "pass": true,
+    "summary": "official split verified"
+  },
+  "leakage_check": {
+    "pass": true,
+    "summary": "no test samples in train set"
+  },
+  "result_summary": "Ensemble beats baseline but mechanism unclear",
+  "mode_deliverables": {},
+  "outcome_type": "NEEDS_SCIENTIFIC_FRAMING",
+  "current_claim": "Ensemble beats baseline but mechanism unclear",
+  "trials": [
+    {
+      "trial_id": "node-006-t0",
+      "seed": 13
+    },
+    {
+      "trial_id": "node-006-t1",
+      "seed": 14
+    },
+    {
+      "trial_id": "node-006-t2",
+      "seed": 15
+    },
+    {
+      "trial_id": "node-006-t3",
+      "seed": 16
+    }
+  ]
+}
