@@ -49,7 +49,7 @@ Mark requirements and actions by authority: `binding_contract`, `binding_amendme
 A checkpoint never promotes a plan or recommendation into a binding requirement.
 On resume, re-evaluate nonbinding open items against current evidence and supersede or explicitly abandon stale work.
 
-Use terminal work statuses `completed`, `cancelled`, `failed`, `abandoned`, `accepted`, and `rejected`; use a specific nonterminal status while work is planned, running, blocked, waiting, or preparing an experiment.
+Use terminal work statuses `completed`, `cancelled`, `failed`, `abandoned`, `accepted`, and `rejected`, and the same terminal set for node statuses; use a specific nonterminal status while work is planned, running, blocked, waiting, or preparing an experiment.
 Keep enough state to recover the owning node/work, current status, evidence refs, resource lease, and next action.
 Every work item must become terminal or be explicitly abandoned before a terminal run outcome.
 
@@ -227,7 +227,7 @@ A run terminates with exactly one outcome:
 Before any terminal transition, harvest/retire outstanding work, drain or explicitly abandon pending and released queue items, and release active leases.
 Do not call a failed experiment `exhausted` while a contract-relevant diagnostic, revision, branch, or rerun remains justified and fits the frozen policy.
 Do not continue after an `exhausted` decision merely because capacity is idle.
-For `success`, write `selection.json` with the accepted node, evidence refs, and acceptance rationale after a completion audit verifies the binding positive criteria.
+For `success`, write `selection.json` with the accepted node, evidence refs, and acceptance rationale after a completion audit verifies the binding positive criteria. `selection.json` carries `status: final`, `selected_node`, and `acceptance_rationale`; `state.selection` mirrors `status` and `selected_node`.
 For every outcome, checkpoint the audit, reason, terminal `phase_status`, top-level `active: false`, and handoff evidence before completing the goal.
 Do not create an accepted selection for `exhausted`, `cancelled`, or `blocked`.
 </Terminal_Conditions>

@@ -7,7 +7,7 @@ disable-model-invocation: true
 # Writeup
 
 <Persistence>
-Run writeup under `/goal` in both Claude Code and Codex. Complete the goal only after the required report artifacts and final validation evidence exist.
+Run writeup under `/goal` in both Claude Code and Codex. Complete the goal only after the required report artifacts and final validation evidence exist. Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 </Persistence>
 
 <Purpose>

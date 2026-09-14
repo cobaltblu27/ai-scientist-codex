@@ -37,7 +37,7 @@ Do not merely think about the data. Reuse a valid existing ideation data-insight
 </Core_Rule>
 
 <Artifact_Location>
-When inside an AI Scientist ideation run, write artifacts under:
+When inside an AI Scientist ideation run, write artifacts under the path below. Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 
 ```text
 .ai-scientist/runs/<run-id>/logs/data-insight/ideation/

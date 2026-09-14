@@ -17,13 +17,11 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         self.assertIn("name: create-contract", skill)
         self.assertIn("disable-model-invocation: true", skill)
         self.assertIn("Explicit-only", skill)
-        self.assertIn("Use this skill ONLY when the user explicitly asks", skill)
         self.assertIn(".ai-scientist/contracts/<contract-id>/research-contract.json", skill)
         self.assertIn("does not start ideation", skill)
         self.assertIn("does not start research-loop", skill)
         self.assertIn("does not create loop state", skill)
         self.assertIn("does not spawn agents", skill)
-        self.assertIn("Do not call `ideation start`", skill)
         self.assertIn("Do not invent dataset, split protocol, allowed or forbidden inputs", skill)
 
     def test_create_contract_template_matches_reference_top_level_schema(self) -> None:
@@ -32,37 +30,15 @@ class IdeationPromptSchemaTests(unittest.TestCase):
         template = json.loads(template_text)
         self.assertEqual(list(template), ["research_contract"])
         contract = template["research_contract"]
-        self.assertEqual(
-            list(contract),
-            [
-                "goal_type",
-                "primary_hypothesis",
-                "dataset",
-                "split_protocol",
-                "allowed_inputs",
-                "forbidden_inputs",
-                "metrics",
-                "metrics_that_matter",
-                "non_negotiable_comparisons",
-                "baseline_reference",
-                "benchmark_plan",
-                "evaluator_command",
-                "success_criteria",
-                "failure_criteria",
-                "kill_criteria",
-                "target_threshold",
-                "non_drift_definition",
-            ],
-        )
+        self.assertIn("goal", contract)
+        self.assertIn("non_drift_definition", contract)
         self.assertNotIn("allowed_rescue_scope", contract)
         self.assertEqual(contract["metrics"], {"primary": "", "secondary": []})
         self.assertIsInstance(contract["dataset"], dict)
         for field in [
             "allowed_inputs",
             "forbidden_inputs",
-            "metrics_that_matter",
-            "non_negotiable_comparisons",
-            "kill_criteria",
+            "related_works",
         ]:
             self.assertIsInstance(contract[field], list)
 

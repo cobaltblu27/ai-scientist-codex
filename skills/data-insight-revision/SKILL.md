@@ -51,7 +51,7 @@ Use that contrast to identify a model-side root-cause hypothesis. Prefer insight
 </Model_Failure_Diagnosis>
 
 <Artifact_Location>
-When inside an AI Scientist research run, write artifacts under:
+When inside an AI Scientist research run, write artifacts under the path below. Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 
 ```text
 .ai-scientist/runs/<run-id>/logs/data-insight/revision/<node-id>/<work-id>/

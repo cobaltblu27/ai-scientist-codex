@@ -30,7 +30,8 @@ Do not paste full reports, logs, metric tables, or long rationale into checkpoin
     "worker-node-001": {
       "status": "running",
       "agent_thread_id": "<codex-subagent-thread-id>",
-      "result_ref": ".ai-scientist/runs/<run-id>/logs/workers/node-001/worker-node-001/result.md"
+      "result_ref": ".ai-scientist/runs/<run-id>/logs/workers/node-001/worker-node-001/result.md",
+      "node": "node-001"
     }
   }
 }

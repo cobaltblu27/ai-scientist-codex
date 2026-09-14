@@ -11,7 +11,7 @@ Record the smallest durable state patch needed for a resumed research-loop orche
 
 <Workflow>
 1. Read `.ai-scientist/runs/<run-id>/loop-state.json` and the latest `journal.jsonl` entry. Never checkpoint from conversation memory alone.
-2. Build a small patch containing only changed fields. Use stable IDs. Valid patch sections are `baseline`, `work`, `tasks`, `resources`, `selection`, `resource_queue`, `nodes`, and `orchestrator`.
+2. Build a small patch containing only changed fields. Use stable IDs. Valid patch sections are `baseline`, `work`, `tasks`, `resources`, `selection`, `resource_queue`, `nodes`, and `orchestrator`. Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free. Every `work` entry carries `status`, `agent_thread_id`, `result_ref`, and `node` (owning node id, or `null` for run-wide work); a branch node entry carries `parent_node_id`. Statuses are lowercase; a node or work item is terminal only when its status is one of `completed`, `cancelled`, `failed`, `abandoned`, `accepted`, `rejected`.
 3. Preserve authority labels when recording requirements: `binding_contract`, `binding_amendment`, `current_plan`, `advisory`, or `superseded`.
 4. Apply the patch using the existing merge rules:
    - shallow-merge object sections;
@@ -27,12 +27,15 @@ Record the smallest durable state patch needed for a resumed research-loop orche
   "timestamp": "<UTC timestamp>",
   "run_id": "<run-id>",
   "transition_id": "<same transition id as state>",
+  "node_id": "<node-id>",
   "details": {
     "command": "research-loop-checkpoint",
     "changed_sections": ["orchestrator", "work"]
   }
 }
 ```
+
+`node_id` is optional: set it when the record concerns one node, omit it otherwise.
 
 6. Write the complete updated `loop-state.json` and verify that it parses and contains the same `last_transition_id` as the journal record.
 7. Return the checkpoint path, transition ID, changed sections, and next action. Do not paste full reports into the checkpoint.

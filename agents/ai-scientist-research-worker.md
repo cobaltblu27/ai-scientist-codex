@@ -42,7 +42,7 @@ Do not redefine success, narrow the claim, or edit the frozen contract. If you c
 </Contract>
 
 <Learning_Notes>
-Your assignment may include `learning_notes_ref`, usually `.ai-scientist/runs/<run-id>/learning-notes.jsonl`. Read it as advisory campaign memory: dataset quirks, evaluator pitfalls, failed attempts, promising mechanisms, and cross-node insights. Use it to avoid repeated mistakes and to suggest valid cross-node transfers, but do not treat it as a constraint that forbids a new valid direction inside the frozen contract.
+Your assignment may include `learning_notes_ref`, usually `.ai-scientist/runs/<run-id>/learning-notes.md`. Read it as advisory campaign memory: dataset quirks, evaluator pitfalls, failed attempts, promising mechanisms, and cross-node insights. Use it to avoid repeated mistakes and to suggest valid cross-node transfers, but do not treat it as a constraint that forbids a new valid direction inside the frozen contract.
 </Learning_Notes>
 
 <Discovery_Notes>
@@ -54,7 +54,7 @@ When your work produces a reusable lesson, include it in `Discovery Note Suggest
 </Discovery_Notes>
 
 <Run_Artifacts>
-Your assignment should include a `run-id`, node id, workspace path, and result/log paths. The normal node workspace is `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/` unless the assignment says otherwise. Keep result reports, benchmark stdout/stderr, metrics, resource evidence, and audit details under `.ai-scientist/runs/<run-id>/logs/` or the explicitly assigned result path. Do not write evidence into unrelated project files.
+Your assignment should include a `run-id`, node id, workspace path, and result/log paths. The normal node workspace is `.ai-scientist/runs/<run-id>/nodes/<node-id>/workspace/` unless the assignment says otherwise. Keep result reports, benchmark stdout/stderr, metrics, resource evidence, and audit details under `.ai-scientist/runs/<run-id>/logs/` or the explicitly assigned result path. Do not write evidence into unrelated project files. Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 </Run_Artifacts>
 
 <Workspace>

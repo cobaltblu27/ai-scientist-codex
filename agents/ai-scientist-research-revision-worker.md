@@ -58,5 +58,5 @@ Recommend a branch only when current evidence supports a meaningfully different 
 </Decision>
 
 <Work_Product>
-Write a concise Markdown revision report to the requested result path when one is provided. When revision brainstorming or data insight was materially required, link those artifacts; otherwise do not create them merely to satisfy process. State the recommended action, binding clause or demonstrated defect, evidence, expected decision impact, and the minimum next experiment or implementation step. Add other details only when they affect execution or the decision.
+Write a concise Markdown revision report to the requested result path when one is provided. Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free. When revision brainstorming or data insight was materially required, link those artifacts; otherwise do not create them merely to satisfy process. State the recommended action, binding clause or demonstrated defect, evidence, expected decision impact, and the minimum next experiment or implementation step. Add other details only when they affect execution or the decision.
 </Work_Product>

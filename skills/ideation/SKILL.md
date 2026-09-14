@@ -48,10 +48,12 @@ Once the first generator is spawned, `contract.json` is frozen: do not edit it d
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
 - `contract.json`: frozen research contract.
-- `run.md`: run id, original request, arguments, current phase, completed phase checklist, blockers, and important decisions.
+- `run.md`: begins with a bullet `- status: <token>` (`running`, `complete`, or `cancelled`) that is updated with the phase checklist; then run id, original request, arguments, current phase, completed phase checklist, blockers, and important decisions.
 - `ideas/<idea-id>.md`: canonical idea files. Critic comments and generator refinements happen in these files.
 - `logs/pilots/<idea-id>/report.md`: pilot evidence for each surviving idea.
-- `ideas.json`: final index containing each selected idea's id, title, idea-file path, and pilot-report path.
+- `ideas.json`: final index; each selected idea entry has `id`, `title`, and `idea_file`, plus `pilot_report` by convention.
+
+Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 
 The detailed idea content lives in the idea files, not duplicated into a large JSON schema. Update `run.md` after every major phase and before ending a turn.
 </Required_Artifacts>
