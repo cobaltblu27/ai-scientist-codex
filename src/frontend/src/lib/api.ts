@@ -52,3 +52,27 @@ export const useOverview = () => usePolled<Overview>("/api/overview");
 export const useRun = (runId: string | null) => usePolled<RunDetail>(runId ? `/api/runs/${encodeURIComponent(runId)}` : null);
 export const useNode = (runId: string | null, nodeId: string | null) =>
   usePolled<NodeDetail>(runId && nodeId ? `/api/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}` : null);
+
+/** Fetch a text file from inside a run via /api/runs/<id>/files/<path>. */
+export function useRunFile(runId: string | null, path: string | null) {
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setText(null);
+    setError(null);
+    if (!runId || !path) return;
+    let alive = true;
+    const url = `/api/runs/${encodeURIComponent(runId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`;
+    fetch(url, { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.text();
+      })
+      .then((t) => alive && setText(t))
+      .catch((e: Error) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, [runId, path]);
+  return { text, error };
+}

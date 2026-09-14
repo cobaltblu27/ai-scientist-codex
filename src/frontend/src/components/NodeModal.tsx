@@ -30,7 +30,7 @@ export function NodeModal({ runId, nodeId, primaryMetricName, onClose }: Props) 
         <div className="modal-head">
           <div className="min0">
             <div className="tile-kicker">node</div>
-            <h2 className="ellipsis">{nodeId}</h2>
+            <h2 className="ellipsis">{data?.title ? `${nodeId} · ${data.title}` : nodeId}</h2>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close">×</button>
         </div>
@@ -42,36 +42,30 @@ export function NodeModal({ runId, nodeId, primaryMetricName, onClose }: Props) 
   );
 }
 
+/* Ledger keys the cards above already show; everything else in the ledger goes to the "more" table. */
+const SHOWN = new Set(["status", "updated_at", "parent_node_id", "title", "idea_id", "assignment", "result_ref", "evidence_summary", "next_action", "metrics"]);
+
 function Body({ d, metricName }: { d: NodeDetail; metricName: string | null }) {
-  const node = (d.node ?? {}) as Record<string, unknown>;
-  const status = d.official_status ?? d.status;
   const m = primaryMetric(d.metrics, metricName);
-  const checks: [string, unknown][] = [
-    ["split integrity", node.split_integrity],
-    ["leakage check", node.leakage_check],
-    ["novelty", node.novelty],
-  ];
+  const extra = Object.entries(d.ledger ?? {}).filter(([k]) => !SHOWN.has(k));
   const notes: [string, unknown][] = [
-    ["current claim", d.current_claim],
-    ["rejection reason", node.rejection_reason],
-    ["failure signature", node.failure_signature],
-    ["fundamental failure", node.fundamental_failure_reason],
-    ["worker recommendation", node.worker_recommendation],
+    ["assignment", d.assignment],
+    ["evidence", d.evidence_summary],
+    ["next action", d.next_action],
   ];
   return (
     <div className="modal-body">
       <section className="modal-grid">
-        <div className={`card rail-card ${tone(status)}`}>
+        <div className={`card rail-card ${tone(d.status)}`}>
           <div className="tile-kicker">Status</div>
-          <div className="rail-big">{status ?? "—"}</div>
+          <div className="rail-big">{d.status ?? "—"}</div>
           <div className="muted">
-            {statusKind(status)} · {d.alive ? "live" : "closed"}
-            {d.official_status && d.status && d.official_status !== d.status && <> · node.json says {d.status}</>}
+            {statusKind(d.status)} · {d.alive ? "live" : "closed"}
           </div>
           <div className="muted">
             {d.parent_node_id ? <>branched from <b>{d.parent_node_id}</b></> : "root node"} · depth {d.depth}
           </div>
-          {d.outcome_type && <div className="muted">outcome: {d.outcome_type}</div>}
+          {d.idea_id && <div className="muted">idea: {d.idea_id}</div>}
           <div className="muted">updated {relTime(d.updated_at)}</div>
         </div>
         <div className="card rail-card">
@@ -81,14 +75,28 @@ function Body({ d, metricName }: { d: NodeDetail; metricName: string | null }) {
               <span className="tile-big">{m.value}</span> <span className="muted">{m.key}</span>
             </div>
           ) : (
-            <div className="muted">no metrics yet</div>
+            <div className="muted">no metrics in ledger</div>
           )}
-          {d.result_summary && <div>{d.result_summary}</div>}
-          <div className="muted">{d.trial_count} trials</div>
+          <div className="muted">
+            {d.work.length} work items · {d.report_count} reports
+          </div>
         </div>
       </section>
 
-      {Object.keys(d.metrics).length > 0 && (
+      {notes.some(([, v]) => v) && (
+        <section>
+          <dl className="notes">
+            {notes.map(([label, v]) => v ? (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{String(v)}</dd>
+              </div>
+            ) : null)}
+          </dl>
+        </section>
+      )}
+
+      {d.metrics && Object.keys(d.metrics).length > 0 && (
         <section>
           <h3 className="sub-title">Metrics</h3>
           <table className="kv">
@@ -104,38 +112,51 @@ function Body({ d, metricName }: { d: NodeDetail; metricName: string | null }) {
         </section>
       )}
 
-      {(checks.some(([, v]) => v) || notes.some(([, v]) => v)) && (
+      {d.work.length > 0 && (
         <section>
-          <h3 className="sub-title">Checks &amp; notes</h3>
-          <div className="check-row">
-            {checks.map(([label, v]) => {
-              if (!v || typeof v !== "object") return null;
-              const c = v as { pass?: boolean; summary?: string };
-              return (
-                <span key={label} className={`pill ${c.pass ? "lime" : "orange"}`} title={c.summary}>
-                  {label}: {c.pass ? "pass" : "fail"}
-                </span>
-              );
-            })}
-          </div>
-          <dl className="notes">
-            {notes.map(([label, v]) => v ? (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd>{String(v)}</dd>
-              </div>
-            ) : null)}
-          </dl>
+          <h3 className="sub-title">
+            Work <sup>({d.work.length})</sup>
+          </h3>
+          <table className="kv">
+            <tbody>
+              {d.work.map((w) => (
+                <tr key={w.work_id}>
+                  <th>{w.work_id}</th>
+                  <td>
+                    <span className={`pill tiny ${tone(w.status)}`}>{w.status ?? "—"}</span>
+                    {w.agent_thread_id && <span className="muted mono"> · {String(w.agent_thread_id)}</span>}
+                    {w.next_action != null && <span className="muted"> · {String(w.next_action)}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </section>
       )}
 
-      <Reports reports={d.reports} nodeId={d.node_id} />
+      {extra.length > 0 && (
+        <section>
+          <h3 className="sub-title">More from the ledger</h3>
+          <table className="kv">
+            <tbody>
+              {extra.map(([k, v]) => (
+                <tr key={k}>
+                  <th>{k}</th>
+                  <td>{typeof v === "object" ? <pre className="raw">{JSON.stringify(v, null, 2)}</pre> : String(v)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      <Reports reports={d.reports} />
       <History events={d.history} />
     </div>
   );
 }
 
-function Reports({ reports, nodeId }: { reports: NodeReport[]; nodeId: string }) {
+function Reports({ reports }: { reports: NodeReport[] }) {
   const [idx, setIdx] = useState(reports.length - 1);
   const current = reports[Math.min(idx, reports.length - 1)] ?? null;
   return (
@@ -145,23 +166,22 @@ function Reports({ reports, nodeId }: { reports: NodeReport[]; nodeId: string })
       </h3>
       {reports.length === 0 ? (
         <div className="muted">
-          No reports yet. Workers write <code>logs/workers/{nodeId}/&lt;worker-id&gt;/result.md</code>, revisions write{" "}
-          <code>logs/revisions/{nodeId}/&lt;revision-id&gt;/result.md</code>.
+          No report file found. Reports are located through <code>result_ref</code> on the node ledger entry and its work items.
         </div>
       ) : (
         <>
           <div className="tabs">
             {reports.map((r, i) => (
-              <button key={r.path} className={`tab ${r === current ? "active" : ""}`} onClick={() => setIdx(i)} title={r.path}>
-                <span className={`dot ${r.kind === "revision" ? "orange" : "lime"}`} />
-                {r.agent_id}
+              <button key={r.ref} className={`tab ${r === current ? "active" : ""}`} onClick={() => setIdx(i)} title={r.path ?? r.ref}>
+                <span className="dot ink" />
+                {r.work_id ?? r.name}
                 <span className="muted"> · {relTime(r.updated_at)}</span>
               </button>
             ))}
           </div>
           {current && (
             <div className="report">
-              <div className="muted mono ellipsis" title={current.path}>{current.path}</div>
+              <div className="muted mono ellipsis" title={current.path ?? current.ref}>{current.path ?? current.ref}</div>
               {current.content ? <Markdown source={current.content} /> : <div className="muted">unreadable</div>}
             </div>
           )}
@@ -179,21 +199,23 @@ function History({ events }: { events: NodeHistoryEvent[] }) {
         History <sup>({rows.length})</sup>
       </h3>
       {rows.length === 0 ? (
-        <div className="muted">No journal events, work items or reports reference this node yet.</div>
+        <div className="muted">
+          Nothing references this node yet. Journal records need <code>node_id</code>, work items need <code>node</code>.
+        </div>
       ) : (
         <div className="card list">
           {rows.map((e, i) => (
             <div key={i} className="row">
-              <span className={`dot ${e.kind === "report" ? "ink" : tone(e.status ?? undefined)}`} />
+              <span className={`dot ${e.kind === "report" ? "ink" : tone(e.kind === "work" ? e.status : undefined)}`} />
               <span className="row-main">
                 <span className="row-title">
-                  {e.event_type ?? e.kind}
-                  {e.status && <span className={`pill tiny ${tone(e.status)}`} style={{ marginLeft: 8 }}>{e.status}</span>}
+                  {e.kind === "journal" ? (e.event_type ?? "journal") : e.kind === "work" ? e.work_id : e.name}
+                  {e.kind === "work" && e.status && <span className={`pill tiny ${tone(e.status)}`} style={{ marginLeft: 8 }}>{e.status}</span>}
                 </span>
                 <span className="row-sub ellipsis">
-                  {e.agent_id ?? "orchestrator"}
-                  {e.kind === "report" && <> · {String(e.details.path).split("/").slice(-3).join("/")}</>}
-                  {e.kind !== "report" && Object.keys(e.details).length > 0 && <> · {summarize(e.details)}</>}
+                  {e.kind === "journal" && String(e.details.note ?? e.details.command ?? e.subagent_id ?? summarize(e.details))}
+                  {e.kind === "work" && summarize(e.details)}
+                  {e.kind === "report" && (e.work_id ? `${e.work_id} · ` : "") + (e.path ?? "")}
                 </span>
               </span>
               <span className="muted nowrap" title={e.timestamp ?? undefined}>{fmtTime(e.timestamp ?? e.epoch)}</span>
@@ -207,7 +229,7 @@ function History({ events }: { events: NodeHistoryEvent[] }) {
 
 function summarize(details: Record<string, unknown>): string {
   const s = Object.entries(details)
-    .filter(([k]) => k !== "status")
+    .filter(([k]) => k !== "status" && k !== "node")
     .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
     .join(" ");
   return s.length > 90 ? s.slice(0, 87) + "…" : s;

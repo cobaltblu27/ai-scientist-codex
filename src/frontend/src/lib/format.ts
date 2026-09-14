@@ -14,7 +14,7 @@ export function fmtDate(d = new Date()): string {
 }
 
 /** First numeric metric, rendered compactly. */
-export function primaryMetric(metrics: Record<string, unknown>, prefer?: string | null): { key: string; value: string } | null {
+export function primaryMetric(metrics: Record<string, unknown> | null | undefined, prefer?: string | null): { key: string; value: string } | null {
   const entries = Object.entries(metrics ?? {});
   const pick = (prefer && entries.find(([k]) => k === prefer)) || entries.find(([, v]) => typeof v === "number");
   if (!pick) return null;
@@ -25,66 +25,72 @@ export function primaryMetric(metrics: Record<string, unknown>, prefer?: string 
   return { key, value };
 }
 
+/* Status vocabulary (docs/SCHEMA.md): a node or work item is terminal when its status is one
+   of the six work terminal tokens; any other lowercase word means it is live. The graph
+   still needs a small set of animations, so a few conventional live words get their own
+   kind and everything else live falls back to "experimenting". */
+
+export const TERMINAL = new Set(["completed", "cancelled", "failed", "abandoned", "accepted", "rejected"]);
+
+export function isTerminal(status: string | null | undefined): boolean {
+  return !!status && TERMINAL.has(status.toLowerCase());
+}
+
 export function tone(status: string | null | undefined): "lime" | "pink" | "orange" | "neutral" | "ink" {
-  switch (statusKind(status)) {
+  const s = status?.toLowerCase();
+  switch (s) {
     case "accepted":
-    case "experimenting":
-    case "candidate":
+    case "success":
+    case "complete":
+    case "completed":
+    case "ready":
       return "lime";
-    case "revising":
-    case "dead":
-      return "orange";
+    case "running":
+    case "active":
+      return "lime";
+    case "planned":
     case "queued":
-    case "implementing":
+    case "pending":
       return "pink";
+    case "blocked":
+    case "exhausted":
+    case "cancelled":
+    case "failed":
+    case "rejected":
+    case "abandoned":
+    case "revising":
+    case "repairing":
+      return "orange";
     default:
-      switch (status) {
-        case "running":
-        case "complete":
-        case "completed":
-        case "success":
-          return "lime";
-        case "exhausted":
-        case "cancelled":
-        case "blocked":
-          return "orange";
-        default:
-          return "neutral";
-      }
+      return "neutral";
   }
 }
 
-/** What an agent is doing to a node, collapsed to the animation the graph draws. */
+/** What the graph should animate for a node status. */
 export type StatusKind = "queued" | "implementing" | "experimenting" | "revising" | "candidate" | "accepted" | "dead" | "unknown";
 
 export function statusKind(status: string | null | undefined): StatusKind {
-  switch (status) {
+  if (!status) return "unknown";
+  const s = status.toLowerCase();
+  if (s === "accepted") return "accepted";
+  if (TERMINAL.has(s)) return "dead";
+  switch (s) {
     case "planned":
-    case "pending":
     case "queued":
+    case "pending":
       return "queued";
     case "implementing":
+    case "planning":
       return "implementing";
-    case "running":
-    case "experimenting":
-    case "validating":
-      return "experimenting";
-    case "buggy":
-    case "repairing":
     case "revising":
+    case "repairing":
+    case "blocked":
       return "revising";
     case "candidate":
+    case "validating":
       return "candidate";
-    case "accepted":
-      return "accepted";
-    case "rejected":
-    case "invalid":
-    case "failed":
-    case "abandoned":
-    case "cancelled":
-      return "dead";
     default:
-      return "unknown";
+      return "experimenting";
   }
 }
 

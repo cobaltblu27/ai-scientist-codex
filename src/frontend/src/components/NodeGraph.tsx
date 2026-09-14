@@ -6,22 +6,21 @@ import { primaryMetric, relTime, statusKind, tone } from "../lib/format";
 interface Props {
   nodes: NodeSummary[];
   primaryMetricName: string | null;
-  currentNode: string | null;
   selectedNode: string | null;
   onOpen: (nodeId: string) => void;
 }
 
 const KINDS: { kind: ReturnType<typeof statusKind>; label: string }[] = [
-  { kind: "queued", label: "queued" },
+  { kind: "queued", label: "planned / queued" },
   { kind: "implementing", label: "implementing" },
-  { kind: "experimenting", label: "experimenting" },
-  { kind: "revising", label: "revising / repairing" },
+  { kind: "experimenting", label: "live (other)" },
+  { kind: "revising", label: "revising / blocked" },
   { kind: "candidate", label: "candidate" },
   { kind: "accepted", label: "accepted" },
-  { kind: "dead", label: "rejected / invalid" },
+  { kind: "dead", label: "closed" },
 ];
 
-export function NodeGraph({ nodes, primaryMetricName, currentNode, selectedNode, onOpen }: Props) {
+export function NodeGraph({ nodes, primaryMetricName, selectedNode, onOpen }: Props) {
   const layout = useMemo(() => layoutGraph(nodes), [nodes]);
   const [hover, setHover] = useState<string | null>(null);
   const hovered = hover ? layout.nodes.find((n) => n.node.node_id === hover) : undefined;
@@ -58,7 +57,6 @@ export function NodeGraph({ nodes, primaryMetricName, currentNode, selectedNode,
                   key={ln.node.node_id}
                   ln={ln}
                   metricName={primaryMetricName}
-                  isCurrent={ln.node.node_id === currentNode}
                   isSelected={ln.node.node_id === selectedNode}
                   onHover={setHover}
                   onOpen={onOpen}
@@ -102,21 +100,20 @@ function shortId(id: string): string {
 }
 
 function GraphNode({
-  ln, metricName, isCurrent, isSelected, onHover, onOpen,
+  ln, metricName, isSelected, onHover, onOpen,
 }: {
   ln: LaidNode;
   metricName: string | null;
-  isCurrent: boolean;
   isSelected: boolean;
   onHover: (id: string | null) => void;
   onOpen: (id: string) => void;
 }) {
   const n = ln.node;
-  const kind = statusKind(n.official_status ?? n.status);
+  const kind = statusKind(n.status);
   const m = primaryMetric(n.metrics, metricName);
   return (
     <g
-      className={`gnode kind-${kind} ${isCurrent ? "current" : ""} ${isSelected ? "selected" : ""}`}
+      className={`gnode kind-${kind} ${isSelected ? "selected" : ""}`}
       transform={`translate(${ln.x} ${ln.y})`}
       onMouseEnter={() => onHover(n.node_id)}
       onMouseLeave={() => onHover(null)}
@@ -135,7 +132,7 @@ function GraphNode({
         {shortId(n.node_id)}
       </text>
       <text className="node-sub" textAnchor="middle" y={NODE_R + 16}>
-        {m ? m.value : (n.official_status ?? n.status ?? "—")}
+        {m ? m.value : (n.status ?? "—")}
       </text>
       {isSelected && (
         <text className="node-badge" x={NODE_R - 4} y={-NODE_R + 6} textAnchor="middle" dominantBaseline="central">
@@ -152,7 +149,7 @@ const CARD_HALF_H = 90; // rough: keeps a vertically-centred card inside the can
 function HoverCard({ ln, metricName, canvasW, canvasH }: { ln: LaidNode; metricName: string | null; canvasW: number; canvasH: number }) {
   const n = ln.node;
   const m = primaryMetric(n.metrics, metricName);
-  const status = n.official_status ?? n.status;
+  const status = n.status;
   const gap = NODE_R + 10;
   const top = Math.min(Math.max(ln.y, CARD_HALF_H), Math.max(canvasH - CARD_HALF_H, CARD_HALF_H));
   const style: React.CSSProperties =
@@ -164,19 +161,19 @@ function HoverCard({ ln, metricName, canvasW, canvasH }: { ln: LaidNode; metricN
   return (
     <div className="graph-hover" style={style}>
       <div className="tile-kicker">
-        {n.outcome_type ?? statusKind(status)} · depth {ln.depth}
+        {statusKind(status)} · depth {ln.depth}
         {n.parent_node_id && <> · from {n.parent_node_id}</>}
       </div>
-      <div className="tile-title">{n.node_id}</div>
+      <div className="tile-title">{n.title ? `${n.node_id} · ${n.title}` : n.node_id}</div>
       {m && (
         <div className="hover-metric">
           <span className="tile-big">{m.value}</span> <span className="muted">{m.key}</span>
         </div>
       )}
-      {(n.result_summary || n.current_claim) && <div className="hover-summary">{n.result_summary ?? n.current_claim}</div>}
+      {(n.evidence_summary || n.assignment) && <div className="hover-summary">{n.evidence_summary ?? n.assignment}</div>}
       <div className="tile-foot">
         <span className="muted">
-          {n.trial_count} trials · {n.report_count} reports · {relTime(n.updated_at)}
+          {n.work.length} work · {n.report_count} reports · {relTime(n.updated_at)}
         </span>
         <span className={`pill tiny ${tone(status)}`}>{status ?? "—"}</span>
       </div>
