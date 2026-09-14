@@ -39,6 +39,7 @@ export function Home({ overview, onSelect }: { overview: Overview; onSelect: (id
               <div className="tile-big">{r.node_count}</div>
               <div className="tile-foot">
                 <span className={`pill ${tone(r.phase_status)}`}>{r.phase_status ?? "—"}</span>
+                {r.pending_messages > 0 && <span className="pill tiny pink">{r.pending_messages} msgs</span>}
                 <span className="muted">{relTime(r.updated_at ?? r.mtime)}</span>
               </div>
             </button>

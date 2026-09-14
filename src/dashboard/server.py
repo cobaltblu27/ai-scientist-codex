@@ -10,10 +10,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from core.message_box import MessageBoxError, add as add_message
 from core.plugin import plugin_root
 from dashboard.scan import find_run, find_run_file, node_detail, run_detail, scan_overview
 
 DIST_DIR = plugin_root() / "src" / "frontend" / "dist"
+MAX_POST_BYTES = 64 * 1024
 
 
 def make_handler(target_repo: Path, dist_dir: Path):
@@ -45,6 +47,53 @@ def make_handler(target_repo: Path, dist_dir: Path):
                 self._route(urlparse(self.path).path)
             except Exception as exc:  # noqa: BLE001 - never take the server down on one bad artifact
                 self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"{exc.__class__.__name__}: {exc}"})
+
+        def do_POST(self) -> None:  # noqa: N802
+            try:
+                self._route_post(urlparse(self.path).path)
+            except Exception as exc:  # noqa: BLE001 - never take the server down on one bad request
+                self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"{exc.__class__.__name__}: {exc}"})
+
+        def _read_json_body(self) -> tuple[dict | None, tuple[HTTPStatus, str] | None]:
+            """The request body as a JSON object, or an (status, error) pair to send instead."""
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return None, (HTTPStatus.BAD_REQUEST, "invalid Content-Length")
+            if length > MAX_POST_BYTES:
+                return None, (HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"body larger than {MAX_POST_BYTES} bytes")
+            raw = self.rfile.read(length) if length > 0 else b""
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return None, (HTTPStatus.BAD_REQUEST, "body must be a JSON object")
+            if not isinstance(body, dict):
+                return None, (HTTPStatus.BAD_REQUEST, "body must be a JSON object")
+            return body, None
+
+        def _route_post(self, route: str) -> None:
+            # POST /api/runs/<run-id>/messages  {node_id, kind, prompt}
+            if route.startswith("/api/runs/"):
+                parts = [unquote(p) for p in route[len("/api/runs/"):].strip("/").split("/")]
+                if len(parts) == 2 and parts[1] == "messages":
+                    run = find_run(target_repo, parts[0])
+                    if run is None:
+                        return self._json(HTTPStatus.NOT_FOUND, {"error": f"unknown run: {parts[0]}"})
+                    body, failure = self._read_json_body()
+                    if failure is not None:
+                        return self._json(failure[0], {"error": failure[1]})
+                    try:
+                        record = add_message(
+                            target_repo,
+                            parts[0],
+                            str(body.get("node_id") or ""),
+                            str(body.get("kind") or ""),
+                            str(body.get("prompt") or ""),
+                        )
+                    except MessageBoxError as exc:
+                        return self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return self._json(HTTPStatus.CREATED, record)
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
 
         def _route(self, route: str) -> None:
             if route == "/api/overview":

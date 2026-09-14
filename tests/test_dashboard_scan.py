@@ -7,7 +7,7 @@ import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -138,7 +138,8 @@ def test_run_detail_nodes_work_and_reports(target: Path) -> None:
     assert nodes["N2"]["work"][1]["status"] == "running"
     assert nodes["N4"]["work"] == []
     assert all("rk-001" not in [w["work_id"] for w in n["work"]] for n in nodes.values())
-    assert set(detail["work"]) == {"bl-001", "N1-w-001", "N2-w-001", "N2-w-002", "N3-w-001", "N5-w-001", "rk-001"}
+    assert set(detail["work"]) == {"bl-001", "N1-w-001", "N1-r-002", "N2-w-001", "N2-w-002", "N3-w-001", "N5-w-001", "rk-001"}
+    assert nodes["N1"]["work"][1] == {**nodes["N1"]["work"][1], "work_id": "N1-r-002", "kind": "revision", "message_id": fx.MSG_N1_ACK}
 
     # conventional fields and the raw ledger
     assert nodes["N2"]["title"] == "Snapshot ensemble on N1"
@@ -149,7 +150,7 @@ def test_run_detail_nodes_work_and_reports(target: Path) -> None:
     assert nodes["N4"]["metrics"] is None
 
     # report_count: distinct existing files among node + work result_refs
-    assert {n: nodes[n]["report_count"] for n in nodes} == {"N1": 1, "N2": 2, "N3": 1, "N4": 0, "N5": 1}
+    assert {n: nodes[n]["report_count"] for n in nodes} == {"N1": 2, "N2": 2, "N3": 1, "N4": 0, "N5": 1}
 
     # run-level reports: *.md directly under the run dir and directly under logs/
     assert [r["path"] for r in detail["reports"]] == [
@@ -168,8 +169,8 @@ def test_run_detail_nodes_work_and_reports(target: Path) -> None:
     assert detail["resources"]["leases"]["lease-1"]["gpu"] == 0
     assert detail["resource_queue"]["pending"] == ["N4-w-001"]
     assert detail["selection"] is None
-    assert detail["journal_count"] == 14  # the two garbage lines are skipped
-    assert len(detail["journal"]) == 14
+    assert detail["journal_count"] == 20  # the two garbage lines are skipped
+    assert len(detail["journal"]) == 20
     assert detail["loop_state"]["run_id"] == fx.RESEARCH_RUN
     assert detail["config"]["active_node_cap"] == 3
     assert detail["run_md"] is None and detail["ideas"] is None
@@ -188,6 +189,7 @@ def test_run_detail_success_and_ideation(target: Path) -> None:
     assert ideation["ideas"][0]["pilot_report"] == "logs/pilots/mixup-cutout-schedule/report.md"
     assert [r["path"] for r in ideation["reports"]] == ["run.md", "logs/filter.md"]
     assert ideation["nodes"] == [] and ideation["journal"] == [] and ideation["loop_state"] is None
+    assert ideation["messages"] == [] and ideation["pending_messages"] == 0
 
 
 # --- node detail -------------------------------------------------------------
@@ -206,7 +208,8 @@ def test_node_detail_history_is_ordered(target: Path) -> None:
     assert history[-1] == {**history[-1], "kind": "work", "work_id": "N2-w-002", "epoch": None}
 
     journal = [h for h in history if h["kind"] == "journal"]
-    assert [h["event_type"] for h in journal] == ["state_transition", "state_transition", "finding", "state_transition"]
+    assert [h["event_type"] for h in journal] == ["state_transition", "state_transition", "finding", "state_transition", "message"]
+    assert journal[-1]["details"]["message_id"] == fx.MSG_N2_PENDING
     assert all(h["details"] for h in journal)
     assert not any(h["kind"] == "journal" and h["details"].get("note", "").startswith("N1") for h in history)
 
@@ -237,6 +240,46 @@ def test_node_detail_missing_report_file(target: Path) -> None:
     assert detail["result_ref"] == "logs/workers/N2/N2-w-001/result.md"
     assert detail["report_count"] == 0 and detail["reports"] == []
     assert [h["kind"] for h in detail["history"]] == ["journal", "work"]
+
+
+# --- message box -------------------------------------------------------------
+
+
+MESSAGE_KEYS = {"id", "run_id", "node_id", "kind", "prompt", "created_at", "status", "updated_at", "work_id", "result_node_id", "note"}
+
+
+def test_run_detail_messages_newest_first(target: Path) -> None:
+    detail = run_detail(find_run(target, fx.RESEARCH_RUN))
+    messages = detail["messages"]
+    assert [m["id"] for m in messages] == [fx.MSG_N2_PENDING, fx.MSG_N1_ACK, fx.MSG_N3_REJECTED]  # the malformed file is skipped
+    assert all(set(m) == MESSAGE_KEYS for m in messages)
+    assert [m["status"] for m in messages] == ["pending", "acknowledged", "rejected"]
+    assert messages[0] == {**messages[0], "node_id": "N2", "kind": "branch", "work_id": None, "result_node_id": None, "note": None}
+    assert messages[1]["work_id"] == "N1-r-002" and messages[1]["node_id"] == "N1"
+    assert messages[2]["note"].startswith("N3 is failed")
+    assert detail["pending_messages"] == 1
+
+    nodes = {n["node_id"]: n for n in detail["nodes"]}
+    assert {n: nodes[n]["pending_messages"] for n in nodes} == {"N1": 0, "N2": 1, "N3": 0, "N4": 0, "N5": 0}
+    assert "messages" not in nodes["N2"]  # summaries carry the count only
+
+
+def test_run_summary_pending_messages(target: Path) -> None:
+    runs = {r["run_id"]: r for r in scan_overview(target)["runs"]}
+    assert runs[fx.RESEARCH_RUN]["pending_messages"] == 1
+    assert runs[fx.SUCCESS_RUN]["pending_messages"] == 0
+    assert runs[fx.IDEATION_RUN]["pending_messages"] == 0
+    assert runs[fx.BROKEN_RUN]["pending_messages"] == 0
+
+
+def test_node_detail_messages(target: Path) -> None:
+    run = find_run(target, fx.RESEARCH_RUN)
+    n2 = node_detail(run, "N2")
+    assert [m["id"] for m in n2["messages"]] == [fx.MSG_N2_PENDING]
+    assert n2["pending_messages"] == 1
+    n1 = node_detail(run, "N1")
+    assert [m["id"] for m in n1["messages"]] == [fx.MSG_N1_ACK] and n1["pending_messages"] == 0
+    assert node_detail(run, "N4")["messages"] == []
 
 
 # --- tolerance ---------------------------------------------------------------
@@ -368,3 +411,60 @@ def test_server_files_route(server: str) -> None:
     assert _status(f"{server}/api/runs/{fx.RESEARCH_RUN}/files/%2e%2e/%2e%2e/active-run.json") == 403
     assert _status(f"{server}/api/runs/{fx.RESEARCH_RUN}/files/logs/%2e%2e/%2e%2e/%2e%2e/active-run.json") == 403
     assert _status(f"{server}/api/runs/{fx.RESEARCH_RUN}/files/nodes/N2/workspace/model.bin") == 403
+
+
+def _post(url: str, body, *, raw: bytes | None = None, headers: dict[str, str] | None = None) -> tuple[int, dict]:
+    data = raw if raw is not None else json.dumps(body).encode()
+    req = Request(url, data=data, method="POST", headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with urlopen(req) as resp:
+            return resp.status, json.load(resp)
+    except HTTPError as exc:
+        return exc.code, json.load(exc)
+
+
+def test_server_post_message(server: str, target: Path) -> None:
+    url = f"{server}/api/runs/{fx.RESEARCH_RUN}/messages"
+    box = target / ".ai-scientist" / "runs" / fx.RESEARCH_RUN / "message-box"
+    before = json.load(urlopen(f"{server}/api/runs/{fx.RESEARCH_RUN}/nodes/N4"))
+    assert before["messages"] == [] and before["pending_messages"] == 0
+
+    status, record = _post(url, {"node_id": "N4", "kind": "revision", "prompt": "use TTA with 8 crops"})
+    assert status == 201
+    assert record["node_id"] == "N4" and record["kind"] == "revision" and record["status"] == "pending"
+    assert record["run_id"] == fx.RESEARCH_RUN and record["prompt"] == "use TTA with 8 crops"
+    assert (box / f"{record['id']}.json").is_file()
+    assert json.loads((box / f"{record['id']}.json").read_text()) == record
+
+    after = json.load(urlopen(f"{server}/api/runs/{fx.RESEARCH_RUN}/nodes/N4"))
+    assert [m["id"] for m in after["messages"]] == [record["id"]]
+    assert after["pending_messages"] == 1
+    assert after["history"][-1]["kind"] == "journal" and after["history"][-1]["details"]["message_id"] == record["id"]
+    run = json.load(urlopen(f"{server}/api/runs/{fx.RESEARCH_RUN}"))
+    assert run["messages"][0]["id"] == record["id"]  # newest first
+    assert run["pending_messages"] == 2
+
+
+def test_server_post_message_rejections(server: str) -> None:
+    url = f"{server}/api/runs/{fx.RESEARCH_RUN}/messages"
+    status, err = _post(url, {"node_id": "N2", "kind": "foo", "prompt": "x"})
+    assert status == 400 and "kind" in err["error"]
+    status, err = _post(url, {"node_id": "N9", "kind": "branch", "prompt": "x"})
+    assert status == 400 and "unknown node" in err["error"]
+    status, err = _post(url, {"node_id": "N2", "kind": "branch", "prompt": ""})
+    assert status == 400 and "prompt" in err["error"]
+    status, err = _post(url, None, raw=b"not json")
+    assert status == 400 and "JSON object" in err["error"]
+    status, err = _post(url, ["node_id"])
+    assert status == 400 and "JSON object" in err["error"]
+
+    status, err = _post(f"{server}/api/runs/nope/messages", {"node_id": "N2", "kind": "branch", "prompt": "x"})
+    assert status == 404 and "unknown run" in err["error"]
+    status, _ = _post(f"{server}/api/runs/{fx.RESEARCH_RUN}/nodes/N2", {"node_id": "N2", "kind": "branch", "prompt": "x"})
+    assert status == 404
+    status, _ = _post(f"{server}/api/overview", {})
+    assert status == 404
+
+    big = {"node_id": "N2", "kind": "branch", "prompt": "x" * 70_000}
+    status, err = _post(url, big)
+    assert status == 413 and "larger than" in err["error"]

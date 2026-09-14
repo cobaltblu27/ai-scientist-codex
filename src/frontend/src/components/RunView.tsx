@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { RunDetail } from "../lib/types";
+import type { RunDetail, SteerMessage } from "../lib/types";
 import { relTime, tone } from "../lib/format";
 import { Stat } from "./Home";
 import { NodeGraph } from "./NodeGraph";
@@ -26,7 +26,7 @@ export function RunView({ run }: { run: RunDetail }) {
         <div className="head-stats">
           {ideation ? <Stat label="Ideas" value={run.idea_count ?? "—"} /> : <Stat label="Nodes" value={run.node_count} />}
           {!ideation && <Stat label="Live" value={live} />}
-          {!ideation && <Stat label="Ideas" value={run.idea_count ?? "—"} />}
+          {!ideation && <Stat label="Pending msgs" value={run.pending_messages ?? 0} />}
         </div>
       </header>
 
@@ -44,7 +44,16 @@ export function RunView({ run }: { run: RunDetail }) {
       )}
 
       {ideation ? <IdeationBody run={run} /> : <ResearchBody run={run} live={live} onOpen={setOpenNode} />}
-      {openNode && <NodeModal runId={run.run_id} nodeId={openNode} primaryMetricName={run.primary_metric} onClose={closeNode} />}
+      {openNode && (
+        <NodeModal
+          runId={run.run_id}
+          nodeId={openNode}
+          primaryMetricName={run.primary_metric}
+          runActive={run.active}
+          onClose={closeNode}
+          onOpenNode={setOpenNode}
+        />
+      )}
     </>
   );
 }
@@ -109,6 +118,7 @@ function ResearchBody({ run, live, onOpen }: { run: RunDetail; live: number; onO
           )}
           {run.baseline_status && <div className="muted">baseline: {run.baseline_status}</div>}
         </div>
+        <MessagesCard messages={run.messages ?? []} pending={run.pending_messages ?? 0} onOpen={onOpen} />
         <RawPanel title="Open questions" value={run.open_questions} />
         <RawPanel title="Resources" value={run.resources} />
         <RawPanel title="Resource queue" value={run.resource_queue} />
@@ -157,6 +167,34 @@ function IdeationBody({ run }: { run: RunDetail }) {
           {run.run_md ? <Markdown source={run.run_md} /> : <div className="muted">missing</div>}
         </div>
       </aside>
+    </div>
+  );
+}
+
+/** Run-wide steering queue: pending count plus the five most recent messages, each opening its node. */
+function MessagesCard({ messages, pending, onOpen }: { messages: SteerMessage[]; pending: number; onOpen: (id: string) => void }) {
+  const recent = messages.slice(0, 5);
+  return (
+    <div className={`card rail-card ${pending > 0 ? "pink" : ""}`}>
+      <div className="tile-kicker">Messages</div>
+      <div className="rail-big">{pending}</div>
+      <div className="muted">pending · {messages.length} total</div>
+      {recent.length > 0 && (
+        <div className="msg-recent">
+          {recent.map((m) => (
+            <button key={m.id} type="button" className="row row-btn" onClick={() => onOpen(m.node_id)} title={m.prompt}>
+              <span className={`dot ${tone(m.status)}`} />
+              <span className="row-main">
+                <span className="row-title">
+                  {m.node_id} <span className="pill tiny">{m.kind}</span>
+                </span>
+                <span className="row-sub ellipsis">{m.prompt}</span>
+              </span>
+              <span className={`pill tiny ${tone(m.status)}`}>{m.status}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

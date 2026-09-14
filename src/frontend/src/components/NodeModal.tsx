@@ -3,15 +3,20 @@ import { useNode } from "../lib/api";
 import type { NodeDetail, NodeHistoryEvent, NodeReport } from "../lib/types";
 import { fmtTime, primaryMetric, relTime, statusKind, tone } from "../lib/format";
 import { Markdown } from "./Markdown";
+import { MessageBox } from "./MessageBox";
 
 interface Props {
   runId: string;
   nodeId: string;
   primaryMetricName: string | null;
+  /** run.active; null when the run has no readable state. */
+  runActive: boolean | null;
   onClose: () => void;
+  /** Open another node's modal (used by message rows that point at a result node). */
+  onOpenNode: (id: string) => void;
 }
 
-export function NodeModal({ runId, nodeId, primaryMetricName, onClose }: Props) {
+export function NodeModal({ runId, nodeId, primaryMetricName, runActive, onClose, onOpenNode }: Props) {
   const { data, error } = useNode(runId, nodeId);
 
   useEffect(() => {
@@ -30,13 +35,20 @@ export function NodeModal({ runId, nodeId, primaryMetricName, onClose }: Props) 
         <div className="modal-head">
           <div className="min0">
             <div className="tile-kicker">node</div>
-            <h2 className="ellipsis">{data?.title ? `${nodeId} · ${data.title}` : nodeId}</h2>
+            <h2 className="ellipsis">
+              {data?.title ? `${nodeId} · ${data.title}` : nodeId}
+              {data && data.pending_messages > 0 && (
+                <span className="pill tiny pink" style={{ marginLeft: 8, verticalAlign: "middle" }}>
+                  {data.pending_messages} pending
+                </span>
+              )}
+            </h2>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close">×</button>
         </div>
         {error && <div className="card banner orange">{error}</div>}
         {!data && !error && <div className="empty">Loading…</div>}
-        {data && <Body d={data} metricName={primaryMetricName} />}
+        {data && <Body d={data} runId={runId} nodeId={nodeId} metricName={primaryMetricName} runActive={runActive} onOpenNode={onOpenNode} />}
       </div>
     </div>
   );
@@ -45,7 +57,16 @@ export function NodeModal({ runId, nodeId, primaryMetricName, onClose }: Props) 
 /* Ledger keys the cards above already show; everything else in the ledger goes to the "more" table. */
 const SHOWN = new Set(["status", "updated_at", "parent_node_id", "title", "idea_id", "assignment", "result_ref", "evidence_summary", "next_action", "metrics"]);
 
-function Body({ d, metricName }: { d: NodeDetail; metricName: string | null }) {
+function Body({
+  d, runId, nodeId, metricName, runActive, onOpenNode,
+}: {
+  d: NodeDetail;
+  runId: string;
+  nodeId: string;
+  metricName: string | null;
+  runActive: boolean | null;
+  onOpenNode: (id: string) => void;
+}) {
   const m = primaryMetric(d.metrics, metricName);
   const extra = Object.entries(d.ledger ?? {}).filter(([k]) => !SHOWN.has(k));
   const notes: [string, unknown][] = [
@@ -82,6 +103,8 @@ function Body({ d, metricName }: { d: NodeDetail; metricName: string | null }) {
           </div>
         </div>
       </section>
+
+      <MessageBox runId={runId} nodeId={nodeId} messages={d.messages ?? []} nodeAlive={d.alive} runActive={runActive} onOpenNode={onOpenNode} />
 
       {notes.some(([, v]) => v) && (
         <section>

@@ -350,3 +350,27 @@ button.tile:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(30,
 .link-btn { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: inherit; text-align: left; }
 .raw { font-size: 11px; line-height: 1.4; background: var(--card-alt, #f4f3ef); border-radius: 8px; padding: 8px 10px; overflow-x: auto; max-height: 320px; white-space: pre; margin: 6px 0 0; }
 .rail-card .md { font-size: 12.5px; max-height: 60vh; overflow: auto; }
+
+/* ---- message box (human steering) ---- */
+.msg-form { display: grid; gap: 10px; margin-bottom: 12px; padding: 12px 14px; }
+.seg { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); width: max-content; }
+.seg .pill { border-color: transparent; background: transparent; }
+.seg .pill.active { background: var(--ink); color: #fff; }
+.seg .pill:disabled { opacity: 0.45; cursor: not-allowed; }
+textarea {
+  font: inherit; color: inherit; width: 100%; box-sizing: border-box; resize: vertical; padding: 8px 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+}
+textarea:focus { outline: 2px solid var(--lime); outline-offset: 1px; }
+.msg-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.msg-actions .pill.ink { background: var(--ink); color: #fff; border-color: transparent; padding: 5px 16px; }
+.msg-actions .pill:disabled { opacity: 0.45; cursor: not-allowed; }
+.msg-note { font-size: 12px; }
+.msg-note.orange { color: var(--orange); }
+.msg-row .row-main { gap: 4px; }
+.msg-excerpt { white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
+.msg-toggle { font-size: 12px; width: max-content; }
+.msg-row .md { font-size: 13px; }
+.msg-recent { display: grid; margin-top: 4px; }
+.msg-recent .row { padding: 8px 4px; }
+.node-msg { fill: var(--pink); stroke: var(--card); stroke-width: 2; pointer-events: none; }

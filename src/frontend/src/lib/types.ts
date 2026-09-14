@@ -24,7 +24,24 @@ export interface RunSummary {
   goal: string | null;
   idea_count: number | null;
   node_count: number;
+  /** message-box/*.json records with status pending. */
+  pending_messages: number;
   mtime: number | null;
+}
+
+/** One message-box/<id>.json record (docs/SCHEMA.md 3.11). */
+export interface SteerMessage {
+  id: string;
+  run_id: string;
+  node_id: string;
+  kind: "revision" | "branch";
+  prompt: string;
+  status: "pending" | "acknowledged" | "completed" | "rejected" | "cancelled" | string;
+  created_at: string;
+  updated_at: string | null;
+  work_id: string | null;
+  result_node_id: string | null;
+  note: string | null;
 }
 
 export interface WorkItem {
@@ -54,6 +71,7 @@ export interface NodeSummary {
   /** state.work entries whose `node` is this node. */
   work: WorkItem[];
   report_count: number;
+  pending_messages: number;
   /** Raw state.nodes[<id>] entry, so unknown keys can still be shown. */
   ledger: Record<string, unknown> | null;
 }
@@ -97,6 +115,8 @@ export type NodeHistoryEvent =
 export interface NodeDetail extends NodeSummary {
   reports: NodeReport[];
   history: NodeHistoryEvent[];
+  /** This node's messages, newest first. */
+  messages: SteerMessage[];
 }
 
 export interface JournalEvent {
@@ -139,6 +159,8 @@ export interface RunDetail extends RunSummary {
   config: Record<string, unknown> | null;
   run_md: string | null;
   ideas: IdeaEntry[] | null;
+  /** Every message in the run, newest first. */
+  messages: SteerMessage[];
 }
 
 export interface ContractSummary {

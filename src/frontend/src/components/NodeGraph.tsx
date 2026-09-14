@@ -139,6 +139,7 @@ function GraphNode({
           ★
         </text>
       )}
+      {n.pending_messages > 0 && <circle className="node-msg" cx={-NODE_R + 4} cy={-NODE_R + 4} r={5} />}
     </g>
   );
 }
@@ -171,6 +172,12 @@ function HoverCard({ ln, metricName, canvasW, canvasH }: { ln: LaidNode; metricN
         </div>
       )}
       {(n.evidence_summary || n.assignment) && <div className="hover-summary">{n.evidence_summary ?? n.assignment}</div>}
+      {n.pending_messages > 0 && (
+        <div className="hover-summary">
+          <span className="dot pink" style={{ display: "inline-block", marginRight: 6 }} />
+          {n.pending_messages} pending {n.pending_messages === 1 ? "message" : "messages"}
+        </div>
+      )}
       <div className="tile-foot">
         <span className="muted">
           {n.work.length} work · {n.report_count} reports · {relTime(n.updated_at)}

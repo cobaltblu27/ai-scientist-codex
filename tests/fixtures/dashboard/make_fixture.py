@@ -27,6 +27,11 @@ BROKEN_RUN = "20260913-broken-loop-state"
 
 RUN_IDS = [RESEARCH_RUN, SUCCESS_RUN, EXHAUSTED_RUN, BLOCKED_RUN, IDEATION_RUN, BROKEN_RUN]
 
+# Message ids in the research run's message box (docs/SCHEMA.md 3.11).
+MSG_N2_PENDING = "msg-20260912T095600Z-7c1e"
+MSG_N1_ACK = "msg-20260912T093000Z-2b9d"
+MSG_N3_REJECTED = "msg-20260912T091000Z-e4a0"
+
 
 def ts(minutes_ago: float) -> str:
     return (T0 - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -184,6 +189,33 @@ def checkpoint(minutes_ago: float, sections: list[str], note: str, node_id: str 
     return (minutes_ago, "state_transition", fields)
 
 
+def message(run_id: str, message_id: str, node_id: str, kind: str, prompt: str, *, created_minutes_ago: float,
+            status: str = "pending", updated_minutes_ago: float | None = None, work_id: str | None = None,
+            result_node_id: str | None = None, note: str | None = None) -> dict:
+    """A `message-box/<id>.json` record (docs/SCHEMA.md 3.11)."""
+    return {
+        "id": message_id,
+        "run_id": run_id,
+        "node_id": node_id,
+        "kind": kind,
+        "prompt": prompt,
+        "created_at": ts(created_minutes_ago),
+        "status": status,
+        "updated_at": ts(updated_minutes_ago if updated_minutes_ago is not None else created_minutes_ago),
+        "work_id": work_id,
+        "result_node_id": result_node_id,
+        "note": note,
+    }
+
+
+def message_event(minutes_ago: float, msg: dict, command: str, status: str, **extra) -> tuple[float, str, dict]:
+    """Journal line written by `message-box add` / `message-box update`."""
+    fields = {"node_id": msg["node_id"], "command": command, "message_id": msg["id"], "status": status, **extra}
+    if command == "message-box add":
+        fields["kind"] = msg["kind"]
+    return (minutes_ago, "message", fields)
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -257,6 +289,8 @@ def build_research(root: Path, out: Path) -> None:
     works = {
         "bl-001": work(None, "completed", "logs/baseline/bl-001/result.md", closed_at=ts(200)),
         "N1-w-001": work("N1", "completed", "logs/workers/N1/N1-w-001/result.md", closed_at=ts(120)),
+        "N1-r-002": work("N1", "running", "logs/revisions/N1/N1-r-002/result.md", kind="revision", message_id=MSG_N1_ACK,
+                         revision_plan_ref="logs/revisions/N1/N1-r-002/result.md", next_action="apply the user's warmup change"),
         "N2-w-001": work("N2", "completed", "logs/workers/N2/N2-w-001/result.md", closed_at=ts(40)),
         "N2-w-002": work("N2", "running", "logs/revisions/N2/N2-w-002/result.md", revision_plan_ref="logs/revisions/N2/N2-w-002/result.md", next_action="second seed"),
         "N3-w-001": work("N3", "failed", "logs/workers/N3/N3-w-001/result.md", closed_at=ts(60)),
@@ -269,6 +303,7 @@ def build_research(root: Path, out: Path) -> None:
         "logs/workers/N1/N1-w-001/result.md": ("N1", worker_report("N1", "Mixup + cutout schedule", "completed", "accuracy", 0.931, "Mixup + cutout lifts accuracy by 0.019."), ts(120)),
         "logs/workers/N2/N2-w-001/result.md": ("N2", worker_report("N2", "Snapshot ensemble on N1", "completed", "accuracy", 0.936, "Three snapshots ensembled; one seed only."), ts(40)),
         "logs/revisions/N2/N2-w-002/result.md": ("N2", "# Revision plan for N2\n\nRun a second seed before ranking.\n", ts(20)),
+        "logs/revisions/N1/N1-r-002/result.md": ("N1", "# Revision plan for N1\n\nUser message " + MSG_N1_ACK + ": extend the warmup to 5 epochs and re-run the N1 recipe.\n", ts(22)),
         "logs/workers/N3/N3-w-001/result.md": ("N3", worker_report("N3", "Squeeze-excite variant", "failed", "accuracy", None, "OOM at batch 512."), ts(60)),
         "logs/workers/N5/N5-w-001/result.md": ("N5", worker_report("N5", "Stochastic depth members", "running", "accuracy", 0.930, "First seed done."), ts(8)),
         "logs/rankings/rk-001/result.md": ("Ranking", "# Ranking rk-001\n\n1. N2\n2. N5\n3. N1\n", ts(30)),
@@ -299,6 +334,17 @@ def build_research(root: Path, out: Path) -> None:
     write(run / "logs" / "agent-map.md", "# Agent map\n\n| work | agent |\n|---|---|\n| N2-w-002 | agent-N2-w-002 |\n", at=ts(20))
     write(run / "logs" / "resource-log.md", "# Resource log\n\n- lease-1 -> gpu 0\n- lease-2 -> gpu 1\n", at=ts(15))
     write(run / "nodes" / "N2" / "workspace" / "notes.txt", "scratch; the scanner never reads this\n", at=ts(5))
+
+    # Message box: one open steer on N2, one being worked on N1, one turned down on N3.
+    msg_n2 = message(rid, MSG_N2_PENDING, "N2", "branch", "Try the RandAugment policy from the AutoAugment paper as a child of N2.", created_minutes_ago=4)
+    msg_n1 = message(rid, MSG_N1_ACK, "N1", "revision", "Extend the warmup to 5 epochs; the loss curve looks unstable in the first epoch.",
+                     created_minutes_ago=30, status="acknowledged", updated_minutes_ago=22, work_id="N1-r-002")
+    msg_n3 = message(rid, MSG_N3_REJECTED, "N3", "revision", "Retry squeeze-excite at batch 256.",
+                     created_minutes_ago=50, status="rejected", updated_minutes_ago=45, note="N3 is failed and the OOM is a hardware limit; batch 256 halves throughput below the evaluator budget.")
+    for msg in (msg_n2, msg_n1, msg_n3):
+        write(run / "message-box" / f"{msg['id']}.json", msg, at=msg["updated_at"])
+    write(run / "message-box" / "not-a-message.json", '{"id": 5, "status": "pending"', at=ts(1))
+
     write(run / "journal.jsonl", journal(rid, [
         (300, "setup", {"command": "research-loop-bootstrap", "contract": contract_rel}),
         checkpoint(250, ["baseline", "work"], "baseline dispatched"),
@@ -308,11 +354,17 @@ def build_research(root: Path, out: Path) -> None:
         checkpoint(110, ["nodes", "work"], "N2 and N3 branched from N1", node_id="N2"),
         (100, "subagent_event", {"node_id": "N3", "subagent_id": "agent-N3-w-001", "event": "oom"}),
         checkpoint(60, ["nodes", "work"], "N3 failed", node_id="N3"),
+        message_event(50, msg_n3, "message-box add", "pending"),
+        message_event(45, msg_n3, "message-box update", "rejected", note=msg_n3["note"]),
         checkpoint(40, ["nodes", "work"], "N2-w-001 completed at 0.936", node_id="N2"),
         (35, "finding", {"node_id": "N2", "note": "gain may be within seed variance"}),
+        message_event(30, msg_n1, "message-box add", "pending"),
         checkpoint(30, ["work"], "ranking rk-001 closed"),
         checkpoint(25, ["nodes", "work"], "N2 revision N2-w-002 dispatched", node_id="N2"),
+        message_event(22, msg_n1, "message-box update", "acknowledged", work_id="N1-r-002"),
+        checkpoint(22, ["work"], "N1 revision N1-r-002 dispatched for message " + MSG_N1_ACK, node_id="N1"),
         checkpoint(8, ["nodes", "work"], "N5 dispatched", node_id="N5"),
+        message_event(4, msg_n2, "message-box add", "pending"),
         checkpoint(3, ["nodes", "orchestrator"], "N4 planned behind N2", node_id="N4"),
     ]), at=ts(3))
 

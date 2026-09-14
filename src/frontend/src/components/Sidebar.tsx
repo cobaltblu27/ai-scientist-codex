@@ -92,6 +92,7 @@ function RunGroup({
                 {r.phase ?? "—"} · {relTime(r.updated_at ?? r.mtime)}
               </span>
             </span>
+            {r.pending_messages > 0 && <span className="pill tiny pink">{r.pending_messages} msgs</span>}
             {r.run_id === activeId && <span className="pill tiny">live</span>}
           </button>
         </li>

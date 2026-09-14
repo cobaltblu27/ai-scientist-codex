@@ -5,7 +5,8 @@ wrong types and unparseable lines: a half-written run still shows up with
 whatever is parseable, and nothing here raises on a bad artifact.
 
 A request scans one run once (`_scan_run`) and passes the parsed context to the
-summary, detail and node functions, so `loop-state.json` is read a single time.
+summary, detail and node functions, so `loop-state.json` and the message box
+are each read a single time.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from core.frontmatter import read_frontmatter, read_status_line
+from core.message_box import list_messages
 from core.state import ai_root
 
 JOURNAL_TAIL = 50
@@ -238,7 +240,7 @@ def _node_report_paths(run: Path, ledger: dict[str, Any], work: list[dict[str, A
     return out
 
 
-def _node_summaries(run: Path, state: dict[str, Any]) -> list[dict[str, Any]]:
+def _node_summaries(run: Path, state: dict[str, Any], messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One summary per `state.nodes` entry, in ledger order."""
     raw_nodes = _dict(state.get("nodes"))
     work = _dict(state.get("work"))
@@ -260,9 +262,26 @@ def _node_summaries(run: Path, state: dict[str, Any]) -> list[dict[str, Any]]:
             summary[key] = ledger.get(key)
         summary["work"] = node_work
         summary["report_count"] = len(_node_report_paths(run, ledger, node_work))
+        summary["pending_messages"] = _pending_count(messages, node_id)
         summary["ledger"] = raw_nodes.get(node_id)
         out.append(summary)
     return out
+
+
+# --- message box -------------------------------------------------------------
+
+
+def _messages(run: Path) -> list[dict[str, Any]]:
+    """Every readable `message-box/*.json` record, newest first (SCHEMA.md section 3.11)."""
+    try:
+        records = list_messages(_target_repo(run), run.name)
+    except OSError:
+        return []
+    return list(reversed(records))
+
+
+def _pending_count(messages: list[dict[str, Any]], node_id: str | None = None) -> int:
+    return sum(1 for m in messages if m.get("status") == "pending" and (node_id is None or m.get("node_id") == node_id))
 
 
 # --- run context -------------------------------------------------------------
@@ -283,6 +302,7 @@ def _scan_run(run: Path) -> dict[str, Any]:
     loop_state_dict = _dict(loop_state)
     state = _dict(loop_state_dict.get("state"))
     config = read_frontmatter(run / "config.md") if kind == "research" else {}
+    messages = _messages(run) if kind == "research" else []
     return {
         "run": run,
         "kind": kind,
@@ -290,7 +310,8 @@ def _scan_run(run: Path) -> dict[str, Any]:
         "top": loop_state_dict,
         "state": state,
         "config": config,
-        "nodes": _node_summaries(run, state) if kind == "research" else [],
+        "messages": messages,
+        "nodes": _node_summaries(run, state, messages) if kind == "research" else [],
         "mtime": _mtime(loop_state_path) or _mtime(run_md_path) or _mtime(run),
     }
 
@@ -326,6 +347,7 @@ def _research_summary(ctx: dict[str, Any]) -> dict[str, Any]:
         "goal": _contract_goal(_load_json(contract_path)) if contract_path else None,
         "idea_count": _idea_count(idea_batch),
         "node_count": len(ctx["nodes"]),
+        "pending_messages": _pending_count(ctx["messages"]),
         "mtime": ctx["mtime"],
     }
 
@@ -341,6 +363,7 @@ def _ideation_summary(ctx: dict[str, Any]) -> dict[str, Any]:
         "goal": _contract_goal(_load_json(run / "contract.json")),
         "idea_count": _idea_count(run / "ideas.json"),
         "node_count": 0,
+        "pending_messages": 0,
     }
 
 
@@ -367,6 +390,7 @@ def _empty_summary(run: Path, mtime: float | None) -> dict[str, Any]:
         "goal": None,
         "idea_count": None,
         "node_count": 0,
+        "pending_messages": 0,
         "mtime": mtime,
     }
 
@@ -427,6 +451,7 @@ def run_detail(run: Path) -> dict[str, Any]:
         "selection": _load_json(run / "selection.json"),
         "journal": journal[-JOURNAL_TAIL:],
         "journal_count": len(journal),
+        "messages": ctx["messages"],
         "reports": _run_reports(run),
         "loop_state": ctx["loop_state"],
         "config": ctx["config"] or None,
@@ -508,6 +533,7 @@ def node_detail(run: Path, node_id: str) -> dict[str, Any] | None:
     return {
         **summary,
         "reports": reports,
+        "messages": [m for m in ctx["messages"] if m.get("node_id") == node_id],
         "history": _node_history(run, node_id, summary["work"], reports),
     }
 

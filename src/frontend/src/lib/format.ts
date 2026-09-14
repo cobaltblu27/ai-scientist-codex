@@ -47,6 +47,7 @@ export function tone(status: string | null | undefined): "lime" | "pink" | "oran
       return "lime";
     case "running":
     case "active":
+    case "acknowledged":
       return "lime";
     case "planned":
     case "queued":

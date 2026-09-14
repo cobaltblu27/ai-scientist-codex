@@ -144,6 +144,16 @@
         "node": "N1",
         "closed_at": "2026-09-12T08:00:00Z"
       },
+      "N1-r-002": {
+        "status": "running",
+        "agent_thread_id": "agent-N1-r-002",
+        "result_ref": "logs/revisions/N1/N1-r-002/result.md",
+        "node": "N1",
+        "kind": "revision",
+        "message_id": "msg-20260912T093000Z-2b9d",
+        "revision_plan_ref": "logs/revisions/N1/N1-r-002/result.md",
+        "next_action": "apply the user's warmup change"
+      },
       "N2-w-001": {
         "status": "completed",
         "agent_thread_id": "agent-N2-w-001",

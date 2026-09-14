@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import type { NodeDetail, Overview, RunDetail } from "./types";
+import type { NodeDetail, Overview, RunDetail, SteerMessage } from "./types";
 
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { cache: "no-store" });
+async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try {
@@ -14,6 +13,21 @@ async function getJson<T>(url: string): Promise<T> {
     throw new Error(msg);
   }
   return res.json() as Promise<T>;
+}
+
+async function getJson<T>(url: string): Promise<T> {
+  return unwrap<T>(await fetch(url, { cache: "no-store" }));
+}
+
+export async function postJson<T>(url: string, body: unknown): Promise<T> {
+  return unwrap<T>(
+    await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+  );
+}
+
+/** Queue a human steering message for a node; the orchestrator picks it up at its next sweep. */
+export function sendMessage(runId: string, body: { node_id: string; kind: SteerMessage["kind"]; prompt: string }): Promise<SteerMessage> {
+  return postJson<SteerMessage>(`/api/runs/${encodeURIComponent(runId)}/messages`, body);
 }
 
 /** Poll a JSON endpoint. Returns latest data, error and a manual refresh. */
