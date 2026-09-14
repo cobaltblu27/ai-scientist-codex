@@ -1,10 +1,15 @@
+import { useCallback, useState } from "react";
 import type { RunDetail } from "../lib/types";
-import { primaryMetric, relTime, tone } from "../lib/format";
+import { relTime, tone } from "../lib/format";
 import { Stat } from "./Home";
+import { NodeGraph } from "./NodeGraph";
+import { NodeModal } from "./NodeModal";
 
 export function RunView({ run }: { run: RunDetail }) {
-  const nodes = [...run.nodes].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+  const [openNode, setOpenNode] = useState<string | null>(null);
+  const closeNode = useCallback(() => setOpenNode(null), []);
   const journal = [...run.journal].reverse();
+  const live = run.nodes.filter((n) => n.alive).length;
   return (
     <>
       <header className="page-head">
@@ -32,28 +37,18 @@ export function RunView({ run }: { run: RunDetail }) {
       <div className="two-col">
         <section>
           <h2 className="section-title">
-            Nodes <sup>({nodes.length})</sup>
+            Node tree <sup>({run.nodes.length} nodes · {live} live)</sup>
           </h2>
-          {nodes.length === 0 ? (
+          {run.nodes.length === 0 ? (
             <div className="card empty">No nodes yet.</div>
           ) : (
-            <div className="tile-grid">
-              {nodes.map((n) => {
-                const m = primaryMetric(n.metrics, run.primary_metric);
-                const hi = n.node_id === run.selected_node ? "lime" : n.node_id === run.current_node ? "pink" : "";
-                return (
-                  <div key={n.node_id} className={`tile ${hi}`}>
-                    <div className="tile-kicker">{n.outcome_type ?? n.status ?? "node"}</div>
-                    <div className="tile-title ellipsis">{n.node_id}</div>
-                    <div className="tile-big">{m ? m.value : "—"}</div>
-                    <div className="tile-foot">
-                      <span className="muted ellipsis">{m?.key ?? `${n.trial_count} trials`}</span>
-                      <span className={`pill ${tone(n.status)}`}>{n.status ?? "—"}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <NodeGraph
+              nodes={run.nodes}
+              primaryMetricName={run.primary_metric}
+              currentNode={run.current_node}
+              selectedNode={run.selected_node}
+              onOpen={setOpenNode}
+            />
           )}
 
           <h2 className="section-title">
@@ -106,6 +101,7 @@ export function RunView({ run }: { run: RunDetail }) {
           </div>
         </aside>
       </div>
+      {openNode && <NodeModal runId={run.run_id} nodeId={openNode} primaryMetricName={run.primary_metric} onClose={closeNode} />}
     </>
   );
 }

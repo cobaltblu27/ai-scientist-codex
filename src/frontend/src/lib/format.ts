@@ -26,20 +26,70 @@ export function primaryMetric(metrics: Record<string, unknown>, prefer?: string 
 }
 
 export function tone(status: string | null | undefined): "lime" | "pink" | "orange" | "neutral" | "ink" {
-  switch (status) {
-    case "running":
+  switch (statusKind(status)) {
     case "accepted":
-    case "complete":
+    case "experimenting":
+    case "candidate":
       return "lime";
-    case "blocked_manual_recovery":
-    case "failed":
-    case "rejected":
-    case "cancelled":
+    case "revising":
+    case "dead":
       return "orange";
-    case "pending":
     case "queued":
+    case "implementing":
       return "pink";
     default:
-      return "neutral";
+      switch (status) {
+        case "running":
+        case "complete":
+        case "completed":
+          return "lime";
+        case "blocked_manual_recovery":
+        case "cancelled":
+        case "failed":
+          return "orange";
+        default:
+          return "neutral";
+      }
   }
+}
+
+/** What an agent is doing to a node, collapsed to the animation the graph draws. */
+export type StatusKind = "queued" | "implementing" | "experimenting" | "revising" | "candidate" | "accepted" | "dead" | "unknown";
+
+export function statusKind(status: string | null | undefined): StatusKind {
+  switch (status) {
+    case "planned":
+    case "pending":
+    case "queued":
+      return "queued";
+    case "implementing":
+      return "implementing";
+    case "running":
+    case "experimenting":
+    case "validating":
+      return "experimenting";
+    case "buggy":
+    case "repairing":
+    case "revising":
+      return "revising";
+    case "candidate":
+      return "candidate";
+    case "accepted":
+      return "accepted";
+    case "rejected":
+    case "invalid":
+    case "failed":
+    case "abandoned":
+    case "cancelled":
+      return "dead";
+    default:
+      return "unknown";
+  }
+}
+
+export function fmtTime(iso: string | number | null | undefined): string {
+  if (!iso) return "—";
+  const t = typeof iso === "number" ? iso * 1000 : Date.parse(iso);
+  if (Number.isNaN(t)) return String(iso);
+  return new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

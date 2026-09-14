@@ -8,10 +8,10 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from core.plugin import plugin_root
-from dashboard.scan import find_run, run_detail, scan_overview
+from dashboard.scan import find_node, find_run, node_detail, run_detail, scan_overview
 
 DIST_DIR = plugin_root() / "src" / "frontend" / "dist"
 
@@ -49,11 +49,18 @@ def make_handler(target_repo: Path, dist_dir: Path):
             if route == "/api/overview":
                 return self._json(HTTPStatus.OK, scan_overview(target_repo))
             if route.startswith("/api/runs/"):
-                run_id = route[len("/api/runs/"):].strip("/")
-                run = find_run(target_repo, run_id)
+                # /api/runs/<run-id>  or  /api/runs/<run-id>/nodes/<node-id>
+                parts = [unquote(p) for p in route[len("/api/runs/"):].strip("/").split("/")]
+                run = find_run(target_repo, parts[0])
                 if run is None:
-                    return self._json(HTTPStatus.NOT_FOUND, {"error": f"unknown run: {run_id}"})
-                return self._json(HTTPStatus.OK, run_detail(run))
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": f"unknown run: {parts[0]}"})
+                if len(parts) == 1:
+                    return self._json(HTTPStatus.OK, run_detail(run))
+                if len(parts) == 3 and parts[1] == "nodes":
+                    if find_node(run, parts[2]) is None:
+                        return self._json(HTTPStatus.NOT_FOUND, {"error": f"unknown node: {parts[2]}"})
+                    return self._json(HTTPStatus.OK, node_detail(run, parts[2]))
+                return self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             if route.startswith("/api/"):
                 return self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
 

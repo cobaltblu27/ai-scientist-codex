@@ -4,62 +4,126 @@
   "active": true,
   "phase": "research",
   "phase_status": "running",
-  "started_at": "2026-09-13T05:43:19Z",
-  "updated_at": "2026-09-13T09:43:19Z",
+  "started_at": "2026-09-14T01:46:02Z",
+  "updated_at": "2026-09-14T05:46:02Z",
   "completed_at": null,
   "run_outcome": null,
   "completion_audit": null,
   "completed_phases": {
     "ideation": {
-      "completed_at": "2026-09-13T08:43:19Z"
+      "completed_at": "2026-09-14T04:46:02Z"
     }
   },
   "state": {
     "orchestrator": {
       "next_action": "review_worker_result",
-      "current_node": "node-002",
-      "iteration": 14
+      "current_node": "node-005",
+      "iteration": 21
     },
     "baseline_status": "provided_by_contract",
     "nodes": {
       "node-001": {
-        "status": "accepted"
+        "status": "accepted",
+        "parent_node_id": null,
+        "updated_at": "2026-09-14T05:45:32Z"
       },
       "node-002": {
-        "status": "running"
+        "status": "accepted",
+        "parent_node_id": "node-001",
+        "updated_at": "2026-09-14T05:45:32Z"
       },
       "node-003": {
-        "status": "failed"
+        "status": "invalid",
+        "parent_node_id": null,
+        "updated_at": "2026-09-14T05:45:32Z"
       },
       "node-004": {
-        "status": "rejected"
+        "status": "rejected",
+        "parent_node_id": "node-001",
+        "updated_at": "2026-09-14T05:45:32Z"
       },
       "node-005": {
-        "status": "pending"
+        "status": "running",
+        "parent_node_id": "node-002",
+        "updated_at": "2026-09-14T05:45:32Z"
       },
       "node-006": {
-        "status": "accepted"
+        "status": "accepted",
+        "parent_node_id": null,
+        "updated_at": "2026-09-14T05:45:32Z"
+      },
+      "node-007": {
+        "status": "implementing",
+        "parent_node_id": "node-006",
+        "updated_at": "2026-09-14T05:45:32Z"
+      },
+      "node-008": {
+        "status": "repairing",
+        "parent_node_id": "node-002",
+        "updated_at": "2026-09-14T05:45:32Z"
+      },
+      "node-009": {
+        "status": "planned",
+        "parent_node_id": "node-005",
+        "updated_at": "2026-09-14T05:45:32Z"
+      },
+      "node-010": {
+        "status": "candidate",
+        "parent_node_id": "node-006",
+        "updated_at": "2026-09-14T05:45:32Z"
       }
     },
     "work": {
-      "work-node-002-t2": {
+      "worker-node-005": {
         "status": "running",
-        "node_id": "node-002"
+        "node_id": "node-005",
+        "updated_at": "2026-09-14T05:27:32Z",
+        "result_ref": ".ai-scientist/runs/20260912-research-cifar10/logs/workers/node-005/worker-node-005/result.md"
       },
-      "work-node-005-t0": {
+      "worker-node-007": {
+        "status": "implementing",
+        "node_id": "node-007",
+        "updated_at": "2026-09-14T05:38:32Z",
+        "result_ref": ".ai-scientist/runs/20260912-research-cifar10/logs/workers/node-007/worker-node-007/result.md"
+      },
+      "worker-node-008": {
+        "status": "repairing",
+        "node_id": "node-008",
+        "updated_at": "2026-09-14T05:43:32Z",
+        "result_ref": ".ai-scientist/runs/20260912-research-cifar10/logs/workers/node-008/worker-node-008/result.md"
+      },
+      "revision-node-008-r1": {
+        "status": "completed",
+        "node_id": "node-008",
+        "updated_at": "2026-09-14T05:41:32Z",
+        "result_ref": ".ai-scientist/runs/20260912-research-cifar10/logs/revisions/node-008/revision-node-008-r1/result.md"
+      },
+      "worker-node-009": {
         "status": "queued",
-        "node_id": "node-005"
+        "node_id": "node-009",
+        "updated_at": "2026-09-14T05:44:32Z"
+      },
+      "worker-node-010": {
+        "status": "validating",
+        "node_id": "node-010",
+        "updated_at": "2026-09-14T05:35:32Z"
       }
     },
     "subagents": {
-      "worker-node-002": {
+      "worker-node-005": {
+        "status": "running"
+      },
+      "worker-node-007": {
+        "status": "running"
+      },
+      "worker-node-008": {
         "status": "running"
       }
     },
     "resources": {
       "leases": {
         "lease-7": {
-          "task_id": "work-node-002-t2",
+          "task_id": "worker-node-005",
           "status": "running",
           "gpus": 1
         }

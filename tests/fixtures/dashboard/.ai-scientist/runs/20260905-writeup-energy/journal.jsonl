@@ -1,7 +1,7 @@
-{"event_type": "phase_start", "timestamp": "2026-09-07T03:44:49Z", "run_id": "20260905-writeup-energy", "details": {"phase": "ideation"}}
-{"event_type": "phase_start", "timestamp": "2026-09-08T13:04:49Z", "run_id": "20260905-writeup-energy", "details": {"phase": "research"}}
-{"event_type": "selection", "timestamp": "2026-09-09T22:24:49Z", "run_id": "20260905-writeup-energy", "details": {"selected_node": "node-001"}}
-{"event_type": "phase_start", "timestamp": "2026-09-10T15:04:49Z", "run_id": "20260905-writeup-energy", "details": {"phase": "review"}}
-{"event_type": "phase_start", "timestamp": "2026-09-10T23:24:49Z", "run_id": "20260905-writeup-energy", "details": {"phase": "writeup"}}
-{"event_type": "validation", "timestamp": "2026-09-11T07:34:49Z", "run_id": "20260905-writeup-energy", "details": {"gate": "launch", "exit_code": 0}}
-{"event_type": "handoff", "timestamp": "2026-09-11T07:44:49Z", "run_id": "20260905-writeup-energy", "details": {"gate": "launch", "approved": true}}
+{"event_type": "phase_start", "timestamp": "2026-09-07T23:47:32Z", "run_id": "20260905-writeup-energy", "details": {"phase": "ideation"}}
+{"event_type": "phase_start", "timestamp": "2026-09-09T09:07:32Z", "run_id": "20260905-writeup-energy", "details": {"phase": "research"}}
+{"event_type": "selection", "timestamp": "2026-09-10T18:27:32Z", "run_id": "20260905-writeup-energy", "details": {"selected_node": "node-001"}}
+{"event_type": "phase_start", "timestamp": "2026-09-11T11:07:32Z", "run_id": "20260905-writeup-energy", "details": {"phase": "review"}}
+{"event_type": "phase_start", "timestamp": "2026-09-11T19:27:32Z", "run_id": "20260905-writeup-energy", "details": {"phase": "writeup"}}
+{"event_type": "validation", "timestamp": "2026-09-12T03:37:32Z", "run_id": "20260905-writeup-energy", "details": {"gate": "launch", "exit_code": 0}}
+{"event_type": "handoff", "timestamp": "2026-09-12T03:47:32Z", "run_id": "20260905-writeup-energy", "details": {"gate": "launch", "approved": true}}

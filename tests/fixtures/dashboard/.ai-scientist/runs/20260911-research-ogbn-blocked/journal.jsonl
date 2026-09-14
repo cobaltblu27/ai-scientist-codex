@@ -1,3 +1,3 @@
-{"event_type": "phase_start", "timestamp": "2026-09-13T03:04:49Z", "run_id": "20260911-research-ogbn-blocked", "details": {"phase": "research"}}
-{"event_type": "critic", "timestamp": "2026-09-13T06:24:49Z", "run_id": "20260911-research-ogbn-blocked", "details": {"verdict": "PROMISING_CONTINUE"}, "node_id": "node-001"}
-{"event_type": "blocked", "timestamp": "2026-09-13T08:09:49Z", "run_id": "20260911-research-ogbn-blocked", "details": {"reason": "journal hash mismatch at transition t-6"}}
+{"event_type": "phase_start", "timestamp": "2026-09-13T23:07:32Z", "run_id": "20260911-research-ogbn-blocked", "details": {"phase": "research"}}
+{"event_type": "critic", "timestamp": "2026-09-14T02:27:32Z", "run_id": "20260911-research-ogbn-blocked", "details": {"verdict": "PROMISING_CONTINUE"}, "node_id": "node-001"}
+{"event_type": "blocked", "timestamp": "2026-09-14T04:12:32Z", "run_id": "20260911-research-ogbn-blocked", "details": {"reason": "journal hash mismatch at transition t-6"}}

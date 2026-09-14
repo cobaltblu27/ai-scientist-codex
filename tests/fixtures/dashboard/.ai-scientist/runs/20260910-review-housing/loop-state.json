@@ -4,17 +4,17 @@
   "active": true,
   "phase": "review",
   "phase_status": "running",
-  "started_at": "2026-09-13T05:09:49Z",
-  "updated_at": "2026-09-13T09:09:49Z",
+  "started_at": "2026-09-14T01:12:32Z",
+  "updated_at": "2026-09-14T05:12:32Z",
   "completed_at": null,
   "run_outcome": null,
   "completion_audit": null,
   "completed_phases": {
     "ideation": {
-      "completed_at": "2026-09-13T08:09:49Z"
+      "completed_at": "2026-09-14T04:12:32Z"
     },
     "research": {
-      "completed_at": "2026-09-13T08:09:49Z"
+      "completed_at": "2026-09-14T04:12:32Z"
     }
   },
   "state": {

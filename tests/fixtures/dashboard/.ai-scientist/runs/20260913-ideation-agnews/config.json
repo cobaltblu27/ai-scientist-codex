@@ -1,6 +1,6 @@
 {
   "run_id": "20260913-ideation-agnews",
-  "target_repo": "/data2/project/cobalt/ai-scientist/ai-scientist-claude/tests/fixtures/dashboard",
+  "target_repo": "/Users/cobalt/Projects/ai/ai-scientist-codex/tests/fixtures/dashboard",
   "research_contract": {
     "goal_type": "performance",
     "goal": "Improve macro-F1 on AG News topic classification",

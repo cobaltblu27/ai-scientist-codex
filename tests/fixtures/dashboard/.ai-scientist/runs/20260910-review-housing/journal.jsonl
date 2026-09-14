@@ -1,5 +1,5 @@
-{"event_type": "phase_start", "timestamp": "2026-09-12T22:04:49Z", "run_id": "20260910-review-housing", "details": {"phase": "research"}}
-{"event_type": "selection", "timestamp": "2026-09-12T23:44:49Z", "run_id": "20260910-review-housing", "details": {"selected_node": "node-003"}}
-{"event_type": "validation", "timestamp": "2026-09-12T23:54:49Z", "run_id": "20260910-review-housing", "details": {"gate": "research_to_review", "exit_code": 0}}
-{"event_type": "handoff", "timestamp": "2026-09-13T00:04:49Z", "run_id": "20260910-review-housing", "details": {"gate": "research_to_review", "approved": true}}
-{"event_type": "phase_start", "timestamp": "2026-09-13T09:09:49Z", "run_id": "20260910-review-housing", "details": {"phase": "review"}}
+{"event_type": "phase_start", "timestamp": "2026-09-13T18:07:32Z", "run_id": "20260910-review-housing", "details": {"phase": "research"}}
+{"event_type": "selection", "timestamp": "2026-09-13T19:47:32Z", "run_id": "20260910-review-housing", "details": {"selected_node": "node-003"}}
+{"event_type": "validation", "timestamp": "2026-09-13T19:57:32Z", "run_id": "20260910-review-housing", "details": {"gate": "research_to_review", "exit_code": 0}}
+{"event_type": "handoff", "timestamp": "2026-09-13T20:07:32Z", "run_id": "20260910-review-housing", "details": {"gate": "research_to_review", "approved": true}}
+{"event_type": "phase_start", "timestamp": "2026-09-14T05:12:32Z", "run_id": "20260910-review-housing", "details": {"phase": "review"}}

@@ -4,14 +4,14 @@
   "active": true,
   "phase": "research",
   "phase_status": "blocked_manual_recovery",
-  "started_at": "2026-09-13T04:09:49Z",
-  "updated_at": "2026-09-13T08:09:49Z",
+  "started_at": "2026-09-14T00:12:32Z",
+  "updated_at": "2026-09-14T04:12:32Z",
   "completed_at": null,
   "run_outcome": null,
   "completion_audit": null,
   "completed_phases": {
     "ideation": {
-      "completed_at": "2026-09-13T07:09:49Z"
+      "completed_at": "2026-09-14T03:12:32Z"
     }
   },
   "state": {
@@ -25,7 +25,8 @@
         "status": "accepted"
       },
       "node-002": {
-        "status": "failed"
+        "status": "buggy",
+        "parent_node_id": "node-001"
       }
     },
     "selected_node": null

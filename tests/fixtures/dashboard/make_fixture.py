@@ -67,9 +67,10 @@ def loop_state(run_id: str, phase: str, status: str, *, active: bool, minutes_ag
     }
 
 
-def node(node_id: str, status: str, metric: str, score: float | None, *, outcome: str | None = None, trials: int = 1, summary: str = "") -> dict:
+def node(node_id: str, status: str, metric: str, score: float | None, *, parent: str | None = None, outcome: str | None = None, trials: int = 1, summary: str = "") -> dict:
     return {
         "node_id": node_id,
+        "parent_node_id": parent,
         "status": status,
         "benchmark_contract_version": "1",
         "metrics": {metric: score, "loss": round(1.2 - abs(score), 3), "wall_clock_sec": 1800 + trials * 600} if score is not None else {},
@@ -81,6 +82,46 @@ def node(node_id: str, status: str, metric: str, score: float | None, *, outcome
         "current_claim": summary,
         "trials": [{"trial_id": f"{node_id}-t{i}", "seed": 13 + i} for i in range(trials)],
     }
+
+
+def worker_report(node_id: str, status: str, summary: str, metric: str, score: float | None) -> str:
+    score_line = f"| {metric} | {score} |" if score is not None else f"| {metric} | — |"
+    return f"""# {node_id} — worker result
+
+**Status:** `{status}`
+
+## Summary
+{summary}
+
+## Todos
+- [x] Materialize workspace and verify the frozen split
+- [x] Implement the change described in the seed idea
+- [{'x' if score is not None else ' '}] Run the evaluator command on the official split
+- [ ] Sweep two more seeds if the first result holds
+
+## Evidence
+| metric | value |
+|---|---|
+{score_line}
+| trials | see `node.json` |
+
+Commands and stdout live under `logs/workers/{node_id}/worker-{node_id}/`.
+"""
+
+
+def revision_report(node_id: str) -> str:
+    return f"""# Revision plan for {node_id}
+
+**Recommended action:** revise the same node.
+
+## Diagnosis
+The first trial crashed on a shape mismatch in the squeeze-excite block once batch size
+exceeded 256. The bug is mechanical, so a repair by the node worker is enough; no branch needed.
+
+## Minimum next step
+1. Guard the channel reduction so it never rounds to zero.
+2. Re-run trial `{node_id}-t0` with the same seed and compare the loss curve.
+"""
 
 
 def journal(run_id: str, events: list[tuple[float, str, dict]]) -> str:
@@ -132,42 +173,60 @@ def build(out: Path) -> None:
     ]))
 
     # --- run 2: research campaign, live (active-run) ------------------------
+    # A real tree: three roots, depth up to 3, live work on two branches.
     rid = "20260912-research-cifar10"
     rrun = root / f"runs/{rid}"
     write(rrun / "config.json", {"run_id": rid, "target_repo": str(out), "research_contract": CIFAR, "research": {"active_node_cap": 3, "ranking_top_n": 2}})
+    #        id,         status,         parent,     score, outcome,                    trials, summary
     nodes = [
-        ("node-001", "accepted", 0.931, "PROMISING_CONTINUE", 3, "Mixup + cutout schedule lifts accuracy +0.019 over baseline"),
-        ("node-002", "running", 0.934, None, 2, "Label smoothing + cosine LR, second seed sweep running"),
-        ("node-003", "failed", None, "INVALID", 1, "OOM during squeeze-excite training at batch 512"),
-        ("node-004", "rejected", 0.951, "KILL", 1, "Leakage: test images in augmentation cache"),
-        ("node-005", "pending", None, None, 0, "Snapshot ensemble, queued behind node-002"),
-        ("node-006", "accepted", 0.928, "NEEDS_SCIENTIFIC_FRAMING", 4, "Ensemble beats baseline but mechanism unclear"),
+        ("node-001", "accepted",     None,       0.931, "PROMISING_CONTINUE",        3, "Mixup + cutout schedule lifts accuracy +0.019 over baseline"),
+        ("node-002", "accepted",     "node-001", 0.934, "PROMISING_CONTINUE",        3, "Label smoothing + cosine LR on top of mixup, +0.003"),
+        ("node-003", "invalid",      None,       None,  "INVALID",                   1, "OOM during squeeze-excite training at batch 512"),
+        ("node-004", "rejected",     "node-001", 0.951, "KILL",                      1, "Leakage: test images in augmentation cache"),
+        ("node-005", "running",      "node-002", 0.936, None,                        2, "Snapshot ensemble of 3 checkpoints, second seed sweep running"),
+        ("node-006", "accepted",     None,       0.928, "NEEDS_SCIENTIFIC_FRAMING",  4, "Ensemble beats baseline but mechanism unclear"),
+        ("node-007", "implementing", "node-006", None,  None,                        0, "Distilled student from node-006 ensemble, implementing"),
+        ("node-008", "repairing",    "node-002", None,  None,                        1, "SE-block variant crashed on channel rounding; repair in progress"),
+        ("node-009", "planned",      "node-005", None,  None,                        0, "Test-time augmentation on top of ensemble, queued behind node-005"),
+        ("node-010", "candidate",    "node-006", 0.930, None,                        2, "Stochastic depth on ensemble members, awaiting validation"),
     ]
-    for nid, status, score, outcome, trials, summary in nodes:
-        write(rrun / f"nodes/{nid}/node.json", node(nid, status, "accuracy", score, outcome=outcome, trials=trials, summary=summary))
+    for nid, status, parent, score, outcome, trials, summary in nodes:
+        write(rrun / f"nodes/{nid}/node.json", node(nid, status, "accuracy", score, parent=parent, outcome=outcome, trials=trials, summary=summary))
+        if status != "planned":
+            write(rrun / f"logs/workers/{nid}/worker-{nid}/result.md", worker_report(nid, status, summary, "accuracy", score))
+    write(rrun / "logs/revisions/node-008/revision-node-008-r1/result.md", revision_report("node-008"))
     write(rrun / "loop-state.json", loop_state(rid, "research", "running", active=True, minutes_ago=1.5, completed=["ideation"], state={
-        "orchestrator": {"next_action": "review_worker_result", "current_node": "node-002", "iteration": 14},
+        "orchestrator": {"next_action": "review_worker_result", "current_node": "node-005", "iteration": 21},
         "baseline_status": "provided_by_contract",
-        "nodes": {nid: {"status": s} for nid, s, *_ in nodes},
-        "work": {"work-node-002-t2": {"status": "running", "node_id": "node-002"}, "work-node-005-t0": {"status": "queued", "node_id": "node-005"}},
-        "subagents": {"worker-node-002": {"status": "running"}},
-        "resources": {"leases": {"lease-7": {"task_id": "work-node-002-t2", "status": "running", "gpus": 1}}},
+        "nodes": {nid: {"status": s, "parent_node_id": parent, "updated_at": ts(2)} for nid, s, parent, *_ in nodes},
+        "work": {
+            "worker-node-005": {"status": "running", "node_id": "node-005", "updated_at": ts(20), "result_ref": f".ai-scientist/runs/{rid}/logs/workers/node-005/worker-node-005/result.md"},
+            "worker-node-007": {"status": "implementing", "node_id": "node-007", "updated_at": ts(9), "result_ref": f".ai-scientist/runs/{rid}/logs/workers/node-007/worker-node-007/result.md"},
+            "worker-node-008": {"status": "repairing", "node_id": "node-008", "updated_at": ts(4), "result_ref": f".ai-scientist/runs/{rid}/logs/workers/node-008/worker-node-008/result.md"},
+            "revision-node-008-r1": {"status": "completed", "node_id": "node-008", "updated_at": ts(6), "result_ref": f".ai-scientist/runs/{rid}/logs/revisions/node-008/revision-node-008-r1/result.md"},
+            "worker-node-009": {"status": "queued", "node_id": "node-009", "updated_at": ts(3)},
+            "worker-node-010": {"status": "validating", "node_id": "node-010", "updated_at": ts(12)},
+        },
+        "subagents": {"worker-node-005": {"status": "running"}, "worker-node-007": {"status": "running"}, "worker-node-008": {"status": "running"}},
+        "resources": {"leases": {"lease-7": {"task_id": "worker-node-005", "status": "running", "gpus": 1}}},
         "selected_node": None,
     }))
     events = [(300, "phase_start", {"phase": "research"})]
     m = 280
-    for nid, status, *_ in nodes:
-        events.append((m, "node_created", {"node_id": nid, "seed_idea": f"idea-{nid[-1]}"}))
+    terminal = {"accepted": "PROMISING_CONTINUE", "rejected": "KILL", "invalid": "INVALID"}
+    for nid, status, parent, *_ in nodes:
+        events.append((m, "node_created", {"node_id": nid, "seed_idea": f"idea-{nid[-1]}", "parent_node_id": parent}))
         m -= 8
-        events.append((m, "subagent", {"subagent_id": f"worker-{nid}", "node_id": nid, "status": "completed" if status not in ("running", "pending") else status}))
+        events.append((m, "subagent", {"subagent_id": f"worker-{nid}", "node_id": nid, "status": "completed" if status in terminal else status}))
         m -= 12
-        if status in ("accepted", "rejected", "failed"):
-            events.append((m, "critic", {"node_id": nid, "status": status, "verdict": {"accepted": "PROMISING_CONTINUE", "rejected": "KILL", "failed": "INVALID"}[status]}))
+        if status in terminal:
+            events.append((m, "critic", {"node_id": nid, "status": status, "verdict": terminal[status]}))
             m -= 10
     events += [
+        (7, "subagent", {"subagent_id": "revision-node-008-r1", "node_id": "node-008", "status": "completed", "recommendation": "revise"}),
         (20, "resource", {"resource_id": "lease-7", "status": "acquired", "gpus": 1}),
-        (6, "transition", {"transition_id": "t-14", "status": "running", "from": "dispatch_worker", "to": "review_worker_result"}),
-        (1.5, "checkpoint", {"iteration": 14}),
+        (6, "transition", {"transition_id": "t-21", "status": "running", "from": "dispatch_worker", "to": "review_worker_result"}),
+        (1.5, "checkpoint", {"iteration": 21}),
     ]
     write(rrun / "journal.jsonl", journal(rid, events))
     write(root / "active-run.json", {"schema_version": 1, "run_id": rid, "phase": "research", "status": "active", "updated_at": ts(1.5), "target_repo": str(out)})
@@ -175,11 +234,11 @@ def build(out: Path) -> None:
     # --- run 3: research blocked for manual recovery ------------------------
     rid = "20260911-research-ogbn-blocked"
     write(root / f"runs/{rid}/config.json", {"run_id": rid, "target_repo": str(out), "research_contract": ARXIV})
-    for nid, status, score in [("node-001", "accepted", 0.712), ("node-002", "failed", None)]:
-        write(root / f"runs/{rid}/nodes/{nid}/node.json", node(nid, status, "accuracy", score, trials=2))
+    for nid, status, parent, score in [("node-001", "accepted", None, 0.712), ("node-002", "buggy", "node-001", None)]:
+        write(root / f"runs/{rid}/nodes/{nid}/node.json", node(nid, status, "accuracy", score, parent=parent, trials=2))
     write(root / f"runs/{rid}/loop-state.json", loop_state(rid, "research", "blocked_manual_recovery", active=True, minutes_ago=95, completed=["ideation"], state={
         "orchestrator": {"next_action": "manual_recovery", "current_node": "node-002", "iteration": 6},
-        "nodes": {"node-001": {"status": "accepted"}, "node-002": {"status": "failed"}},
+        "nodes": {"node-001": {"status": "accepted"}, "node-002": {"status": "buggy", "parent_node_id": "node-001"}},
         "selected_node": None,
     }, blocked_reason="journal hash mismatch at transition t-6: loop-state.json edited outside checkpoint"))
     write(root / f"runs/{rid}/journal.jsonl", journal(rid, [
@@ -191,8 +250,9 @@ def build(out: Path) -> None:
     # --- run 4: review phase -------------------------------------------------
     rid = "20260910-review-housing"
     write(root / f"runs/{rid}/config.json", {"run_id": rid, "target_repo": str(out), "research_contract": HOUSING})
-    for nid, status, score in [("node-001", "accepted", -0.497), ("node-002", "rejected", -0.521), ("node-003", "accepted", -0.471)]:
-        write(root / f"runs/{rid}/nodes/{nid}/node.json", node(nid, status, "neg_rmse", score, trials=3))
+    for nid, status, parent, score in [("node-001", "accepted", None, -0.497), ("node-002", "rejected", "node-001", -0.521), ("node-003", "accepted", "node-001", -0.471)]:
+        write(root / f"runs/{rid}/nodes/{nid}/node.json", node(nid, status, "neg_rmse", score, parent=parent, trials=3))
+        write(root / f"runs/{rid}/logs/workers/{nid}/worker-{nid}/result.md", worker_report(nid, status, f"{nid} on the fixed housing split", "neg_rmse", score))
     write(root / f"runs/{rid}/selection.json", {"schema_version": 1, "run_id": rid, "selection_status": "accepted", "provisional": False, "selected_node": "node-003",
                                                  "ranked_nodes": ["node-003", "node-001"], "manual_override": None, "rationale": "lowest RMSE with clean leakage check", "updated_at": ts(600)})
     write(root / f"runs/{rid}/loop-state.json", loop_state(rid, "review", "running", active=True, minutes_ago=35, completed=["ideation", "research"], state={

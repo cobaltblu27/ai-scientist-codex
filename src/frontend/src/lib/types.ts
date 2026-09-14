@@ -23,13 +23,48 @@ export interface RunSummary {
 
 export interface NodeSummary {
   node_id: string;
+  /** From node.json, else loop-state.state.nodes[id]. null = root. */
+  parent_node_id: string | null;
+  /** Length of the resolvable parent chain; roots and orphans are 0. */
+  depth: number;
+  /** Worker-written status in node.json. */
   status: string | null;
+  /** Orchestrator-owned status in loop-state.state.nodes[id]; wins over `status` when present. */
+  official_status: string | null;
+  alive: boolean;
   outcome_type: string | null;
   metrics: Record<string, unknown>;
   result_summary: string | null;
   current_claim: string | null;
   trial_count: number;
+  report_count: number;
   updated_at: number | null;
+}
+
+export interface NodeReport {
+  kind: "worker" | "revision";
+  /** Directory name under logs/workers/<node>/ or logs/revisions/<node>/. */
+  agent_id: string;
+  path: string;
+  updated_at: number | null;
+  content: string | null;
+}
+
+export interface NodeHistoryEvent {
+  kind: "journal" | "work" | "report";
+  event_type: string | null;
+  agent_id: string | null;
+  status: string | null;
+  timestamp: string | null;
+  epoch: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface NodeDetail extends NodeSummary {
+  node: Record<string, unknown> | null;
+  official: Record<string, unknown>;
+  reports: NodeReport[];
+  history: NodeHistoryEvent[];
 }
 
 export interface JournalEvent {

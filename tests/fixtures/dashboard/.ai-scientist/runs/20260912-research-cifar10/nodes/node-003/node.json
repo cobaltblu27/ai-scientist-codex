@@ -1,6 +1,7 @@
 {
   "node_id": "node-003",
-  "status": "failed",
+  "parent_node_id": null,
+  "status": "invalid",
   "benchmark_contract_version": "1",
   "metrics": {},
   "split_integrity": {

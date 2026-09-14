@@ -1,5 +1,6 @@
 {
   "node_id": "node-003",
+  "parent_node_id": "node-001",
   "status": "accepted",
   "benchmark_contract_version": "1",
   "metrics": {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Overview, RunDetail } from "./types";
+import type { NodeDetail, Overview, RunDetail } from "./types";
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { cache: "no-store" });
@@ -50,3 +50,5 @@ export function usePolled<T>(url: string | null, intervalMs = 3000) {
 
 export const useOverview = () => usePolled<Overview>("/api/overview");
 export const useRun = (runId: string | null) => usePolled<RunDetail>(runId ? `/api/runs/${encodeURIComponent(runId)}` : null);
+export const useNode = (runId: string | null, nodeId: string | null) =>
+  usePolled<NodeDetail>(runId && nodeId ? `/api/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}` : null);
