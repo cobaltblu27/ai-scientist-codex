@@ -1,145 +1,75 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "loop-state.json (docs/SCHEMA.md section 3.3)",
   "type": "object",
-  "required": [
-    "schema_version",
-    "run_id",
-    "active",
-    "phase",
-    "phase_status",
-    "updated_at",
-    "state"
-  ],
+  "required": ["run_id", "phase", "phase_status", "active", "updated_at", "state"],
   "properties": {
-    "schema_version": {
-      "const": 1
-    },
-    "run_id": {
-      "type": "string"
-    },
-    "active": {
-      "type": "boolean"
-    },
-    "phase": {
-      "enum": [
-        "ideation",
-        "research",
-        "review",
-        "writeup"
-      ]
-    },
-    "phase_status": {
-      "enum": [
-        "running",
-        "verifying",
-        "complete",
-        "completed",
-        "COMPLETED",
-        "COMPLETED_BUDGET_EXHAUSTED",
-        "cancelled",
-        "CANCELLED",
-        "blocked_on_user",
-        "blocked_manual_recovery",
-        "failed",
-        "exhausted",
-        "EXHAUSTED_NO_CANDIDATE"
-      ]
-    },
-    "started_at": {
-      "type": "string"
-    },
-    "updated_at": {
-      "type": "string"
-    },
-    "completed_at": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "run_outcome": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "completion_audit": {
-      "type": [
-        "object",
-        "null"
-      ]
-    },
-    "completed_phases": {
-      "type": "object"
-    },
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "phase": {"enum": ["research", "review", "writeup"]},
+    "phase_status": {"enum": ["running", "success", "exhausted", "cancelled", "blocked", "complete"]},
+    "active": {"type": "boolean"},
+    "updated_at": {"type": "string"},
+    "last_transition_id": {"type": ["string", "null"]},
+    "run_outcome": {"type": ["string", "null"]},
+    "blocked_reason": {"type": ["string", "null"]},
+    "links": {"type": "object"},
     "state": {
-      "description": "Phase-specific compact state. For research, this owns official node statuses, subagent ledger, resource ledger, selection pointer, and orchestrator cursor.",
       "type": "object",
       "properties": {
         "orchestrator": {
           "type": "object",
-          "properties": {
-            "next_action": {
-              "type": "string"
-            },
-            "next_action_details": {
-              "type": "object"
-            },
-            "current_node": {
-              "type": "string"
-            },
-            "iteration": {
-              "type": "integer"
-            }
-          },
+          "required": ["next_action"],
+          "properties": {"next_action": {"type": "string"}},
           "additionalProperties": true
-        },
-        "baseline_status": {
-          "type": "string"
         },
         "baseline": {
           "type": "object",
-          "properties": {
-            "required": {"type": "boolean"},
-            "status": {
-              "enum": ["not_required", "planning", "preparing_split", "calculating_score", "ready", "failed", "abandoned"]
-            },
-            "split_manifest_ref": {"type": "string"},
-            "fixed_split_dir": {"type": "string"},
-            "baseline_score_refs": {"type": "array"},
-            "repo_refs": {"type": "array"}
-          },
+          "required": ["status"],
+          "properties": {"status": {"type": "string"}},
           "additionalProperties": true
         },
-        "work": {
-          "type": "object"
-        },
         "nodes": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["status", "updated_at"],
+            "properties": {
+              "status": {"type": "string"},
+              "updated_at": {"type": "string"},
+              "parent_node_id": {"type": ["string", "null"]}
+            },
+            "additionalProperties": true
+          }
         },
-        "subagents": {
-          "type": "object"
+        "work": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["status", "agent_thread_id", "result_ref", "node"],
+            "properties": {
+              "status": {"type": "string"},
+              "agent_thread_id": {"type": "string"},
+              "result_ref": {"type": "string"},
+              "node": {"type": ["string", "null"]}
+            },
+            "additionalProperties": true
+          }
         },
-        "resources": {
-          "type": "object"
-        },
-        "selected_node": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
+        "tasks": {"type": "object"},
+        "resources": {"type": "object"},
+        "resource_queue": {"type": "object"},
         "selection": {
-          "type": "object"
+          "type": "object",
+          "required": ["status", "selected_node"],
+          "properties": {
+            "status": {"enum": ["pending", "final"]},
+            "selected_node": {"type": ["string", "null"]}
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
-    },
-    "last_transition_id": {
-      "type": "string"
-    },
-    "blocked_reason": {
-      "type": "string"
     }
   },
   "additionalProperties": true

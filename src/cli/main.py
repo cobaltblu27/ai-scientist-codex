@@ -10,9 +10,9 @@ from typing import Any
 
 from core import agents as core_agents
 from core.state import (
+    TERMINAL_PHASE_STATUSES,
     append_journal_event,
     audit_block_reason,
-    block_for_manual_recovery,
     clear_active_run,
     has_release_evidence,
     load_active_run,
@@ -48,8 +48,6 @@ def active_run(target: Path, run_id: str | None = None) -> tuple[str, dict[str, 
         if state:
             reason = audit_block_reason(target, run_id, state)
             if reason:
-                if str(state.get("phase_status") or "") != "blocked_manual_recovery":
-                    block_for_manual_recovery(target, run_id, state, reason)
                 raise CliError(reason)
         return run_id, state
     active = load_active_run(target)
@@ -63,8 +61,6 @@ def active_run(target: Path, run_id: str | None = None) -> tuple[str, dict[str, 
     if state:
         block_reason = audit_block_reason(target, rid, state)
         if block_reason:
-            if str(state.get("phase_status") or "") != "blocked_manual_recovery":
-                block_for_manual_recovery(target, rid, state, block_reason)
             raise CliError(block_reason)
     return rid, state
 
@@ -88,6 +84,19 @@ def cmd_validate_run(args: argparse.Namespace) -> int:
     if args.run_id:
         argv.extend(["--run-id", args.run_id])
     return validate_run_main(argv)
+
+
+def cmd_validate_loop_state(args: argparse.Namespace) -> int:
+    from validation.run import ValidationError, ai_root, pick_run, validate_loop_state_run
+
+    target = Path(args.target) if args.target else target_repo(args)
+    try:
+        root = ai_root(target)
+        run = pick_run(root, args.run_id)
+    except ValidationError as exc:
+        return response("error", error=str(exc), problems=[str(exc)])
+    problems = validate_loop_state_run(root, run)
+    return response("ok" if not problems else "error", run_id=run.name, run_dir=str(run), problems=problems)
 
 
 def cmd_agents_install(args: argparse.Namespace) -> int:
@@ -223,7 +232,7 @@ def cmd_handoff_record(args: argparse.Namespace) -> int:
     if (
         args.approved
         and state
-        and state.get("phase_status") == "complete"
+        and str(state.get("phase_status") or "") in TERMINAL_PHASE_STATUSES
         and has_release_evidence(target, run_id, str(state.get("phase") or "research"))
     ):
         clear_active_run(target, run_id)
@@ -253,6 +262,10 @@ def build_parser() -> argparse.ArgumentParser:
     validate_run.add_argument("--gate", choices=["research_to_review", "review_to_writeup", "launch"], required=True)
     validate_run.add_argument("--run-id")
     validate_run.set_defaults(func=cmd_validate_run)
+    validate_loop_state = validate_sub.add_parser("loop-state", help="Check loop-state.json and journal.jsonl against docs/SCHEMA.md.")
+    validate_loop_state.add_argument("target", nargs="?", type=Path, help="Target repo or .ai-scientist directory. Defaults to --target-repo.")
+    validate_loop_state.add_argument("--run-id")
+    validate_loop_state.set_defaults(func=cmd_validate_loop_state)
 
     agents = sub.add_parser("agents")
     agents_sub = agents.add_subparsers(dest="command", required=True)
@@ -263,11 +276,6 @@ def build_parser() -> argparse.ArgumentParser:
     agents_install.set_defaults(func=cmd_agents_install)
     research = sub.add_parser("research")
     research_sub = research.add_subparsers(dest="command", required=True)
-    research_start = research_sub.add_parser("start")
-    research_start.add_argument("--run-id", required=True)
-    research_start.add_argument("--selected-idea-id")
-    add_json_file_arg(research_start)
-    research_start.set_defaults(func=research_workflow.cmd_research_start)
     research_resume = research_sub.add_parser("resume")
     research_resume.add_argument("--run-id")
     research_resume.set_defaults(func=research_workflow.cmd_research_resume)

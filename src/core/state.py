@@ -14,15 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TERMINAL_PHASE_STATUSES = {
-    "complete",
-    "completed",
-    "cancelled",
-    "blocked_on_user",
-    "failed",
-    "exhausted",
-}
-ALLOW_WITH_REASON_STATUSES = {"cancelled", "blocked_on_user", "failed"}
+# Vocabulary from docs/SCHEMA.md section 3.3.
+TERMINAL_PHASE_STATUSES = {"success", "exhausted", "cancelled", "blocked", "complete"}
+ALLOW_WITH_REASON_STATUSES = {"cancelled", "blocked"}
 JOURNAL_EVENT_TYPES = {
     "state_transition",
     "api_call",
@@ -38,34 +32,13 @@ JOURNAL_EVENT_TYPES = {
     "note",
     "finding",
 }
-NODE_RESOLVED_STATUSES = {"accepted", "invalid", "rejected"}
-NODE_UNRESOLVED_STATUSES = {"planning", "planned", "implementing", "running", "validating", "buggy", "repairing", "candidate"}
-NODE_EVIDENCE_ADMIN_KEYS = {
-    "status",
-    "updated_at",
-    "critic_ref",
-    "critic_id",
-    "critic_role",
-    "critic_verdict",
-    "critic_completed_at",
-    "critic_evidence_fingerprint",
-    "critic_result_path",
-    "critic_reviews",
-    "node_evidence_fingerprint",
-    "rejection_reason",
-    "acceptance_rationale",
-    "revision_reason",
-    "reason",
-    "open_repair_id",
-    "requires_worker_repair",
-    "repair_result_path",
-    "required_revisions",
-    "last_repair_id",
-    "last_repair_completed_at",
-    "repair_payload_ref",
-    "repair_log_ref",
-    "requires_fresh_critic",
-}
+# Shared terminal set for nodes, work items, and tasks. Any other lowercase word is live.
+WORK_TERMINAL_STATUSES = {"completed", "cancelled", "failed", "abandoned", "accepted", "rejected"}
+BASELINE_READY_STATUSES = {"ready", "completed"}
+
+
+def is_terminal_status(status: Any) -> bool:
+    return str(status or "") in WORK_TERMINAL_STATUSES
 
 
 def open_resource_queue_ids(phase_state: dict[str, Any]) -> list[str]:
@@ -84,8 +57,6 @@ def open_resource_queue_ids(phase_state: dict[str, Any]) -> list[str]:
                 identifier = entry or f"{bucket}[{index}]"
             open_ids.append(f"{bucket}:{identifier}")
     return sorted(str(item) for item in open_ids)
-SUBAGENT_TERMINAL_STATUSES = {"integrated", "rejected_with_reason", "abandoned_with_reason"}
-RESOURCE_TERMINAL_STATUSES = {"completed", "cancelled", "superseded", "abandoned", "expired"}
 
 
 @dataclass(frozen=True)
@@ -121,7 +92,12 @@ def journal_path(target_repo: Path, run_id: str) -> Path:
 
 
 def config_path(target_repo: Path, run_id: str) -> Path:
+    """Legacy JSON config location; research runs freeze configuration in config.md instead."""
     return run_dir(target_repo, run_id) / "config.json"
+
+
+def config_md_path(target_repo: Path, run_id: str) -> Path:
+    return run_dir(target_repo, run_id) / "config.md"
 
 
 def selection_path(target_repo: Path, run_id: str) -> Path:
@@ -178,30 +154,6 @@ def data_hash(data: Any) -> str:
     import hashlib
 
     return hashlib.sha256(canonical_json(data).encode("utf-8")).hexdigest()
-
-
-def node_evidence_payload(node: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in node.items() if key not in NODE_EVIDENCE_ADMIN_KEYS}
-
-
-def node_evidence_fingerprint(node: dict[str, Any]) -> str:
-    return data_hash(node_evidence_payload(node))
-
-
-def node_fresh_critic_reason(node_id: str, node: dict[str, Any], *, required_verdict: str | None = None, allowed_verdicts: set[str] | None = None) -> str | None:
-    critic_ref = node.get("critic_ref")
-    if not isinstance(critic_ref, str) or not critic_ref.strip():
-        return f"research_node_missing_critic_ref:{node_id}"
-    verdict = node.get("critic_verdict")
-    if allowed_verdicts is not None and verdict not in allowed_verdicts:
-        return f"research_node_critic_verdict_invalid:{node_id}:{verdict}"
-    if required_verdict is not None and verdict != required_verdict:
-        return f"research_node_critic_verdict_invalid:{node_id}:{verdict}"
-    fingerprint = node.get("critic_evidence_fingerprint")
-    current_fingerprint = node_evidence_fingerprint(node)
-    if not isinstance(fingerprint, str) or fingerprint != current_fingerprint:
-        return f"research_node_critic_stale:{node_id}"
-    return None
 
 
 def load_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
@@ -360,38 +312,11 @@ def journal_has_transition(target_repo: Path, run_id: str, transition_id: str) -
 
 
 def audit_block_reason(target_repo: Path, run_id: str, state: dict[str, Any]) -> str | None:
-    phase_status = str(state.get("phase_status") or "")
-    if phase_status == "blocked_manual_recovery":
-        reason = state.get("blocked_reason") or "manual recovery required"
-        return f"manual_recovery_required:{reason}"
+    """Return a reason when loop-state.json and journal.jsonl disagree, else None."""
     last_transition_id = state.get("last_transition_id")
     if isinstance(last_transition_id, str) and last_transition_id and not journal_has_transition(target_repo, run_id, last_transition_id):
         return f"state_journal_mismatch:missing_transition:{last_transition_id}"
     return None
-
-
-def block_for_manual_recovery(target_repo: Path, run_id: str, state: dict[str, Any], reason: str) -> dict[str, Any]:
-    before_hash = data_hash(state)
-    transition_id = f"tr-{uuid.uuid4().hex}"
-    blocked = deepcopy(state)
-    blocked["active"] = False
-    blocked["phase_status"] = "blocked_manual_recovery"
-    blocked["blocked_reason"] = reason
-    blocked["updated_at"] = utc_now()
-    blocked["last_transition_id"] = transition_id
-    after_hash = data_hash(blocked)
-    append_journal_event(
-        target_repo,
-        run_id,
-        "state_transition",
-        details={"command": "manual recovery block", "reason": reason, "transition_id": transition_id},
-        transition_id=transition_id,
-        before_hash=before_hash,
-        after_hash=after_hash,
-    )
-    atomic_write_json(loop_state_path(target_repo, run_id), blocked)
-    set_active_run(target_repo, run_id, str(blocked.get("phase") or "unknown"), "blocked_manual_recovery")
-    return blocked
 
 
 def mutate_loop_state(
@@ -411,8 +336,6 @@ def mutate_loop_state(
             raise FileNotFoundError(f"missing loop-state.json for run {run_id}")
         block_reason = audit_block_reason(target_repo, run_id, state)
         if block_reason:
-            if str(state.get("phase_status") or "") != "blocked_manual_recovery":
-                block_for_manual_recovery(target_repo, run_id, state, block_reason)
             raise RuntimeError(block_reason)
         before_hash = data_hash(state)
         transition_id = details.get("transition_id") if isinstance(details.get("transition_id"), str) else f"tr-{uuid.uuid4().hex}"
@@ -452,7 +375,7 @@ def set_active_run(
         "phase": phase,
         "status": status,
         "updated_at": utc_now(),
-        "target_repo": str(target_repo.resolve()),
+        "target_repository": str(target_repo.resolve()),
     }
     atomic_write_json(active_run_path(target_repo), payload)
     return payload
@@ -464,13 +387,13 @@ def load_active_run(target_repo: Path) -> dict[str, Any] | None:
 
 
 def validate_active_run_contract(active: dict[str, Any]) -> str | None:
-    required = ("schema_version", "run_id", "phase", "status", "updated_at", "target_repo")
+    required = ("run_id", "phase", "status", "updated_at", "target_repository")
     for key in required:
         if key not in active:
             return f"{key}_missing"
-    if active.get("schema_version") != 1:
+    if "schema_version" in active and active.get("schema_version") != 1:
         return "schema_version_invalid"
-    for key in ("run_id", "phase", "status", "updated_at", "target_repo"):
+    for key in required:
         if not isinstance(active.get(key), str) or not active[key].strip():
             return f"{key}_invalid"
     return None
@@ -537,19 +460,6 @@ def update_phase_state(target_repo: Path, run_id: str, patch: dict[str, Any]) ->
     return write_loop_state(target_repo, run_id, state)
 
 
-def record_idea_state(target_repo: Path, run_id: str, idea_id: str, patch: dict[str, Any]) -> dict[str, Any]:
-    state = load_loop_state(target_repo, run_id)
-    if not state:
-        raise FileNotFoundError(f"missing loop-state.json for run {run_id}")
-    phase_state = state.setdefault("state", {})
-    idea_states = phase_state.setdefault("idea_states", {})
-    current = idea_states.setdefault(idea_id, {})
-    current.update(patch)
-    current.setdefault("id", idea_id)
-    current["updated_at"] = utc_now()
-    return write_loop_state(target_repo, run_id, state)
-
-
 def record_node_state(target_repo: Path, run_id: str, node_id: str, patch: dict[str, Any]) -> dict[str, Any]:
     state = load_loop_state(target_repo, run_id)
     if not state:
@@ -561,19 +471,6 @@ def record_node_state(target_repo: Path, run_id: str, node_id: str, patch: dict[
     current.setdefault("id", node_id)
     current["updated_at"] = utc_now()
     return write_loop_state(target_repo, run_id, state)
-
-
-def mark_buggy_node(target_repo: Path, run_id: str, node_id: str, failure: dict[str, Any]) -> dict[str, Any]:
-    patch = {
-        "status": "buggy",
-        "retryable": failure.get("retryable", True),
-        "failure_signature": failure.get("failure_signature") or failure.get("error") or "unknown_failure",
-        "last_command": failure.get("last_command"),
-        "last_exit_code": failure.get("last_exit_code"),
-        "last_error_path": failure.get("last_error_path"),
-        "next_action": failure.get("next_action", "repair"),
-    }
-    return record_node_state(target_repo, run_id, node_id, patch)
 
 
 def has_substantive_value(value: Any) -> bool:
@@ -615,132 +512,49 @@ def terminal_reason_present(state: dict[str, Any]) -> bool:
     )
 
 
-def status_has_reason(value: Any) -> bool:
-    return has_substantive_value(value)
+def open_work_ids(phase_state: dict[str, Any], section: str = "work") -> list[str]:
+    items = phase_state.get(section) if isinstance(phase_state.get(section), dict) else {}
+    return sorted(
+        str(item_id)
+        for item_id, record in items.items()
+        if not isinstance(record, dict) or not is_terminal_status(record.get("status"))
+    )
 
 
-def nonterminal_subagents(phase_state: dict[str, Any]) -> list[str]:
-    subagents = phase_state.get("subagents")
-    if not isinstance(subagents, dict):
-        return []
-    blocked: list[str] = []
-    for subagent_id, subagent in subagents.items():
-        if not isinstance(subagent, dict):
-            blocked.append(str(subagent_id))
-            continue
-        if str(subagent.get("status") or "") not in SUBAGENT_TERMINAL_STATUSES:
-            blocked.append(str(subagent_id))
-    return blocked
-
-
-def blocking_resources(phase_state: dict[str, Any]) -> list[str]:
-    resources = phase_state.get("resources")
-    if not isinstance(resources, dict):
-        return []
-    blocked: list[str] = []
-    for section_name in ("queues", "requests", "leases"):
-        section = resources.get(section_name)
-        if isinstance(section, dict):
-            iterable = section.items()
-        elif isinstance(section, list):
-            iterable = [(str(index), item) for index, item in enumerate(section)]
-        else:
-            continue
-        for item_id, item in iterable:
-            if not isinstance(item, dict):
-                continue
-            if item.get("blocking") is False:
-                continue
-            status = str(item.get("status") or "").lower()
-            if status not in RESOURCE_TERMINAL_STATUSES:
-                blocked.append(f"{section_name}:{item_id}")
-    return blocked
-
-
-def node_metrics_score(node: dict[str, Any]) -> float | None:
-    metrics = node.get("metrics")
-    if isinstance(metrics, dict) and "score" in metrics:
-        try:
-            return float(metrics["score"])
-        except (TypeError, ValueError):
-            return None
-    return None
-
-
-def validate_node_contract(node_id: str, node: dict[str, Any], official_status: str | None = None) -> str | None:
-    if node.get("node_id") != node_id:
-        return "node_id_mismatch"
-    if official_status and node.get("status") != official_status:
-        return "status_mismatch"
-    if not has_substantive_value(node.get("benchmark_contract_version")):
-        return "benchmark_contract_version_missing"
-    if "metrics" not in node and not has_substantive_value(node.get("metrics_ref")):
-        return "metrics_missing"
-    split = node.get("split_integrity")
-    if not isinstance(split, dict) or split.get("pass") is not True:
-        return "split_integrity_not_passing"
-    leakage = node.get("leakage_check")
-    if not isinstance(leakage, dict) or leakage.get("pass") is not True:
-        return "leakage_check_not_passing"
-    if not has_substantive_value(node.get("result_summary")):
-        return "result_summary_missing"
-    if not has_substantive_value(node.get("mode_deliverables")):
-        return "mode_deliverables_missing"
-    trials = node.get("trials")
-    if not isinstance(trials, list) or not trials:
-        return "trials_missing"
-    for index, trial in enumerate(trials):
-        if not isinstance(trial, dict):
-            return f"trial_invalid:{index}"
-        for key in ("trial_id", "purpose", "status", "benchmark_contract_version"):
-            if not has_substantive_value(trial.get(key)):
-                return f"trial_{key}_missing:{index}"
-        if "metrics" not in trial and not has_substantive_value(trial.get("metrics_ref")) and trial.get("purpose") == "benchmark":
-            return f"trial_metrics_missing:{index}"
-    return None
+def active_lease_ids(phase_state: dict[str, Any]) -> list[str]:
+    resources = phase_state.get("resources") if isinstance(phase_state.get("resources"), dict) else {}
+    leases = resources.get("leases") if isinstance(resources.get("leases"), dict) else {}
+    return sorted(
+        str(lease_id)
+        for lease_id, lease in leases.items()
+        if not isinstance(lease, dict) or str(lease.get("status") or "acquired") in {"acquired", "running"}
+    )
 
 
 def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
+    """Research-to-review readiness of a loop-state document (docs/SCHEMA.md section 3.3)."""
     phase_state = state.get("state")
     if not isinstance(phase_state, dict):
         return CompletionResult(False, "research_state_missing", state)
     baseline = phase_state.get("baseline") if isinstance(phase_state.get("baseline"), dict) else {}
-    if baseline.get("required") is True and baseline.get("status") != "ready":
+    if baseline.get("required") is True and str(baseline.get("status") or "") not in BASELINE_READY_STATUSES:
         return CompletionResult(False, "research_baseline_not_ready", state)
-    work = phase_state.get("work") if isinstance(phase_state.get("work"), dict) else {}
-    work_terminal_statuses = {"completed", "cancelled", "failed", "abandoned", "accepted", "rejected"}
-    open_work = [
-        str(work_id)
-        for work_id, record in work.items()
-        if not isinstance(record, dict) or str(record.get("status") or "") not in work_terminal_statuses
-    ]
+    open_work = open_work_ids(phase_state, "work")
     if open_work:
-        return CompletionResult(False, f"research_work_unresolved:{','.join(sorted(open_work))}", state)
-    tasks = phase_state.get("tasks") if isinstance(phase_state.get("tasks"), dict) else {}
-    task_terminal_statuses = work_terminal_statuses
-    open_tasks = [
-        str(task_id)
-        for task_id, task in tasks.items()
-        if not isinstance(task, dict) or str(task.get("status") or "") not in task_terminal_statuses
-    ]
+        return CompletionResult(False, f"research_work_unresolved:{','.join(open_work)}", state)
+    open_tasks = open_work_ids(phase_state, "tasks")
     if open_tasks:
-        return CompletionResult(False, f"research_tasks_unresolved:{','.join(sorted(open_tasks))}", state)
-    resources = phase_state.get("resources") if isinstance(phase_state.get("resources"), dict) else {}
-    leases = resources.get("leases") if isinstance(resources.get("leases"), dict) else {}
-    active_leases = [
-        str(lease_id)
-        for lease_id, lease in leases.items()
-        if not isinstance(lease, dict) or str(lease.get("status") or "acquired") in {"acquired", "running"}
-    ]
+        return CompletionResult(False, f"research_tasks_unresolved:{','.join(open_tasks)}", state)
+    active_leases = active_lease_ids(phase_state)
     if active_leases:
-        return CompletionResult(False, f"research_resources_unresolved:{','.join(sorted(active_leases))}", state)
+        return CompletionResult(False, f"research_resources_unresolved:{','.join(active_leases)}", state)
     open_queue = open_resource_queue_ids(phase_state)
     if open_queue:
         return CompletionResult(False, f"research_resource_queue_unresolved:{','.join(open_queue)}", state)
     selection = phase_state.get("selection")
     if not isinstance(selection, dict) or selection.get("status") != "final":
         return CompletionResult(False, "research_selection_not_final", state)
-    selected_node = selection.get("selected_node") or phase_state.get("selected_node") or state.get("selected_node")
+    selected_node = selection.get("selected_node")
     if not has_substantive_value(selected_node):
         return CompletionResult(False, "research_selected_node_missing", state)
     nodes = phase_state.get("nodes")
@@ -753,24 +567,28 @@ def evaluate_research_state(state: dict[str, Any]) -> CompletionResult:
         return CompletionResult(False, f"research_node_state_invalid:{selected_node}", state)
     if selected.get("status") != "accepted":
         return CompletionResult(False, "research_selected_node_not_accepted", state)
-    if selection.get("selected_node") != selected_node:
-        return CompletionResult(False, "research_selection_missing_or_stale", state)
     return CompletionResult(True, "research_state_complete", state)
 
 
 def evaluate_loop_state_completion(state: dict[str, Any]) -> CompletionResult:
     if state.get("active") is True:
         return CompletionResult(False, "loop_state_active", state)
-    phase_status = str(state.get("phase_status") or "").lower()
-    if phase_status in ALLOW_WITH_REASON_STATUSES:
-        return CompletionResult(terminal_reason_present(state), f"{phase_status}_reason_present" if terminal_reason_present(state) else f"{phase_status}_missing_reason", state)
+    phase_status = str(state.get("phase_status") or "")
     if phase_status not in TERMINAL_PHASE_STATUSES:
         return CompletionResult(False, "loop_state_not_terminal", state)
-    if not completion_audit_passes(state.get("completion_audit")):
-        return CompletionResult(False, "completion_audit_missing_or_not_passing", state)
+    if phase_status == "blocked":
+        present = has_substantive_value(state.get("blocked_reason"))
+        return CompletionResult(present, "blocked_reason_present" if present else "blocked_missing_reason", state)
+    if phase_status == "cancelled":
+        present = terminal_reason_present(state)
+        return CompletionResult(present, "cancelled_reason_present" if present else "cancelled_missing_reason", state)
     phase = state.get("phase")
     if phase == "research":
+        if phase_status == "exhausted":
+            return CompletionResult(False, "research_exhausted_no_selection", state)
         return evaluate_research_state(state)
+    if not completion_audit_passes(state.get("completion_audit")):
+        return CompletionResult(False, "completion_audit_missing_or_not_passing", state)
     return CompletionResult(True, "completion_audit_passed", state)
 
 
