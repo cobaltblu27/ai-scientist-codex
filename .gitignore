@@ -27,3 +27,6 @@ plugins/ai-scientist/credential.jso
 /AI-Scientist-v2/
 /main.py
 /oh-my-codex/
+
+# Vite/tsc incremental build cache.
+src/frontend/tsconfig.tsbuildinfo

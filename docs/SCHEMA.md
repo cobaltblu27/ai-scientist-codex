@@ -312,6 +312,7 @@ python_env: uv run python
 | `primary_metric` * | short token |
 | `success_threshold` * | number |
 | `primary_metric_direction`, `active_node_cap`, `ranking_top_n`, `python_env`, `target_repository` | conventional |
+| `resource_max_parallel`, `resource_gpus`, `resource_cpu_cores`, `resource_memory_mb`, `resource_scheduler`, `slurm_*` | conventional; read by `ai-scientist resource` as the frozen capacity policy when `state.resources.caps` is absent |
 
 Free beyond these.
 
