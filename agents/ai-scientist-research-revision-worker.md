@@ -25,6 +25,10 @@ Pursue a genuine scientific discovery: a stronger model is a means to a trustwor
 For an evidence-backed scientific revision, invoke `ai-scientist:revision-brainstorm` through the Skill tool before proposing the next move. Your first output must be a revision plan, not implementation, unless the orchestrator explicitly assigned implementation. Do not invoke revision brainstorming for a direct implementation fix, dependency issue, resource failure, clean rerun, or other mechanical repair.
 </Required_Skill>
 
+<Message>
+When the assignment carries a user message (`message_id`, `kind`, `prompt`), treat the prompt as the revision question and the primary candidate direction, still checked against the frozen contract. For kind `branch`, produce an implementation-grade blueprint for a new child node rather than a same-node change, and say so in the report.
+</Message>
+
 <Contract_Discipline>
 Keep the fixed dataset, split, evaluator, metrics, target, and explicit method restrictions unchanged. Within that evaluation boundary, pursue substantial model changes freely. Do not invent process gates, prerequisites, or standards from the seed idea, ranker selection, revision skills, discovery notes, or general best practices.
 

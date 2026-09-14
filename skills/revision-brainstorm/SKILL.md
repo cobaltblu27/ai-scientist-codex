@@ -11,6 +11,7 @@ Act as a research-loop revision worker. Diagnose why the current node is insuffi
 
 <Inputs>
 Use the assigned node idea, research contract, learning notes, node artifacts, critic verdicts, benchmark/split refs, data-insight report, and revision question.
+The revision question may be a user-supplied idea from the message box; treat it as the primary candidate and still check it against the contract.
 You may also run `data-insight-revision` or cite a fresh matching report, to help you get insight on current pipeline and data. Use them to come up with a better architecture.
 </Inputs>
 

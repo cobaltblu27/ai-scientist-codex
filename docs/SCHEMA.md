@@ -72,6 +72,7 @@ runs/<run-id>/
 ├── discovery-notes.md                    campaign wiki, free Markdown
 ├── learning-notes.md                     cross-node insights, free Markdown
 ├── selection.json                        present only on outcome success, section 3.7
+├── message-box/<message-id>.json         human steering messages, section 3.11
 ├── *.md                                  any other run-level report, free
 ├── baseline/
 │   └── baseline.json                     baseline manifest, section 3.8
@@ -275,7 +276,7 @@ One JSON object per line, append-only. Shape is fixed by `core.state.append_jour
 
 | Field | Notes |
 |---|---|
-| `event_type` * | one of `state_transition`, `api_call`, `resource_event`, `subagent_event`, `critic_event`, `handoff`, `validation`, `selection`, `setup`, `dependency`, `workspace`, `note`, `finding` |
+| `event_type` * | one of `state_transition`, `api_call`, `resource_event`, `subagent_event`, `critic_event`, `handoff`, `validation`, `selection`, `setup`, `dependency`, `workspace`, `note`, `finding`, `message` |
 | `timestamp` * | |
 | `run_id` * | |
 | `details` * | free object; checkpoints carry `command`, `changed_sections`, `note` |
@@ -355,6 +356,41 @@ Written by the review skill. Required: `verdict` * with `decision` (`accept`, `r
 
 CLI-owned. Skills call `ai-scientist writeup ...` and never hand-write these. Shapes live in `src/writeup/state.py`.
 
+### 3.11 `message-box/<message-id>.json`
+
+Human steering messages. One file per message, created by the dashboard or `ai-scientist message-box add`, updated only by `ai-scientist message-box update`. The orchestrator never edits these files by hand; it reads them with `message-box list --status pending` at every sweep.
+
+```json
+{
+  "id": "msg-20260914T120501Z-a3f9",
+  "run_id": "<run-id>",
+  "node_id": "N2",
+  "kind": "branch",
+  "prompt": "try the augmentation from <paper>",
+  "created_at": "2026-09-14T12:05:01Z",
+  "status": "pending",
+  "updated_at": "2026-09-14T12:05:01Z",
+  "work_id": null,
+  "result_node_id": null,
+  "note": null
+}
+```
+
+| Field | Notes |
+|---|---|
+| `id` * | equals the file stem |
+| `run_id` * | |
+| `node_id` * | target node in `state.nodes` |
+| `kind` * | `revision` (revise the target node) or `branch` (create a child of the target) |
+| `prompt` * | the user's idea, free text |
+| `created_at` * | |
+| `status` * | `pending` → `acknowledged` → `completed`; `rejected` or `cancelled` from either open state |
+| `work_id` | set on `acknowledged`: the work item dispatched for this message |
+| `result_node_id` | set on `completed` for `branch`: the child node id |
+| `note` | required on `rejected`: why |
+
+Every `add` and `update` appends a journal record with `event_type: message`, the target `node_id`, and `details.message_id` / `details.status`. Work items and branch nodes created for a message carry `message_id` (conventional).
+
 ---
 
 ## 4. What the dashboard reads
@@ -363,7 +399,8 @@ CLI-owned. Skills call `ai-scientist writeup ...` and never hand-write these. Sh
 |---|---|---|
 | overview | `active-run.json`; per run `loop-state.json` or `run.md`; `config.md` frontmatter; contract file; `ideas.json`; `contracts/*/research-contract.json` | run id, phase, `phase_status` (or `run.md` status line), `active`, `updated_at`, `run_outcome`, `blocked_reason`, `orchestrator.next_action`, `selection.selected_node`, `primary_metric`, `success_threshold`, contract goal, idea count, node count |
 | run detail | above plus `journal.jsonl`, `selection.json`, `baseline/baseline.json`, `links`, `*.md` under run root and `logs/` | node ledger with depth from `parent_node_id`, work grouped by `node`, raw `resources`, `resource_queue`, `open_questions`, report list, journal tail |
-| node detail | ledger entry, `work` entries whose `node` matches, journal records whose `node_id` matches, report files named by `result_ref` | node fields, ordered history, report contents |
+| node detail | ledger entry, `work` entries whose `node` matches, journal records whose `node_id` matches, report files named by `result_ref`, `message-box/*.json` for the node | node fields, ordered history, report contents, messages |
+| message box | `POST /api/runs/<run-id>/messages` writes through `core.message_box.add`; run and node views list `message-box/*.json` | pending counts, message rows |
 
 The scanner never reads `nodes/<node-id>/workspace/`. Liveness is `status not in {completed, cancelled, failed, abandoned, accepted, rejected}`.
 

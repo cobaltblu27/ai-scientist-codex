@@ -87,7 +87,7 @@ A useful report, partial implementation, weaker metric, or negative result is ne
 Repeat:
 
 1. Reconstruct current state from durable artifacts.
-2. Harvest finished worker work and released resource jobs.
+2. Harvest finished worker work, released resource jobs, and pending messages (`ai-scientist message-box list --run-id <run-id> --status pending`).
 3. Evaluate the active portfolio and transferable evidence.
 4. Choose the highest-value runnable action: continue, diagnose, revise, branch, rank, experiment, abandon, or finalize.
 5. Dispatch it to the appropriate native agent or release it to its worker.
@@ -97,6 +97,16 @@ Before deliberately waiting, sweep for other runnable work.
 Follow `Terminal_Conditions`, not a presumed successful result.
 If a baseline is required for fixed splits or comparable scoring, dispatch it first or in parallel where dependency-safe, then share its authoritative manifest with the relevant node workers.
 </Main_Loop>
+
+<Message_Box>
+A message is a user order targeting one node; read pending messages at every sweep and dispatch them before orchestrator-chosen new work as soon as a lane fits the active-node cap.
+It is not a contract amendment: the frozen contract still binds.
+`revision`: assign a revision worker to the node with the message prompt as the revision question.
+`branch`: assign a revision worker to blueprint a child of the node from the node's evidence plus the prompt, then create the child node (`parent_node_id` = target, `message_id`) and dispatch its node worker.
+Record `message_id` on the work entry.
+Run `ai-scientist message-box update --run-id <run-id> --id <msg-id> --status acknowledged --work-id <work-id>` when dispatched, `--status completed` (with `--result-node-id <child>` for a branch) when that work reaches a terminal status, and `--status rejected --note <why>` only when the idea leaves the frozen contract or the target node cannot serve (for `revision`, a terminal node; for `branch`, a node with no evidence trail).
+Checkpoint as usual.
+</Message_Box>
 
 <Action_Policy>
 Classify candidate work before assigning it:

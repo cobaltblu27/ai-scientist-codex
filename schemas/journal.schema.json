@@ -18,7 +18,8 @@
         "dependency",
         "workspace",
         "note",
-        "finding"
+        "finding",
+        "message"
       ]
     },
     "timestamp": {"type": "string"},

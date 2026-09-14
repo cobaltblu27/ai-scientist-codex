@@ -31,6 +31,7 @@ JOURNAL_EVENT_TYPES = {
     "workspace",
     "note",
     "finding",
+    "message",
 }
 # Shared terminal set for nodes, work items, and tasks. Any other lowercase word is live.
 WORK_TERMINAL_STATUSES = {"completed", "cancelled", "failed", "abandoned", "accepted", "rejected"}

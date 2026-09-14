@@ -246,6 +246,55 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def _message_box_run_id(args: argparse.Namespace, target: Path) -> str:
+    if args.run_id:
+        return args.run_id
+    active = load_active_run(target)
+    if not isinstance(active, dict) or not isinstance(active.get("run_id"), str):
+        raise CliError("no active AI Scientist run; pass --run-id")
+    return active["run_id"]
+
+
+def cmd_message_box_add(args: argparse.Namespace) -> int:
+    from core.message_box import MessageBoxError, add
+
+    target = target_repo(args)
+    prompt = args.prompt_file.read_text() if args.prompt_file else (args.prompt or "")
+    try:
+        record = add(target, _message_box_run_id(args, target), args.node_id, args.kind, prompt)
+    except MessageBoxError as exc:
+        return response("error", error=str(exc))
+    return response("ok", message=record)
+
+
+def cmd_message_box_list(args: argparse.Namespace) -> int:
+    from core.message_box import list_messages
+
+    target = target_repo(args)
+    run_id = _message_box_run_id(args, target)
+    messages = list_messages(target, run_id, status=args.status, node_id=args.node_id)
+    return response("ok", run_id=run_id, count=len(messages), messages=messages)
+
+
+def cmd_message_box_update(args: argparse.Namespace) -> int:
+    from core.message_box import MessageBoxError, update
+
+    target = target_repo(args)
+    try:
+        record = update(
+            target,
+            _message_box_run_id(args, target),
+            args.id,
+            args.status,
+            work_id=args.work_id,
+            result_node_id=args.result_node_id,
+            note=args.note,
+        )
+    except MessageBoxError as exc:
+        return response("error", error=str(exc))
+    return response("ok", message=record)
+
+
 def add_json_file_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json-file", type=Path, required=True, help="Path to a JSON object payload.")
 
@@ -352,6 +401,30 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_record.add_argument("--approved", action="store_true")
     handoff_record.add_argument("--reason")
     handoff_record.set_defaults(func=cmd_handoff_record)
+
+    message_box = sub.add_parser("message-box", help="Human steering messages targeting one node of a research run (docs/SCHEMA.md 3.11).")
+    message_box_sub = message_box.add_subparsers(dest="command", required=True)
+    mb_add = message_box_sub.add_parser("add", help="Queue a message for the orchestrator.")
+    mb_add.add_argument("--run-id")
+    mb_add.add_argument("--node-id", required=True)
+    mb_add.add_argument("--kind", choices=["revision", "branch"], required=True)
+    mb_prompt = mb_add.add_mutually_exclusive_group(required=True)
+    mb_prompt.add_argument("--prompt")
+    mb_prompt.add_argument("--prompt-file", type=Path)
+    mb_add.set_defaults(func=cmd_message_box_add)
+    mb_list = message_box_sub.add_parser("list", help="List messages, optionally filtered by status or node.")
+    mb_list.add_argument("--run-id")
+    mb_list.add_argument("--status", choices=["pending", "acknowledged", "completed", "rejected", "cancelled"])
+    mb_list.add_argument("--node-id")
+    mb_list.set_defaults(func=cmd_message_box_list)
+    mb_update = message_box_sub.add_parser("update", help="Record what the orchestrator did with a message.")
+    mb_update.add_argument("--run-id")
+    mb_update.add_argument("--id", required=True)
+    mb_update.add_argument("--status", choices=["acknowledged", "completed", "rejected", "cancelled"], required=True)
+    mb_update.add_argument("--work-id")
+    mb_update.add_argument("--result-node-id")
+    mb_update.add_argument("--note")
+    mb_update.set_defaults(func=cmd_message_box_update)
 
     dashboard = sub.add_parser("dashboard", help="Serve the monitoring dashboard over .ai-scientist/ artifacts.")
     dashboard.add_argument("--host", default="127.0.0.1")

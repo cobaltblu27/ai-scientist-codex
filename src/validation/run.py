@@ -330,6 +330,7 @@ def validate_loop_state_run(root: Path, run: Path) -> list[str]:
                 problems.append(f"selection.json: invalid JSON ({exc.msg})")
             else:
                 problems.extend(selection_file_problems(selection, state, run_id))
+    problems.extend(message_box_problems(run))
     active_path = root / "active-run.json"
     if active_path.exists():
         try:
@@ -340,6 +341,32 @@ def validate_loop_state_run(root: Path, run: Path) -> list[str]:
             if isinstance(active, dict) and active.get("run_id") == run_id:
                 problems.extend(active_run_problems(active, run_id))
     return _dedupe(problems)
+
+
+def message_box_problems(run: Path) -> list[str]:
+    """Every malformed file under message-box/ (docs/SCHEMA.md section 3.11)."""
+    box = run / "message-box"
+    if not box.is_dir():
+        return []
+    schema = load_schema("message")
+    problems: list[str] = []
+    for path in sorted(box.glob("*.json")):
+        label = f"message-box/{path.name}"
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            problems.append(f"{label}: invalid JSON ({exc.msg})")
+            continue
+        if not isinstance(data, dict):
+            problems.append(f"{label}: must be a JSON object")
+            continue
+        if schema:
+            problems.extend(schema_problems(data, schema, label))
+        if data.get("id") != path.stem:
+            problems.append(f"{label}: $.id must equal the file name ({data.get('id')!r})")
+        if data.get("run_id") != run.name:
+            problems.append(f"{label}: $.run_id must be {run.name!r}")
+    return problems
 
 
 # --- config.md ------------------------------------------------------------------------------------
