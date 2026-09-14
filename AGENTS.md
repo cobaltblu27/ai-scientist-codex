@@ -24,38 +24,6 @@ Everything else, including orchestration policy, branching and ranking decisions
 ## Criteria
 - Each step is a loop that must continue until the criteria is met.
 
-## Prompt format
-When writing a new prompt, make sure the prompt follows a markdown + xml hybrid. there's no strict rule, but use xml tag when its good to mark the end of the block. here's the example:
-
-```
----
-name: ralph
-description: Self-referential loop until task completion with architect verification
----
-
-[RALPH + ULTRAWORK - ITERATION {{ITERATION}}/{{MAX}}]
-
-Your previous attempt did not output the completion promise. Continue working on the task.
-
-<Purpose>
-Ralph is a persistence loop that keeps working on a task until it is fully complete and architect-verified. It wraps ultrawork's parallel execution with session persistence, automatic retry on failure, and mandatory verification before completion.
-</Purpose>
-
-<Use_When>
-- Task requires guaranteed completion with verification (not just "do your best")
-- User says "ralph", "don't stop", "must complete", "finish this", or "keep going until done"
-- Work may span multiple iterations and needs persistence across retries
-- Task benefits from parallel execution with architect sign-off at the end
-</Use_When>
-
-<Do_Not_Use_When>
-- User wants a full autonomous pipeline from idea to code -- use `autopilot` instead
-- User wants to explore or plan before committing -- use `plan` skill instead
-- User wants a quick one-shot fix -- delegate directly to an executor agent
-- User wants manual control over completion -- use `ultrawork` directly
-</Do_Not_Use_When>
-```
-
 ## Skills Policy
 Skills in this project are mostly a dedicted tool for specific usuage; do not make them trigger without explicit calling.
 
@@ -64,3 +32,18 @@ When editing prompts, you do not usually have to worry to much about backward co
 
 ## Prompt Flexibility
 Specify the goal, decision, evidence requirements, and non-negotiable boundaries while leaving report structure and depth flexible. Avoid mandatory return forms with long field lists, especially forms with ten or more fields or repeated per-item schemas, because agents may focus on completing the form instead of producing a strong result. Prefer a few content goals in natural Markdown and request additional sections or details only when relevant. Keep exact machine-readable fields in CLI state or artifact schemas instead of duplicating them in prose reports. Use a rigid output format only when a parser or CLI genuinely requires it, and keep that format to the minimum required fields.
+
+# Documentation
+Project documentation lives in `docs/`. Only `AGENTS.md` and `CLAUDE.md` stay at the repository root because they must be read before anything else. New Markdown documents go in `docs/`, never at the root.
+
+- `docs/SCHEMA.md` is the ground truth for every file under `.ai-scientist/`. Skills and agents write those files; the CLI validates them; the dashboard reads them. When a prompt, a JSON schema, the validator, or the scanner disagrees with `docs/SCHEMA.md`, fix the other side. When a skill starts writing a new artifact, add it to `docs/SCHEMA.md` in the same change.
+- `docs/README.md` is the user-facing overview, `docs/GUIDELINES.md` the maintainer rules, `docs/PLAN.md` the campaign design, `docs/FRONTEND.md` the dashboard plan.
+
+# CLI
+When developing CLI features, you may use git issues for keeping track of non-trivial tasks.
+
+## Dashboard
+Dashboard is additional package for running frontend, for monitoring and allowing human-in-the loop research in research loop.
+Read `docs/FRONTEND.md` for frontend development and checking its plans, and `docs/SCHEMA.md` for what the scanner may read.
+
+

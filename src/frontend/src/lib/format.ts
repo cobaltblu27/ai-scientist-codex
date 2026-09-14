@@ -42,10 +42,11 @@ export function tone(status: string | null | undefined): "lime" | "pink" | "oran
         case "running":
         case "complete":
         case "completed":
+        case "success":
           return "lime";
-        case "blocked_manual_recovery":
+        case "exhausted":
         case "cancelled":
-        case "failed":
+        case "blocked":
           return "orange";
         default:
           return "neutral";

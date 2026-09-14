@@ -143,8 +143,14 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 ├── .codex-plugin/plugin.json
 ├── agents/
 ├── bin/ai-scientist
-├── README.md
-├── GUIDELINES.md
+├── AGENTS.md
+├── CLAUDE.md
+├── docs/
+│   ├── README.md
+│   ├── GUIDELINES.md
+│   ├── FRONTEND.md
+│   ├── PLAN.md
+│   └── SCHEMA.md
 ├── pyproject.toml
 ├── references/
 │   └── artifact-contract.md
@@ -332,7 +338,7 @@ A typical run looks like this:
 See the detailed contract in:
 
 ```text
-references/artifact-contract.md
+docs/SCHEMA.md
 ```
 
 ## Acceptance criteria
@@ -466,7 +472,7 @@ See [`GUIDELINES.md`](GUIDELINES.md) for detailed maintainer guidance.
 
 When changing the artifact contract, update these together:
 
-1. `references/artifact-contract.md`
+1. `docs/SCHEMA.md`
 2. schemas in `schemas/`
 3. `uv run ai-scientist validate run`
 4. skill instructions that mention the changed contract

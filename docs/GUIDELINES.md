@@ -48,7 +48,7 @@ A valid run should include:
 
 If the artifact contract changes, update all of these together:
 
-1. `references/artifact-contract.md`
+1. `docs/SCHEMA.md`
 2. Relevant schema files in `schemas/`
 3. `src/validation/run.py`
 4. Skill instructions that mention the changed contract
