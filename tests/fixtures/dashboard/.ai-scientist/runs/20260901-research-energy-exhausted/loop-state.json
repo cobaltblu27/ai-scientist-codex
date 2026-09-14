@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "20260911-research-ogbn-blocked",
+  "run_id": "20260901-research-energy-exhausted",
   "active": false,
   "phase": "research",
-  "phase_status": "blocked",
-  "updated_at": "2026-09-11T12:20:00Z",
-  "last_transition_id": "tr-20260911-latest",
-  "run_outcome": "blocked",
-  "blocked_reason": "dataset mount /data/ogbn is missing; the evaluator cannot run",
+  "phase_status": "exhausted",
+  "updated_at": "2026-09-02T00:00:00Z",
+  "last_transition_id": "tr-20260901-latest",
+  "run_outcome": "exhausted",
+  "blocked_reason": null,
   "links": {
     "config": "config.md",
-    "contract": ".ai-scientist/contracts/ogbn-arxiv/research-contract.json",
+    "contract": ".ai-scientist/contracts/uci-electricity/research-contract.json",
     "idea_batch": ".ai-scientist/runs/20260910-ideation-cifar10/ideas.json",
     "discovery_notes": "discovery-notes.md",
     "learning_notes": "learning-notes.md"
@@ -20,8 +20,8 @@
     "resources": {},
     "resource_queue": {},
     "orchestrator": {
-      "next_action": "user must restore the dataset mount, then resume N2-w-001",
-      "last_checkpoint_at": "2026-09-11T12:20:00Z"
+      "next_action": "none - run terminated exhausted",
+      "last_checkpoint_at": "2026-09-02T00:00:00Z"
     },
     "baseline": {
       "status": "completed",
@@ -30,28 +30,31 @@
     "nodes": {
       "N1": {
         "status": "completed",
-        "updated_at": "2026-09-11T09:00:00Z",
+        "updated_at": "2026-09-01T15:40:00Z",
         "parent_node_id": null,
-        "title": "GCN tuned",
+        "title": "Seasonal naive + residual GBM",
         "idea_id": "mixup-cutout-schedule",
-        "assignment": "tune the two-layer GCN",
+        "assignment": "residual boosting",
         "result_ref": "logs/workers/N1/N1-w-001/result.md",
-        "evidence_summary": "accuracy 0.712",
+        "evidence_summary": "mae 0.171, above threshold",
         "next_action": "",
         "metrics": {
-          "accuracy": 0.712
+          "mae": 0.171
         }
       },
       "N2": {
-        "status": "running",
-        "updated_at": "2026-09-11T10:40:00Z",
+        "status": "abandoned",
+        "updated_at": "2026-09-01T22:20:00Z",
         "parent_node_id": "N1",
-        "title": "GraphSAGE with label propagation",
+        "title": "Temporal fusion transformer",
         "idea_id": "snapshot-ensemble",
-        "assignment": "SAGE + LP",
+        "assignment": "TFT on the same split",
         "result_ref": "logs/workers/N2/N2-w-001/result.md",
-        "evidence_summary": "worker lost after machine reboot",
-        "next_action": ""
+        "evidence_summary": "mae 0.168; budget exhausted",
+        "next_action": "",
+        "metrics": {
+          "mae": 0.168
+        }
       }
     },
     "work": {
@@ -60,18 +63,20 @@
         "agent_thread_id": "agent-N1-w-001",
         "result_ref": "logs/workers/N1/N1-w-001/result.md",
         "node": "N1",
-        "closed_at": "2026-09-11T09:00:00Z"
+        "closed_at": "2026-09-01T15:40:00Z"
       },
       "N2-w-001": {
-        "status": "running",
+        "status": "abandoned",
         "agent_thread_id": "agent-N2-w-001",
         "result_ref": "logs/workers/N2/N2-w-001/result.md",
-        "node": "N2"
+        "node": "N2",
+        "closed_at": "2026-09-01T22:20:00Z"
       }
     },
     "selection": {
-      "status": "pending",
-      "selected_node": null
+      "status": "final",
+      "selected_node": null,
+      "outcome": "exhausted"
     }
   }
 }

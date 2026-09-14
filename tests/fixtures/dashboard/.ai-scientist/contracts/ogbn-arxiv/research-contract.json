@@ -1,16 +1,16 @@
 {
   "research_contract": {
-    "contract_id": "cifar10-accuracy",
-    "title": "Beat the ResNet-18 baseline on CIFAR-10 test accuracy",
-    "goal": "Beat the ResNet-18 baseline on CIFAR-10 test accuracy",
+    "contract_id": "ogbn-arxiv",
+    "title": "Node classification on ogbn-arxiv",
+    "goal": "Node classification on ogbn-arxiv",
     "dataset": {
-      "name": "cifar10-accuracy",
+      "name": "ogbn-arxiv",
       "version": "1.0"
     },
     "split_protocol": "official train/test split, 10% of train held out for validation, seed 13",
     "primary_metric": "accuracy",
     "primary_metric_direction": "higher_is_better",
-    "success_threshold": 0.93,
+    "success_threshold": 0.73,
     "evaluator_command": "python eval.py --split test"
   }
 }

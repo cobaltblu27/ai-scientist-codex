@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "run_id": "20260905-research-housing-success",
+  "active": false,
+  "phase": "research",
+  "phase_status": "success",
+  "updated_at": "2026-09-05T11:20:00Z",
+  "last_transition_id": "tr-20260905-latest",
+  "run_outcome": "success",
+  "blocked_reason": null,
+  "links": {
+    "config": "config.md",
+    "contract": ".ai-scientist/contracts/california-housing/research-contract.json",
+    "idea_batch": ".ai-scientist/runs/20260910-ideation-cifar10/ideas.json",
+    "discovery_notes": "discovery-notes.md",
+    "learning_notes": "learning-notes.md"
+  },
+  "state": {
+    "tasks": {},
+    "resources": {},
+    "resource_queue": {},
+    "orchestrator": {
+      "next_action": "none - run terminated with success",
+      "last_checkpoint_at": "2026-09-05T11:20:00Z",
+      "completion_audit": "completion-audit.md"
+    },
+    "baseline": {
+      "status": "not_required"
+    },
+    "nodes": {
+      "N1": {
+        "status": "completed",
+        "updated_at": "2026-09-05T03:00:00Z",
+        "parent_node_id": null,
+        "title": "GBM tuned",
+        "idea_id": "mixup-cutout-schedule",
+        "assignment": "tune the GBM baseline",
+        "result_ref": "logs/workers/N1/N1-w-001/result.md",
+        "evidence_summary": "rmse 0.497",
+        "next_action": "",
+        "metrics": {
+          "rmse": 0.497
+        }
+      },
+      "N2": {
+        "status": "accepted",
+        "updated_at": "2026-09-05T09:40:00Z",
+        "parent_node_id": "N1",
+        "title": "GBM + target encoding",
+        "idea_id": "snapshot-ensemble",
+        "assignment": "add target encoding",
+        "result_ref": "logs/workers/N2/N2-w-001/result.md",
+        "evidence_summary": "rmse 0.471, below threshold 0.48",
+        "next_action": "",
+        "metrics": {
+          "rmse": 0.471
+        }
+      },
+      "N3": {
+        "status": "rejected",
+        "updated_at": "2026-09-05T08:00:00Z",
+        "parent_node_id": "N1",
+        "title": "Leaky feature",
+        "idea_id": "stochastic-depth-members",
+        "assignment": "try neighbourhood price feature",
+        "result_ref": "logs/workers/N3/N3-w-001/result.md",
+        "evidence_summary": "leakage: feature built from test rows",
+        "next_action": "",
+        "metrics": {
+          "rmse": 0.402
+        }
+      }
+    },
+    "work": {
+      "N1-w-001": {
+        "status": "completed",
+        "agent_thread_id": "agent-N1-w-001",
+        "result_ref": "logs/workers/N1/N1-w-001/result.md",
+        "node": "N1",
+        "closed_at": "2026-09-05T03:00:00Z"
+      },
+      "N2-w-001": {
+        "status": "accepted",
+        "agent_thread_id": "agent-N2-w-001",
+        "result_ref": "logs/workers/N2/N2-w-001/result.md",
+        "node": "N2",
+        "closed_at": "2026-09-05T09:40:00Z"
+      },
+      "N3-w-001": {
+        "status": "rejected",
+        "agent_thread_id": "agent-N3-w-001",
+        "result_ref": "logs/workers/N3/N3-w-001/result.md",
+        "node": "N3",
+        "closed_at": "2026-09-05T08:00:00Z"
+      }
+    },
+    "selection": {
+      "status": "final",
+      "selected_node": "N2",
+      "outcome": "success",
+      "result_ref": "selection.json"
+    }
+  }
+}

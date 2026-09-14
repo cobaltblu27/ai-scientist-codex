@@ -1,0 +1,11 @@
+{
+  "run_id": "20260905-research-housing-success",
+  "status": "final",
+  "selected_node": "N2",
+  "acceptance_rationale": "rmse 0.471 beats the 0.48 threshold on the fixed split with a clean leakage check",
+  "result": {
+    "rmse": 0.471
+  },
+  "primary_metric": "rmse",
+  "success_threshold": 0.48
+}

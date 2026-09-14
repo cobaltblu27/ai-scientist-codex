@@ -1,0 +1,14 @@
+{
+  "contract_id": "cifar10-accuracy",
+  "title": "Beat the ResNet-18 baseline on CIFAR-10 test accuracy",
+  "goal": "Beat the ResNet-18 baseline on CIFAR-10 test accuracy",
+  "dataset": {
+    "name": "cifar10-accuracy",
+    "version": "1.0"
+  },
+  "split_protocol": "official train/test split, 10% of train held out for validation, seed 13",
+  "primary_metric": "accuracy",
+  "primary_metric_direction": "higher_is_better",
+  "success_threshold": 0.93,
+  "evaluator_command": "python eval.py --split test"
+}

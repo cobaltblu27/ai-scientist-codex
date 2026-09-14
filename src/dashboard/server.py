@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from core.plugin import plugin_root
-from dashboard.scan import find_node, find_run, node_detail, run_detail, scan_overview
+from dashboard.scan import find_run, find_run_file, node_detail, run_detail, scan_overview
 
 DIST_DIR = plugin_root() / "src" / "frontend" / "dist"
 
@@ -30,11 +30,12 @@ def make_handler(target_repo: Path, dist_dir: Path):
             self.end_headers()
             self.wfile.write(body)
 
-        def _file(self, path: Path) -> None:
+        def _file(self, path: Path, ctype: str | None = None) -> None:
             body = path.read_bytes()
-            ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+            ctype = ctype or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -49,7 +50,9 @@ def make_handler(target_repo: Path, dist_dir: Path):
             if route == "/api/overview":
                 return self._json(HTTPStatus.OK, scan_overview(target_repo))
             if route.startswith("/api/runs/"):
-                # /api/runs/<run-id>  or  /api/runs/<run-id>/nodes/<node-id>
+                # /api/runs/<run-id>
+                # /api/runs/<run-id>/nodes/<node-id>
+                # /api/runs/<run-id>/files/<relative-path>
                 parts = [unquote(p) for p in route[len("/api/runs/"):].strip("/").split("/")]
                 run = find_run(target_repo, parts[0])
                 if run is None:
@@ -57,9 +60,18 @@ def make_handler(target_repo: Path, dist_dir: Path):
                 if len(parts) == 1:
                     return self._json(HTTPStatus.OK, run_detail(run))
                 if len(parts) == 3 and parts[1] == "nodes":
-                    if find_node(run, parts[2]) is None:
+                    node = node_detail(run, parts[2])
+                    if node is None:
                         return self._json(HTTPStatus.NOT_FOUND, {"error": f"unknown node: {parts[2]}"})
-                    return self._json(HTTPStatus.OK, node_detail(run, parts[2]))
+                    return self._json(HTTPStatus.OK, node)
+                if len(parts) >= 3 and parts[1] == "files":
+                    relative = "/".join(parts[2:])
+                    path = find_run_file(run, relative)
+                    if path is None:
+                        return self._json(HTTPStatus.FORBIDDEN, {"error": f"not a text file inside the run: {relative}"})
+                    if not path.is_file():
+                        return self._json(HTTPStatus.NOT_FOUND, {"error": f"no such file: {relative}"})
+                    return self._file(path, "text/plain; charset=utf-8")
                 return self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             if route.startswith("/api/"):
                 return self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
