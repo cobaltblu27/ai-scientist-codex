@@ -6,7 +6,7 @@ interface Props {
   overview: Overview;
   onClose: () => void;
   /** Called after a 201 so the caller can refresh the overview. */
-  onLaunched: (runId: string | null) => void;
+  onLaunched: () => void;
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -60,11 +60,9 @@ export function StartResearchModal({ overview, onClose, onLaunched }: Props) {
     setError(null);
     try {
       const id = runId.trim();
-      const rec = await launchSession({ contract_id: contract, idea_ids: [...ideas], prompt: prompt.trim(), ...(id ? { run_id: id } : {}) });
-      const target = rec.run_id ?? (id || null);
+      await launchSession({ contract_id: contract, idea_ids: [...ideas], prompt: prompt.trim(), ...(id ? { run_id: id } : {}) });
       onClose();
-      if (target) window.location.hash = `#/runs/${encodeURIComponent(target)}`;
-      onLaunched(target);
+      onLaunched();
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);

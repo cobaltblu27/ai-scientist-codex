@@ -1,11 +1,17 @@
 import type { Overview } from "../lib/types";
 import { fmtDate, relTime, tone } from "../lib/format";
 import { SessionBadge } from "./SessionBadge";
+import { isSessionLive } from "../lib/types";
+import { fmtPercent, windowLabel } from "../lib/format";
+import { peakUsage, UsageMeter } from "./UsageMeter";
 
 export function Home({ overview, onSelect, onStart }: { overview: Overview; onSelect: (id: string) => void; onStart: () => void }) {
   const runs = overview.runs;
   const sessions = overview.sessions ?? [];
   const active = runs.filter((r) => r.active);
+  // Newest session that reported usage, live ones first: the subscription window the campaign is drawing on.
+  const usageSession = [...sessions].sort((a, b) => Number(isSessionLive(b)) - Number(isSessionLive(a))).find((s) => peakUsage(s.rate_limits));
+  const usage = peakUsage(usageSession?.rate_limits);
   return (
     <>
       <header className="page-head">
@@ -17,6 +23,7 @@ export function Home({ overview, onSelect, onStart }: { overview: Overview; onSe
           <Stat label="Runs" value={runs.length} />
           <Stat label="Active" value={active.length} />
           <Stat label="Contracts" value={overview.contracts.length} />
+          {usage && <Stat label={`Usage · ${windowLabel(usage.type)}`} value={fmtPercent(usage.utilization)} />}
         </div>
       </header>
 
@@ -80,6 +87,7 @@ export function Home({ overview, onSelect, onStart }: { overview: Overview; onSe
                   {s.error && <span className="orange"> · {s.error}</span>}
                 </span>
               </span>
+              <UsageMeter limits={s.rate_limits} compact />
               <SessionBadge session={s} compact />
             </div>
           ))}

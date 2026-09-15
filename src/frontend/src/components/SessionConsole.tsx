@@ -3,6 +3,7 @@ import { interruptSession, sendSessionMessage, stopSession, useSession } from ".
 import { isSessionLive, type SessionEvent, type SessionRecord } from "../lib/types";
 import { relTime } from "../lib/format";
 import { SessionBadge } from "./SessionBadge";
+import { UsageMeter } from "./UsageMeter";
 
 interface Props {
   /** run.session from the polled run detail; the console polls the session itself for events. */
@@ -59,10 +60,9 @@ export function SessionConsole({ session: fromRun }: Props) {
       <div className="tile-kicker">Session</div>
       <SessionBadge session={session} />
       <div className="muted">
-        {session.backend} · {session.num_turns ?? 0} turns
-        {session.total_cost_usd != null && <> · ${session.total_cost_usd.toFixed(2)}</>}
-        {" "}· updated {relTime(session.updated_at)}
+        {session.backend} · {session.num_turns ?? 0} turns · updated {relTime(session.updated_at)}
       </div>
+      <UsageMeter limits={session.rate_limits} />
       {session.error && <div className="msg-note orange">{session.error}</div>}
       {pollError && <div className="msg-note orange">{pollError}</div>}
       {!live && <div className="msg-note muted">not live; resume from a terminal with the copied id</div>}

@@ -12,6 +12,19 @@
   "owner_pid": 2000000000,
   "claude_session_id": "3f0c1a2e-5b6d-4c7e-8f90-1a2b3c4d5e6f",
   "num_turns": 12,
-  "total_cost_usd": 4.2,
+  "rate_limits": {
+    "five_hour": {
+      "type": "five_hour",
+      "status": "allowed",
+      "utilization": 0.42,
+      "resets_at": 1789464300
+    },
+    "seven_day": {
+      "type": "seven_day",
+      "status": "allowed_warning",
+      "utilization": 0.81,
+      "resets_at": 1789808400
+    }
+  },
   "error": null
 }

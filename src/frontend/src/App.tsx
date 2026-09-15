@@ -63,9 +63,10 @@ export default function App() {
         <StartResearchModal
           overview={overview.data}
           onClose={closeStart}
-          onLaunched={(runId) => {
+          onLaunched={() => {
+            // Home shows the new run as a `starting` card until the orchestrator creates its directory.
+            select(null);
             overview.refresh();
-            if (runId) setSelected(runId);
           }}
         />
       )}

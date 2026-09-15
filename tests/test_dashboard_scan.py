@@ -78,7 +78,9 @@ def test_overview_sessions_and_ideas(target: Path) -> None:
         }
     ]
     detail = session_detail(find_session(target, fx.SESSION_ID))
-    assert detail["event_count"] == 6 and [e["type"] for e in detail["events"]][:2] == ["user", "system"]
+    assert detail["event_count"] == 7 and [e["type"] for e in detail["events"]][:2] == ["user", "system"]
+    assert session["rate_limits"]["five_hour"]["utilization"] == 0.42 and session["num_turns"] == 12
+    assert not any(r.get("pending") for r in overview["runs"])  # the fixture session is detached, so no placeholder card
     assert run_detail(find_run(target, fx.RESEARCH_RUN))["session"]["id"] == fx.SESSION_ID
 
 
@@ -416,7 +418,7 @@ def test_server_routes(server: str) -> None:
     for bad in (f"/api/runs/{fx.RESEARCH_RUN}/nodes/nope", f"/api/runs/{fx.RESEARCH_RUN}/other/N2", "/api/runs/nope", "/api/nope", "/api/sessions/nope"):
         assert _status(f"{server}{bad}") == 404, bad
     assert [s["id"] for s in json.load(urlopen(f"{server}/api/sessions"))] == [fx.SESSION_ID]
-    assert json.load(urlopen(f"{server}/api/sessions/{fx.SESSION_ID}"))["event_count"] == 6
+    assert json.load(urlopen(f"{server}/api/sessions/{fx.SESSION_ID}"))["event_count"] == 7
     assert _status(f"{server}/") == 503  # frontend not built
 
 

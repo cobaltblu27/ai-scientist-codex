@@ -24,7 +24,7 @@ IDEATION_RUN = "20260910-ideation-cifar10"
 IDEAS = [("mixup-cutout-schedule", "Mixup and cutout"), ("snapshot-ensemble", "Snapshot ensemble"), ("stochastic-depth", "Stochastic depth")]
 RECORD_KEYS = {
     "id", "backend", "status", "created_at", "updated_at", "run_id", "contract_path", "idea_batch", "prompt", "cwd",
-    "owner_pid", "claude_session_id", "num_turns", "total_cost_usd", "error",
+    "owner_pid", "claude_session_id", "num_turns", "rate_limits", "error",
 }
 
 
@@ -62,10 +62,15 @@ class FakeClient:
         yield {"type": "system", "subtype": "init", "session_id": "fake-session-1"}
         if self.fail_after_init:
             raise RuntimeError("cli died")
+        yield {"type": "system", "subtype": "rate_limit", "rate_limits": [{"type": "five_hour", "status": "allowed", "utilization": 0.4, "resets_at": 1789464300}, {"type": "seven_day", "status": "allowed", "utilization": 0.1, "resets_at": 1789747200}], "text": "five_hour window allowed: 40% used"}
         yield {"type": "assistant", "text": "starting the campaign"}
         follow_up = await self._inbox.get()  # a dashboard message mid-turn
         yield {"type": "assistant", "text": f"noted: {follow_up}", "tool": "Skill"}
-        yield {"type": "result", "subtype": "success", "session_id": "fake-session-1", "num_turns": 3, "total_cost_usd": 0.25, "is_error": False, "text": "done"}
+        yield {"type": "system", "subtype": "rate_limit", "rate_limits": [{"type": "five_hour", "status": "allowed_warning", "utilization": 0.75, "resets_at": 1789464300}], "text": "five_hour window allowed_warning: 75% used"}
+        yield {"type": "result", "subtype": "success", "session_id": "fake-session-1", "num_turns": 3, "is_error": False, "text": "done"}
+        second = await self._inbox.get()  # a message on the idle session starts a new turn
+        yield {"type": "assistant", "text": f"again: {second}"}
+        yield {"type": "result", "subtype": "success", "session_id": "fake-session-1", "num_turns": 2, "is_error": False, "text": "done again"}
         await asyncio.Event().wait()  # idle until cancelled
 
     async def interrupt(self) -> None:
@@ -231,7 +236,11 @@ def test_launch_unavailable_backend(target: Path) -> None:
 def test_send_mid_turn_interrupt_and_result(target: Path, backend: FakeBackend, manager: SessionManager) -> None:
     record = manager.launch(CONTRACT, ["snapshot-ensemble"], "", run_id="run-c")
     sid = record["id"]
-    _wait(lambda: len(_events(target, sid)) >= 3)  # launch, init, first assistant line: the turn is in flight
+    _wait(lambda: len(_events(target, sid)) >= 4)  # launch, init, rate limit, first assistant line: the turn is in flight
+    assert _record(target, sid)["rate_limits"] == {
+        "five_hour": {"type": "five_hour", "status": "allowed", "utilization": 0.4, "resets_at": 1789464300},
+        "seven_day": {"type": "seven_day", "status": "allowed", "utilization": 0.1, "resets_at": 1789747200},
+    }
 
     event = manager.send(sid, "  try TTA  ")
     assert event["type"] == "user" and event["origin"] == "dashboard" and event["text"] == "try TTA"
@@ -239,9 +248,15 @@ def test_send_mid_turn_interrupt_and_result(target: Path, backend: FakeBackend, 
     assert client.queries[-1] == "try TTA"  # delivered immediately, no Python-side queue
     _wait(lambda: _record(target, sid)["status"] == "idle")
     rec = _record(target, sid)
-    assert rec["num_turns"] == 3 and rec["total_cost_usd"] == 0.25 and rec["error"] is None
+    assert rec["num_turns"] == 3 and rec["error"] is None
+    assert rec["rate_limits"]["five_hour"]["status"] == "allowed_warning" and rec["rate_limits"]["five_hour"]["utilization"] == 0.75
+    assert rec["rate_limits"]["seven_day"]["utilization"] == 0.1  # a later event only replaces the windows it names
     types = [(e["type"], e.get("subtype")) for e in _events(target, sid)]
-    assert types[-3:] == [("user", None), ("assistant", None), ("result", "success")]
+    assert types[-4:] == [("user", None), ("assistant", None), ("system", "rate_limit"), ("result", "success")]
+
+    manager.send(sid, "one more")
+    _wait(lambda: _record(target, sid)["num_turns"] == 5)  # turns accumulate over the session
+    assert _record(target, sid)["status"] == "idle"
 
     manager.interrupt(sid)
     _wait(lambda: client.interrupts == 1)
@@ -391,7 +406,14 @@ def test_server_session_routes(server: str, target: Path, backend: FakeBackend) 
     status, err = _post(f"{server}/api/sessions", {"contract_id": CONTRACT, "idea_ids": ["snapshot-ensemble"], "prompt": "", "run_id": "run-h"})
     assert status == 409
 
-    _wait(lambda: len(_events(target, sid)) >= 3)
+    status, pending = _get(f"{server}/api/runs/run-h")  # no runs/run-h yet: the live session stands in for it
+    assert status == 200 and pending["pending"] is True and pending["phase_status"] == "starting" and pending["session"]["id"] == sid
+    assert pending["goal"] == "beat the baseline" and pending["nodes"] == [] and pending["reports"] == []
+    status, overview = _get(f"{server}/api/overview")
+    card = next(r for r in overview["runs"] if r["run_id"] == "run-h")
+    assert card["pending"] is True and card["active"] is True and card["session"]["id"] == sid
+
+    _wait(lambda: len(_events(target, sid)) >= 4)
     status, event = _post(f"{server}/api/sessions/{sid}/messages", {"text": "look at N1"})
     assert status == 202 and event["type"] == "user" and event["origin"] == "dashboard" and event["text"] == "look at N1"
     _wait(lambda: _get(f"{server}/api/sessions/{sid}")[1]["status"] == "idle")
@@ -428,3 +450,24 @@ def test_server_session_unavailable(target: Path) -> None:
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# --- CLI rate_limit_event parsing ---------------------------------------------
+
+
+def test_rate_limit_windows_from_raw_event() -> None:
+    from types import SimpleNamespace
+
+    from dashboard.sessions import rate_limit_windows
+
+    raw = {
+        "status": "allowed_warning", "resetsAt": 1789474200, "rateLimitType": "five_hour",
+        "unifiedWindows": {"five_hour": {"utilization": 0.84, "resetsAt": 1789474200}, "seven_day": {"utilization": 0.12, "resetsAt": 1789747200}},
+    }
+    info = SimpleNamespace(status="allowed_warning", rate_limit_type="five_hour", utilization=None, resets_at=1789474200, raw=raw)
+    assert rate_limit_windows(info) == [
+        {"type": "five_hour", "status": "allowed_warning", "utilization": 0.84, "resets_at": 1789474200},
+        {"type": "seven_day", "status": "allowed", "utilization": 0.12, "resets_at": 1789747200},
+    ]
+    bare = SimpleNamespace(status="allowed", rate_limit_type="five_hour", utilization=None, resets_at=1789474200, raw={})
+    assert rate_limit_windows(bare) == [{"type": "five_hour", "status": "allowed", "utilization": None, "resets_at": 1789474200}]

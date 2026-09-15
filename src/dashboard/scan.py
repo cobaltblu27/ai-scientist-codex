@@ -567,6 +567,70 @@ def _session_for_run(sessions: list[dict[str, Any]], run_id: str) -> dict[str, A
     return next((s for s in sessions if s.get("run_id") == run_id), None)
 
 
+LIVE_SESSION_STATUSES = {"starting", "running", "idle"}
+
+
+def _pending_summary(root: Path, session: dict[str, Any]) -> dict[str, Any]:
+    """A `starting` research run for a live session whose orchestrator has not created `runs/<run-id>` yet."""
+    run_id = str(session["run_id"])
+    contract_path = session.get("contract_path")
+    contract = _load_json(root.parent / contract_path) if isinstance(contract_path, str) else None
+    summary = _empty_summary(root / "runs" / run_id, None)
+    summary.update(
+        {
+            "active": True,
+            "pending": True,
+            "phase": "research",
+            "phase_status": "starting",
+            "updated_at": session.get("updated_at"),
+            "contract_path": contract_path,
+            "idea_batch": session.get("idea_batch"),
+            "goal": _contract_goal(contract),
+            "session": session,
+        }
+    )
+    return summary
+
+
+def _pending_runs(root: Path, sessions: list[dict[str, Any]], existing: set[str]) -> list[dict[str, Any]]:
+    out, seen = [], set(existing)
+    for session in sessions:
+        run_id = session.get("run_id")
+        if not isinstance(run_id, str) or run_id in seen or session.get("status") not in LIVE_SESSION_STATUSES:
+            continue
+        seen.add(run_id)
+        out.append(_pending_summary(root, session))
+    return out
+
+
+def pending_run_detail(target_repo: Path, run_id: str) -> dict[str, Any] | None:
+    """Run-detail shape for a run that only exists as a live session's target, or None."""
+    root = ai_root(target_repo)
+    if not _safe_segment(run_id) or (root / "runs" / run_id).is_dir():
+        return None
+    session = _session_for_run(_sessions(root), run_id)
+    if session is None or session.get("status") not in LIVE_SESSION_STATUSES:
+        return None
+    return {
+        **_pending_summary(root, session),
+        "nodes": [],
+        "work": None,
+        "resources": None,
+        "resource_queue": None,
+        "open_questions": None,
+        "baseline": None,
+        "selection": None,
+        "journal": [],
+        "journal_count": 0,
+        "messages": [],
+        "reports": [],
+        "loop_state": None,
+        "config": None,
+        "run_md": None,
+        "ideas": None,
+    }
+
+
 def find_session(target_repo: Path, session_id: str) -> Path | None:
     if not _safe_segment(session_id):
         return None
@@ -638,6 +702,7 @@ def scan_overview(target_repo: Path) -> dict[str, Any]:
     runs = [run_summary(p) for p in run_dirs]
     for summary in runs:
         summary["session"] = _session_for_run(sessions, summary["run_id"])
+    runs += _pending_runs(root, sessions, {r["run_id"] for r in runs})
     runs.sort(key=lambda r: _epoch(r.get("updated_at")) or r.get("mtime") or 0, reverse=True)
     active = _load_json(root / "active-run.json")
     return {

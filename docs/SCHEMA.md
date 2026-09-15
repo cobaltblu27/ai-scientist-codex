@@ -419,7 +419,9 @@ sessions/<session-id>/
   "owner_pid": 41234,
   "claude_session_id": "5b2c6d1e-…",
   "num_turns": 0,
-  "total_cost_usd": null,
+  "rate_limits": {
+    "five_hour": {"type": "five_hour", "status": "allowed", "utilization": 0.42, "resets_at": 1789470000}
+  },
   "error": null
 }
 ```
@@ -435,9 +437,13 @@ sessions/<session-id>/
 | `prompt` | the user's extra instructions, at most 20 000 characters |
 | `cwd`, `owner_pid` | the target repository and the dashboard process holding the subprocess |
 | `claude_session_id` | the Claude Code session id; `claude --resume <id>` attaches once the session is stopped |
-| `num_turns`, `total_cost_usd`, `error` | from the latest result message or failure |
+| `num_turns` | turns completed over the whole session (summed over result messages) |
+| `rate_limits` | latest subscription rate-limit window per `type` (`five_hour`, `seven_day`, ...), each `{type, status, utilization, resets_at}`: `status` is `allowed`, `allowed_warning` or `rejected`, `utilization` the consumed fraction 0..1 or null, `resets_at` unix seconds or null. Empty until the CLI reports one; API-key sessions never do |
+| `error` | from the latest failing result or the failure that ended the session |
 
-`ideas.json` keeps the 3.6 shape with `idea_file` / `pilot_report` rewritten to `.ai-scientist/runs/<ideation-run>/...` so a research run can name it as its `idea_batch`; entries also carry `source_run_id`. `events.jsonl` rows are `{"ts", "type", "subtype"?, "text"?, "tool"?, "origin"?}` with `type` one of `system`, `assistant`, `user`, `result`, `dashboard`; `init` system rows and `result` rows also carry `session_id`, results carry `num_turns`, `total_cost_usd`, `is_error`. Long text is clipped; readers skip malformed lines.
+`ideas.json` keeps the 3.6 shape with `idea_file` / `pilot_report` rewritten to `.ai-scientist/runs/<ideation-run>/...` so a research run can name it as its `idea_batch`; entries also carry `source_run_id`. `events.jsonl` rows are `{"ts", "type", "subtype"?, "text"?, "tool"?, "origin"?}` with `type` one of `system`, `assistant`, `user`, `result`, `dashboard`; `init` system rows and `result` rows also carry `session_id`, results carry `num_turns` (for that turn) and `is_error`, and `system` rows with subtype `rate_limit` carry every window the CLI reported as a list under `rate_limits`. Long text is clipped; readers skip malformed lines.
+
+A live session whose `run_id` has no `runs/<run-id>` yet (bootstrap has not run) appears in the overview as a `starting` research run carrying `pending: true` and the session; `GET /api/runs/<run-id>` serves the same placeholder until the directory exists.
 
 ---
 

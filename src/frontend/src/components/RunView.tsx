@@ -33,6 +33,11 @@ export function RunView({ run }: { run: RunDetail }) {
         </div>
       </header>
 
+      {run.pending && (
+        <div className="card banner lime">
+          Starting: the session is bootstrapping this run. Nodes and reports appear once the orchestrator writes <code>loop-state.json</code>.
+        </div>
+      )}
       {run.blocked_reason && <div className="card banner orange">Blocked: {run.blocked_reason}</div>}
       {run.phase === null && (
         <div className="card banner orange">

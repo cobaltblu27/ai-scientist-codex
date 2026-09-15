@@ -9,6 +9,26 @@ export function relTime(iso: string | number | null | undefined): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+/** Compact time until a unix-seconds instant: "in 2h 05m", or "now" once passed. */
+export function untilTime(epochSec: number | null | undefined): string | null {
+  if (!epochSec) return null;
+  const s = epochSec - Date.now() / 1000;
+  if (s <= 0) return "now";
+  if (s < 3600) return `in ${Math.ceil(s / 60)}m`;
+  if (s < 86400) return `in ${Math.floor(s / 3600)}h ${String(Math.round((s % 3600) / 60)).padStart(2, "0")}m`;
+  return `in ${Math.round(s / 86400)}d`;
+}
+
+const WINDOW_LABEL: Record<string, string> = { five_hour: "5h", seven_day: "7d", seven_day_opus: "7d opus", seven_day_sonnet: "7d sonnet", seven_day_overage_included: "7d+overage", overage: "overage" };
+
+export function windowLabel(type: string): string {
+  return WINDOW_LABEL[type] ?? type;
+}
+
+export function fmtPercent(fraction: number | null | undefined): string {
+  return typeof fraction === "number" ? `${Math.round(fraction * 100)}%` : "?";
+}
+
 export function fmtDate(d = new Date()): string {
   return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 }

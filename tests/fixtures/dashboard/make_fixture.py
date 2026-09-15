@@ -505,7 +505,10 @@ def build_session(root: Path, out: Path) -> None:
             "owner_pid": 2_000_000_000,
             "claude_session_id": SESSION_CLAUDE_ID,
             "num_turns": 12,
-            "total_cost_usd": 4.2,
+            "rate_limits": {
+                "five_hour": {"type": "five_hour", "status": "allowed", "utilization": 0.42, "resets_at": 1789464300},
+                "seven_day": {"type": "seven_day", "status": "allowed_warning", "utilization": 0.81, "resets_at": 1789808400},
+            },
             "error": None,
         },
         at=ts(5),
@@ -530,6 +533,7 @@ def build_session(root: Path, out: Path) -> None:
     events = [
         {"ts": ts(30), "type": "user", "origin": "launch", "text": launch_prompt},
         {"ts": ts(29.9), "type": "system", "subtype": "init", "session_id": SESSION_CLAUDE_ID, "text": "model claude-opus-5; skills ai-scientist:research-loop, ..."},
+        {"ts": ts(29.5), "type": "system", "subtype": "rate_limit", "rate_limits": [{"type": "five_hour", "status": "allowed", "utilization": 0.42, "resets_at": 1789464300}, {"type": "seven_day", "status": "allowed_warning", "utilization": 0.81, "resets_at": 1789808400}], "text": "five_hour window allowed: 42% used, resets 22:45Z; seven_day window allowed_warning: 81% used, resets 22:20Z"},
         {"ts": ts(29), "type": "assistant", "text": "Goal active. Running preflight for the research loop.", "tool": "Skill"},
         {"ts": ts(20), "type": "user", "origin": "dashboard", "text": "prefer the snapshot ensemble first"},
         {"ts": ts(19), "type": "assistant", "text": "Noted; N2 gets the first worker."},

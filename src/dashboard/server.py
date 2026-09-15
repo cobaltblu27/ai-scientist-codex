@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse
 
 from core.message_box import MessageBoxError, add as add_message
 from core.plugin import plugin_root
-from dashboard.scan import find_run, find_run_file, find_session, node_detail, run_detail, scan_overview, session_detail
+from dashboard.scan import find_run, find_run_file, find_session, node_detail, pending_run_detail, run_detail, scan_overview, session_detail
 from dashboard.sessions import SessionError, SessionManager
 
 DIST_DIR = plugin_root() / "src" / "frontend" / "dist"
@@ -144,6 +144,10 @@ def make_handler(target_repo: Path, dist_dir: Path, manager: SessionManager | No
                 parts = [unquote(p) for p in route[len("/api/runs/"):].strip("/").split("/")]
                 run = find_run(target_repo, parts[0])
                 if run is None:
+                    # A run a live session is still bootstrapping has no directory yet; serve the session instead.
+                    pending = pending_run_detail(target_repo, parts[0]) if len(parts) == 1 else None
+                    if pending is not None:
+                        return self._json(HTTPStatus.OK, pending)
                     return self._json(HTTPStatus.NOT_FOUND, {"error": f"unknown run: {parts[0]}"})
                 if len(parts) == 1:
                     return self._json(HTTPStatus.OK, run_detail(run))

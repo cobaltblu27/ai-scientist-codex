@@ -39,7 +39,7 @@ TERMINAL_STATUSES = {"stopped", "failed", "detached"}
 EVENT_TEXT_CHARS = 4_000
 # System messages that only add noise to the console: per-hook lifecycle rows and thinking-token counters.
 NOISY_SYSTEM_SUBTYPES = {"hook_started", "hook_response", "thinking_tokens"}
-NOISY_MESSAGE_TYPES = {"RateLimitEvent", "StreamEvent", "TaskProgressMessage"}
+NOISY_MESSAGE_TYPES = {"StreamEvent", "TaskProgressMessage"}
 SEND_TIMEOUT_SEC = 10.0
 STOP_TIMEOUT_SEC = 15.0
 
@@ -126,8 +126,11 @@ class ClaudeSdkBackend:
         return ClaudeSDKClient(options=options)
 
     def to_event(self, message: Any) -> dict[str, Any] | None:
-        from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, SystemMessage, TextBlock, ToolUseBlock, UserMessage
+        from claude_agent_sdk import AssistantMessage, RateLimitEvent, ResultMessage, StreamEvent, SystemMessage, TextBlock, ToolUseBlock, UserMessage
 
+        if isinstance(message, RateLimitEvent):
+            windows = rate_limit_windows(message.rate_limit_info)
+            return {"type": "system", "subtype": "rate_limit", "rate_limits": windows, "text": "; ".join(describe_rate_limit(w) for w in windows)}
         if isinstance(message, SystemMessage):
             if message.subtype in NOISY_SYSTEM_SUBTYPES:
                 return None
@@ -161,12 +164,52 @@ class ClaudeSdkBackend:
                 "text": _clip(message.result),
                 "session_id": message.session_id,
                 "num_turns": message.num_turns,
-                "total_cost_usd": message.total_cost_usd,
                 "is_error": bool(message.is_error),
             }
         if isinstance(message, (UserMessage, StreamEvent)) or message.__class__.__name__ in NOISY_MESSAGE_TYPES:
             return None  # dashboard sends are logged by the manager; tool results and counters are noise
         return {"type": "system", "subtype": message.__class__.__name__}
+
+
+def rate_limit_window(status: Any, kind: Any, utilization: Any, resets_at: Any) -> dict[str, Any]:
+    """One subscription rate-limit window as stored in `session.json` `rate_limits` (docs/SCHEMA.md 3.12)."""
+    return {
+        "type": kind if isinstance(kind, str) and kind else "unknown",
+        "status": status if isinstance(status, str) else "unknown",
+        "utilization": float(utilization) if isinstance(utilization, (int, float)) else None,
+        "resets_at": int(resets_at) if isinstance(resets_at, (int, float)) else None,
+    }
+
+
+def rate_limit_windows(info: Any) -> list[dict[str, Any]]:
+    """Every window in one CLI `rate_limit_event`.
+
+    The CLI reports the binding window at the top level (`status`, `rateLimitType`, `resetsAt`, rarely
+    `utilization`) and the per-window utilization under `unifiedWindows`, which the SDK leaves in `raw`.
+    The top-level status only applies to its own window; the others are `allowed` unless they say otherwise.
+    """
+    raw = info.raw if isinstance(getattr(info, "raw", None), dict) else {}
+    binding = rate_limit_window(info.status, info.rate_limit_type, info.utilization, info.resets_at)
+    unified = raw.get("unifiedWindows")
+    if not isinstance(unified, dict):
+        return [binding]
+    windows = []
+    for kind, data in unified.items():
+        if not isinstance(kind, str) or not isinstance(data, dict):
+            continue
+        status = binding["status"] if kind == binding["type"] else str(data.get("status") or "allowed")
+        windows.append(rate_limit_window(status, kind, data.get("utilization"), data.get("resetsAt")))
+    if binding["type"] not in {w["type"] for w in windows}:
+        windows.append(binding)
+    return windows
+
+
+def describe_rate_limit(window: dict[str, Any]) -> str:
+    used = window.get("utilization")
+    pct = f"{round(used * 100)}%" if isinstance(used, float) else "?"
+    resets = window.get("resets_at")
+    when = datetime.fromtimestamp(resets, timezone.utc).strftime("%H:%MZ") if isinstance(resets, int) else "?"
+    return f"{window['type']} window {window['status']}: {pct} used, resets {when}"
 
 
 # --- one live session ---------------------------------------------------------
@@ -273,12 +316,17 @@ class LiveSession:
             fields["status"] = "running"
             if isinstance(row.get("session_id"), str):
                 fields["claude_session_id"] = row["session_id"]
+        elif row.get("type") == "system" and row.get("subtype") == "rate_limit" and isinstance(row.get("rate_limits"), list):
+            with self._lock:
+                limits = dict(self.record.get("rate_limits") or {})
+            for window in row["rate_limits"]:
+                if isinstance(window, dict) and isinstance(window.get("type"), str):
+                    limits[window["type"]] = window
+            fields["rate_limits"] = limits
         elif row.get("type") == "result":
             fields["status"] = "idle"
             if isinstance(row.get("num_turns"), int):
-                fields["num_turns"] = row["num_turns"]
-            if isinstance(row.get("total_cost_usd"), (int, float)):
-                fields["total_cost_usd"] = row["total_cost_usd"]
+                fields["num_turns"] = int(self.record.get("num_turns") or 0) + row["num_turns"]  # cumulative over the session
             if isinstance(row.get("session_id"), str):
                 fields["claude_session_id"] = row["session_id"]
             fields["error"] = row.get("text") if row.get("is_error") else None
@@ -486,7 +534,7 @@ class SessionManager:
                 "owner_pid": os.getpid(),
                 "claude_session_id": spec.claude_session_id,
                 "num_turns": 0,
-                "total_cost_usd": None,
+                "rate_limits": {},
                 "error": None,
             }
             atomic_write_json(session_dir(self.target_repo, session_id) / "ideas.json", {"session_id": session_id, "ideas": ideas})

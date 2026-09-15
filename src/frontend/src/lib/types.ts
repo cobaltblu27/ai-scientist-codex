@@ -29,6 +29,19 @@ export interface RunSummary {
   mtime: number | null;
   /** sessions/<id>/session.json bound to this run, or null when none is. */
   session: SessionRecord | null;
+  /** True when runs/<run-id> does not exist yet and this card stands in for a live session bootstrapping it. */
+  pending?: boolean;
+}
+
+/** One subscription rate-limit window reported by the Claude CLI (five_hour, seven_day, ...). */
+export interface RateLimitWindow {
+  type: string;
+  /** allowed | allowed_warning | rejected */
+  status: string;
+  /** Fraction consumed, 0..1, when the CLI reported one. */
+  utilization: number | null;
+  /** Unix seconds when the window resets. */
+  resets_at: number | null;
 }
 
 /** One sessions/<id>/session.json record: a Claude Code session owned by the dashboard server. */
@@ -46,8 +59,10 @@ export interface SessionRecord {
   cwd: string | null;
   owner_pid: number | null;
   claude_session_id: string | null;
+  /** Turns completed over the whole session. */
   num_turns: number | null;
-  total_cost_usd: number | null;
+  /** Latest window per rate-limit type; empty until the CLI reports one (API-key sessions never do). */
+  rate_limits: Record<string, RateLimitWindow> | null;
   error: string | null;
 }
 
