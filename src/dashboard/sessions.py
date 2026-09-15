@@ -252,6 +252,7 @@ class LiveSession:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[Any] | None = None
         self._client: SessionClient | None = None
+        self._loop_ready = threading.Event()
         self._started = threading.Event()
         self._done = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f"session-{spec.session_id}", daemon=True)
@@ -286,12 +287,14 @@ class LiveSession:
         except BaseException as exc:  # noqa: BLE001 - a dead thread must leave a readable record
             self._finish("failed", f"{exc.__class__.__name__}: {exc}")
         finally:
+            self._loop_ready.set()
             self._started.set()
             self._done.set()
 
     async def _main(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._task = asyncio.current_task()
+        self._loop_ready.set()
         try:
             async with self.backend.open(self.spec) as client:
                 self._client = client
@@ -382,6 +385,7 @@ class LiveSession:
             self.append_event({"type": "dashboard", "subtype": "interrupt-failed", "text": f"{exc.__class__.__name__}: {exc}"})
 
     def stop(self, timeout: float = STOP_TIMEOUT_SEC) -> None:
+        self._loop_ready.wait(SEND_TIMEOUT_SEC)  # a stop right after launch must still reach the loop
         if self._thread.is_alive() and self._loop is not None and self._task is not None:
             self._loop.call_soon_threadsafe(self._task.cancel)
         self._thread.join(timeout)
@@ -541,8 +545,9 @@ class SessionManager:
             atomic_write_json(session_dir(self.target_repo, session_id) / "session.json", record)
             live = LiveSession(self.target_repo, self.backend, spec, record)
             self._live[session_id] = live
+        snapshot = dict(record)  # taken before the thread can move the status past `starting`
         live.start()
-        return dict(record)
+        return snapshot
 
     def _require(self, session_id: str) -> LiveSession:
         live = self._live.get(session_id)

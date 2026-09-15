@@ -167,7 +167,10 @@ def test_launch_writes_record_and_idea_batch(target: Path, backend: FakeBackend,
     assert record["idea_batch"] == f".ai-scientist/sessions/{record['id']}/ideas.json"
     assert record["created_at"].endswith("Z") and record["updated_at"].endswith("Z")
     assert record["claude_session_id"] and len(record["claude_session_id"]) == 36
-    assert read_json(session_dir(target, record["id"]) / "session.json") == {**record, "updated_at": _record(target, record["id"])["updated_at"]}
+    volatile = {"status", "updated_at", "claude_session_id", "rate_limits", "num_turns", "error"}  # the session thread moves these
+    on_disk = _record(target, record["id"])
+    assert set(on_disk) == set(record)
+    assert {k: v for k, v in on_disk.items() if k not in volatile} == {k: v for k, v in record.items() if k not in volatile}
 
     batch = read_json(target / record["idea_batch"])
     assert [i["id"] for i in batch["ideas"]] == ["snapshot-ensemble", "mixup-cutout-schedule"]  # selection order kept
@@ -175,6 +178,7 @@ def test_launch_writes_record_and_idea_batch(target: Path, backend: FakeBackend,
     assert batch["ideas"][0]["pilot_report"] == f".ai-scientist/runs/{IDEATION_RUN}/logs/pilots/snapshot-ensemble/report.md"
     assert batch["ideas"][0]["source_run_id"] == IDEATION_RUN
 
+    _wait(lambda: len(backend.specs) == 1)  # open() runs on the session thread
     spec = backend.specs[0]
     assert spec.run_id == "run-a" and spec.cwd == target.resolve() and spec.claude_session_id == record["claude_session_id"]
     prompt = build_launch_prompt(spec)
