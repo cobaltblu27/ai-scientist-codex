@@ -84,6 +84,9 @@ export interface SessionDetail extends SessionRecord {
 
 export const LIVE_SESSION = new Set(["starting", "running", "idle"]);
 export const isSessionLive = (s: SessionRecord | null | undefined): boolean => !!s && LIVE_SESSION.has(s.status);
+/** The orchestrator returned a result (idle) while the run still says it is active: an early stop or a question waiting. */
+export const isSessionStalled = (s: SessionRecord | null | undefined, runActive: boolean | null | undefined): boolean =>
+  !!s && s.status === "idle" && runActive === true;
 
 /** One message-box/<id>.json record (docs/SCHEMA.md 3.11). */
 export interface SteerMessage {

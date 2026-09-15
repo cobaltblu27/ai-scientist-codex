@@ -1,7 +1,7 @@
 import type { Overview } from "../lib/types";
 import { fmtDate, relTime, tone } from "../lib/format";
 import { SessionBadge } from "./SessionBadge";
-import { isSessionLive } from "../lib/types";
+import { isSessionLive, isSessionStalled } from "../lib/types";
 import { fmtPercent, windowLabel } from "../lib/format";
 import { peakUsage, UsageMeter } from "./UsageMeter";
 
@@ -54,7 +54,11 @@ export function Home({ overview, onSelect, onStart }: { overview: Overview; onSe
               <div className="tile-foot">
                 <span className={`pill ${tone(r.phase_status)}`}>{r.phase_status ?? "—"}</span>
                 {r.pending_messages > 0 && <span className="pill tiny pink">{r.pending_messages} msgs</span>}
-                {r.session && <span className={`pill tiny ${tone(r.session.status)}`}>session · {r.session.status}</span>}
+                {r.session && (
+                  <span className={`pill tiny ${isSessionStalled(r.session, r.active) ? "orange" : tone(r.session.status)}`}>
+                    session · {isSessionStalled(r.session, r.active) ? "stalled" : r.session.status}
+                  </span>
+                )}
                 <span className="muted">{relTime(r.updated_at ?? r.mtime)}</span>
               </div>
             </button>

@@ -241,6 +241,21 @@ def build_launch_prompt(spec: LaunchSpec) -> str:
     return "\n".join(lines)
 
 
+def build_resume_prompt(spec: LaunchSpec, note: str = "", last_event_at: str | None = None) -> str:
+    """Nudge for a session that went idle while its run is still `running`: re-arm the goal, check the artifacts."""
+    since = f" since {last_event_at}" if last_event_at else ""
+    lines = [
+        f"/goal Complete the ai-scientist research campaign for run {spec.run_id}: the ai-scientist:research-loop skill must reach one of its "
+        "terminal outcomes with completion audit and handoff evidence.",
+        f"The dashboard flagged this session as stalled: the run's loop-state.json still has phase_status \"running\" and no orchestrator activity{since}.",
+        "Re-read loop-state.json and journal.jsonl and check the research-loop terminal conditions against the durable state, not your memory of the conversation. "
+        "If the goal is not met, continue the campaign from that state. If it is met, checkpoint the terminal outcome so the run is no longer active.",
+    ]
+    if note.strip():
+        lines += ["Note from the user:", note.strip()]
+    return "\n".join(lines)
+
+
 class LiveSession:
     def __init__(self, target_repo: Path, backend: SessionBackend, spec: LaunchSpec, record: dict[str, Any]):
         self.target_repo = target_repo
@@ -256,6 +271,7 @@ class LiveSession:
         self._started = threading.Event()
         self._done = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f"session-{spec.session_id}", daemon=True)
+        self.last_event_at: str | None = None
 
     # -- files
     @property
@@ -275,6 +291,7 @@ class LiveSession:
         event = {"ts": utc_now(), **row}
         with self._lock:
             append_jsonl(self.dir / "events.jsonl", event)
+            self.last_event_at = event["ts"]
         return event
 
     # -- lifecycle
@@ -351,7 +368,7 @@ class LiveSession:
     def alive(self) -> bool:
         return self._thread.is_alive() and self.record.get("status") in LIVE_STATUSES
 
-    def send(self, text: str) -> dict[str, Any]:
+    def send(self, text: str, origin: str = "dashboard") -> dict[str, Any]:
         text = (text or "").strip()
         if not text:
             raise SessionError("text is required")
@@ -362,7 +379,7 @@ class LiveSession:
             raise SessionError(f"session {self.spec.session_id} is not live", 409)
         # Mark the turn live before the message leaves, so a fast result cannot be overwritten by "running".
         self._update(status="running")
-        event = self.append_event({"type": "user", "origin": "dashboard", "text": text})
+        event = self.append_event({"type": "user", "origin": origin, "text": text})
         future = asyncio.run_coroutine_threadsafe(self._client.query(text), self._loop)
         try:
             future.result(SEND_TIMEOUT_SEC)
@@ -370,6 +387,12 @@ class LiveSession:
             self.append_event({"type": "dashboard", "subtype": "send-failed", "text": f"{exc.__class__.__name__}: {exc}"})
             raise SessionError(f"could not deliver message: {exc.__class__.__name__}: {exc}", 502) from exc
         return event
+
+    def resume(self, note: str = "") -> dict[str, Any]:
+        """Nudge an idle orchestrator back to work. The process is still alive; this is a message, not a relaunch."""
+        if len(note or "") > MAX_PROMPT_CHARS:
+            raise SessionError(f"note longer than {MAX_PROMPT_CHARS} characters")
+        return self.send(build_resume_prompt(self.spec, note or "", self.last_event_at), origin="resume")
 
     def interrupt(self) -> None:
         self._started.wait(SEND_TIMEOUT_SEC)
@@ -559,6 +582,9 @@ class SessionManager:
 
     def send(self, session_id: str, text: str) -> dict[str, Any]:
         return self._require(session_id).send(text)
+
+    def resume(self, session_id: str, note: str = "") -> dict[str, Any]:
+        return self._require(session_id).resume(note)
 
     def interrupt(self, session_id: str) -> dict[str, Any]:
         live = self._require(session_id)

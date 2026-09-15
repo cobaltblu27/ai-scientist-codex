@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { interruptSession, sendSessionMessage, stopSession, useSession } from "../lib/api";
-import { isSessionLive, type SessionEvent, type SessionRecord } from "../lib/types";
+import { interruptSession, resumeSession, sendSessionMessage, stopSession, useSession } from "../lib/api";
+import { isSessionLive, isSessionStalled, type SessionEvent, type SessionRecord } from "../lib/types";
 import { relTime } from "../lib/format";
 import { SessionBadge } from "./SessionBadge";
 import { UsageMeter } from "./UsageMeter";
@@ -8,22 +8,25 @@ import { UsageMeter } from "./UsageMeter";
 interface Props {
   /** run.session from the polled run detail; the console polls the session itself for events. */
   session: SessionRecord;
+  /** run.active: with an idle session this means the orchestrator stopped early, so Resume is offered. */
+  runActive: boolean | null;
 }
 
 const EXCERPT = 300;
 
 /** Rail card for a dashboard-owned Claude session: status, compose box, interrupt/stop, event tail. */
-export function SessionConsole({ session: fromRun }: Props) {
+export function SessionConsole({ session: fromRun, runActive }: Props) {
   const { data, error: pollError, refresh } = useSession(fromRun.id);
   const session = data ?? fromRun;
   const live = isSessionLive(session);
+  const stalled = isSessionStalled(session, runActive);
   const [text, setText] = useState("");
-  const [busy, setBusy] = useState<"send" | "interrupt" | "stop" | null>(null);
+  const [busy, setBusy] = useState<"send" | "resume" | "interrupt" | "stop" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [logOpen, setLogOpen] = useState(true);
 
-  const act = async (kind: "send" | "interrupt" | "stop", fn: () => Promise<unknown>, done: string) => {
+  const act = async (kind: "send" | "resume" | "interrupt" | "stop", fn: () => Promise<unknown>, done: string) => {
     if (busy) return;
     setBusy(kind);
     setError(null);
@@ -47,6 +50,12 @@ export function SessionConsole({ session: fromRun }: Props) {
       setText("");
     }, "sent to the session");
   };
+  // The textarea doubles as the optional note appended to the resume nudge.
+  const resume = () =>
+    void act("resume", async () => {
+      await resumeSession(session.id, text.trim());
+      setText("");
+    }, "resume nudge sent");
   const interrupt = () => void act("interrupt", () => interruptSession(session.id), "interrupt requested");
   const stop = () => {
     if (!window.confirm(`Stop session ${session.id}? The Claude process is terminated; the run's files stay.`)) return;
@@ -66,6 +75,11 @@ export function SessionConsole({ session: fromRun }: Props) {
       {session.error && <div className="msg-note orange">{session.error}</div>}
       {pollError && <div className="msg-note orange">{pollError}</div>}
       {!live && <div className="msg-note muted">not live; resume from a terminal with the copied id</div>}
+      {stalled && (
+        <div className="msg-note orange">
+          Idle while the run is still active: the orchestrator stopped early or is waiting for an answer. Resume re-arms the goal and asks it to re-check the artifacts.
+        </div>
+      )}
 
       <form
         className="console-form"
@@ -85,6 +99,11 @@ export function SessionConsole({ session: fromRun }: Props) {
           <button type="submit" className="pill ink" disabled={!live || busy !== null || text.trim().length === 0}>
             {busy === "send" ? "Sending…" : "Send"}
           </button>
+          {stalled && (
+            <button type="button" className="pill lime" disabled={busy !== null} onClick={resume} title="Send the resume nudge (the textarea text becomes a note)">
+              {busy === "resume" ? "Resuming…" : "▶ Resume"}
+            </button>
+          )}
           <button type="button" className="pill" disabled={!live || busy !== null} onClick={interrupt} title="Interrupt the current turn; the session stays open">
             {busy === "interrupt" ? "Interrupting…" : "Interrupt"}
           </button>

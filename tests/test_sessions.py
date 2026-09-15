@@ -16,7 +16,7 @@ import pytest
 
 from dashboard.scan import scan_overview, session_detail, find_session
 from dashboard.server import make_handler
-from dashboard.sessions import LIVE_STATUSES, LaunchSpec, SessionError, SessionManager, build_launch_prompt, session_dir
+from dashboard.sessions import LIVE_STATUSES, LaunchSpec, SessionError, SessionManager, build_launch_prompt, build_resume_prompt, session_dir
 from test_support import read_json, write_json
 
 CONTRACT = "cifar10-accuracy"
@@ -262,6 +262,18 @@ def test_send_mid_turn_interrupt_and_result(target: Path, backend: FakeBackend, 
     _wait(lambda: _record(target, sid)["num_turns"] == 5)  # turns accumulate over the session
     assert _record(target, sid)["status"] == "idle"
 
+    # Resume: a nudge into the still-alive process, re-arming /goal and pointing at the artifacts.
+    idle_at = _events(target, sid)[-1]["ts"]
+    event = manager.resume(sid, "N2 was still training")
+    assert event["type"] == "user" and event["origin"] == "resume"
+    assert event["text"] == build_resume_prompt(backend.specs[0], "N2 was still training", idle_at)
+    assert event["text"].startswith("/goal ") and "run-c" in event["text"] and f"since {idle_at}" in event["text"]
+    assert "loop-state.json" in event["text"] and event["text"].endswith("N2 was still training")
+    assert client.queries[-1] == event["text"]
+    assert _record(target, sid)["status"] == "running"
+    with pytest.raises(SessionError, match="longer than"):
+        manager.resume(sid, "x" * 20_001)
+
     manager.interrupt(sid)
     _wait(lambda: client.interrupts == 1)
     assert _events(target, sid)[-1] == {**_events(target, sid)[-1], "type": "dashboard", "subtype": "interrupt"}
@@ -277,6 +289,9 @@ def test_send_mid_turn_interrupt_and_result(target: Path, backend: FakeBackend, 
     assert not manager.get(sid)._thread.is_alive()
     with pytest.raises(SessionError) as err:
         manager.send(sid, "again")
+    assert err.value.status == 409
+    with pytest.raises(SessionError) as err:
+        manager.resume(sid)
     assert err.value.status == 409
     manager.stop(sid)  # idempotent
     manager.stop_all()
@@ -298,7 +313,7 @@ def test_backend_failure_marks_failed(target: Path) -> None:
 
 
 def test_unknown_session(manager: SessionManager) -> None:
-    for action in (lambda: manager.send("nope", "x"), lambda: manager.interrupt("nope"), lambda: manager.stop("nope")):
+    for action in (lambda: manager.send("nope", "x"), lambda: manager.resume("nope"), lambda: manager.interrupt("nope"), lambda: manager.stop("nope")):
         with pytest.raises(SessionError) as err:
             action()
         assert err.value.status == 404
@@ -428,6 +443,10 @@ def test_server_session_routes(server: str, target: Path, backend: FakeBackend) 
     status, overview = _get(f"{server}/api/overview")
     assert overview["sessions"][0]["id"] == sid and overview["ideas"][0]["run_id"] == IDEATION_RUN
 
+    status, event = _post(f"{server}/api/sessions/{sid}/resume", {"note": "keep going"})
+    assert status == 202 and event["origin"] == "resume" and event["text"].endswith("keep going")
+    _wait(lambda: backend.clients[0].queries[-1] == event["text"])
+
     status, rec = _post(f"{server}/api/sessions/{sid}/interrupt", {})
     assert status == 200 and rec["id"] == sid
     _wait(lambda: backend.clients[0].interrupts == 1)
@@ -436,6 +455,8 @@ def test_server_session_routes(server: str, target: Path, backend: FakeBackend) 
     assert status == 200 and rec["status"] == "stopped"
     status, err = _post(f"{server}/api/sessions/{sid}/messages", {"text": "again"})
     assert status == 409
+    assert _post(f"{server}/api/sessions/{sid}/resume", {})[0] == 409
+    assert _post(f"{server}/api/sessions/nope/resume", {})[0] == 404
 
     assert _post(f"{server}/api/sessions/nope/messages", {"text": "x"})[0] == 404
     assert _post(f"{server}/api/sessions/nope/stop", {})[0] == 404

@@ -98,6 +98,7 @@ def make_handler(target_repo: Path, dist_dir: Path, manager: SessionManager | No
                     return self._json(HTTPStatus.CREATED, record)
             # POST /api/sessions                      {contract_id, idea_ids, prompt, run_id?}
             # POST /api/sessions/<id>/messages        {text}
+            # POST /api/sessions/<id>/resume          {note?}   nudge an idle orchestrator
             # POST /api/sessions/<id>/interrupt | stop
             if route == "/api/sessions" or route.startswith("/api/sessions/"):
                 parts = [unquote(p) for p in route[len("/api/sessions"):].strip("/").split("/") if p]
@@ -116,6 +117,8 @@ def make_handler(target_repo: Path, dist_dir: Path, manager: SessionManager | No
                         return self._json(HTTPStatus.CREATED, record)
                     if len(parts) == 2 and parts[1] == "messages":
                         return self._json(HTTPStatus.ACCEPTED, manager.send(parts[0], str(body.get("text") or "")))
+                    if len(parts) == 2 and parts[1] == "resume":
+                        return self._json(HTTPStatus.ACCEPTED, manager.resume(parts[0], str(body.get("note") or "")))
                     if len(parts) == 2 and parts[1] == "interrupt":
                         return self._json(HTTPStatus.OK, manager.interrupt(parts[0]))
                     if len(parts) == 2 and parts[1] == "stop":

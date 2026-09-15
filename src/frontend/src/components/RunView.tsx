@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { RunDetail, SteerMessage } from "../lib/types";
+import { isSessionStalled, type RunDetail, type SteerMessage } from "../lib/types";
 import { relTime, tone } from "../lib/format";
 import { Stat } from "./Home";
 import { NodeGraph } from "./NodeGraph";
@@ -24,7 +24,12 @@ export function RunView({ run }: { run: RunDetail }) {
             {run.active === false && run.phase_status && <> · finished</>}
             {run.updated_at && <> · updated {relTime(run.updated_at)}</>}
           </div>
-          {run.session && <SessionBadge session={run.session} />}
+          {run.session && (
+            <div className="head-session">
+              <SessionBadge session={run.session} />
+              {isSessionStalled(run.session, run.active) && <span className="pill tiny orange">stalled</span>}
+            </div>
+          )}
         </div>
         <div className="head-stats">
           {ideation ? <Stat label="Ideas" value={run.idea_count ?? "—"} /> : <Stat label="Nodes" value={run.node_count} />}
@@ -36,6 +41,12 @@ export function RunView({ run }: { run: RunDetail }) {
       {run.pending && (
         <div className="card banner lime">
           Starting: the session is bootstrapping this run. Nodes and reports appear once the orchestrator writes <code>loop-state.json</code>.
+        </div>
+      )}
+      {isSessionStalled(run.session, run.active) && (
+        <div className="card banner orange">
+          Stalled: the run is still <code>{run.phase_status}</code> but its session went idle {relTime(run.session!.updated_at)}. Use <b>Resume</b> in the session card to
+          nudge the orchestrator, or answer its question there.
         </div>
       )}
       {run.blocked_reason && <div className="card banner orange">Blocked: {run.blocked_reason}</div>}
@@ -104,7 +115,7 @@ function ResearchBody({ run, live, onOpen }: { run: RunDetail; live: number; onO
       </section>
 
       <aside className="rail">
-        {run.session && <SessionConsole session={run.session} />}
+        {run.session && <SessionConsole session={run.session} runActive={run.active} />}
         <div className="card rail-card lime">
           <div className="tile-kicker">Next action</div>
           <div className="rail-big">{run.next_action ?? "—"}</div>
@@ -171,7 +182,7 @@ function IdeationBody({ run }: { run: RunDetail }) {
         <ReportPane runId={run.run_id} reports={run.reports} />
       </section>
       <aside className="rail">
-        {run.session && <SessionConsole session={run.session} />}
+        {run.session && <SessionConsole session={run.session} runActive={run.active} />}
         <div className="card rail-card">
           <div className="tile-kicker">run.md</div>
           {run.run_md ? <Markdown source={run.run_md} /> : <div className="muted">missing</div>}

@@ -52,6 +52,11 @@ export function sendSessionMessage(id: string, text: string): Promise<SessionEve
   return postJson<SessionEvent>(`${sessionUrl(id)}/messages`, { text });
 }
 
+/** Nudge an idle orchestrator: re-arms /goal and asks it to re-check the artifacts. 202 -> the recorded user event. */
+export function resumeSession(id: string, note = ""): Promise<SessionEvent> {
+  return postJson<SessionEvent>(`${sessionUrl(id)}/resume`, note ? { note } : {});
+}
+
 export function interruptSession(id: string): Promise<SessionRecord> {
   return postJson<SessionRecord>(`${sessionUrl(id)}/interrupt`, {});
 }

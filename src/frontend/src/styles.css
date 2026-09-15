@@ -415,3 +415,6 @@ textarea:focus { outline: 2px solid var(--lime); outline-offset: 1px; }
 .console-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; }
 .console-text { white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
 .orange { color: var(--orange); }
+
+/* session header: badge plus stalled pill */
+.head-session { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
