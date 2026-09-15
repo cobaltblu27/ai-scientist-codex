@@ -28,6 +28,7 @@ Conventions:
 ├── contracts/<contract-id>/
 │   └── research-contract.json            standalone frozen contract
 ├── evaluators/                           user-supplied evaluator scripts (free)
+├── sessions/<session-id>/                dashboard-launched Claude sessions, section 3.12
 └── runs/<run-id>/                        one directory per run
 ```
 
@@ -36,6 +37,7 @@ Conventions:
 | `active-run.json` | `research-loop-bootstrap`, `ideation`, research completion | cli, dash |
 | `contracts/<id>/research-contract.json` | `create-contract` | dash |
 | `evaluators/` | user | none |
+| `sessions/<id>/` | dashboard | dash |
 
 `<run-id>` and `<contract-id>` are single path segments, never `.` or `..`.
 
@@ -391,6 +393,52 @@ Human steering messages. One file per message, created by the dashboard or `ai-s
 
 Every `add` and `update` appends a journal record with `event_type: message`, the target `node_id`, and `details.message_id` / `details.status`. Work items and branch nodes created for a message carry `message_id` (conventional).
 
+### 3.12 `sessions/<session-id>/`
+
+A Claude Code session launched from the dashboard's Start-research modal and owned by the dashboard server process (`src/dashboard/sessions.py`). Written only by the dashboard; skills and the CLI never touch it. It lives outside `runs/` because bootstrap refuses to start when the run directory already exists, and the session is created before the run.
+
+```text
+sessions/<session-id>/
+├── session.json                          record below
+├── events.jsonl                          one line per session event, free
+└── ideas.json                            the selected ideas, section 3.6 shape
+```
+
+```json
+{
+  "id": "ses-20260915T101502Z-a3f9",
+  "backend": "claude",
+  "status": "running",
+  "created_at": "2026-09-15T10:15:02Z",
+  "updated_at": "2026-09-15T10:15:40Z",
+  "run_id": "20260915-1015-research-cifar10-accuracy",
+  "contract_path": ".ai-scientist/contracts/cifar10-accuracy/research-contract.json",
+  "idea_batch": ".ai-scientist/sessions/ses-20260915T101502Z-a3f9/ideas.json",
+  "prompt": "use the conda env `ml`",
+  "cwd": "/abs/target/repo",
+  "owner_pid": 41234,
+  "claude_session_id": "5b2c6d1e-…",
+  "num_turns": 0,
+  "total_cost_usd": null,
+  "error": null
+}
+```
+
+| Field | Notes |
+|---|---|
+| `id` * | equals the directory name |
+| `backend` * | `claude`; `codex` reserved |
+| `status` * | `starting` → `running` (a turn is in flight) ↔ `idle` (the last turn returned a result); terminal `stopped`, `failed`, `detached` (the owning dashboard process is gone) |
+| `created_at` *, `updated_at` * | |
+| `run_id` | chosen by the launcher and handed to the orchestrator in the prompt; links the session to `runs/<run-id>` once bootstrap creates it |
+| `contract_path`, `idea_batch` | repo-relative, the same form `config.md` uses |
+| `prompt` | the user's extra instructions, at most 20 000 characters |
+| `cwd`, `owner_pid` | the target repository and the dashboard process holding the subprocess |
+| `claude_session_id` | the Claude Code session id; `claude --resume <id>` attaches once the session is stopped |
+| `num_turns`, `total_cost_usd`, `error` | from the latest result message or failure |
+
+`ideas.json` keeps the 3.6 shape with `idea_file` / `pilot_report` rewritten to `.ai-scientist/runs/<ideation-run>/...` so a research run can name it as its `idea_batch`; entries also carry `source_run_id`. `events.jsonl` rows are `{"ts", "type", "subtype"?, "text"?, "tool"?, "origin"?}` with `type` one of `system`, `assistant`, `user`, `result`, `dashboard`; `init` system rows and `result` rows also carry `session_id`, results carry `num_turns`, `total_cost_usd`, `is_error`. Long text is clipped; readers skip malformed lines.
+
 ---
 
 ## 4. What the dashboard reads
@@ -401,6 +449,7 @@ Every `add` and `update` appends a journal record with `event_type: message`, th
 | run detail | above plus `journal.jsonl`, `selection.json`, `baseline/baseline.json`, `links`, `*.md` under run root and `logs/` | node ledger with depth from `parent_node_id`, work grouped by `node`, raw `resources`, `resource_queue`, `open_questions`, report list, journal tail |
 | node detail | ledger entry, `work` entries whose `node` matches, journal records whose `node_id` matches, report files named by `result_ref`, `message-box/*.json` for the node | node fields, ordered history, report contents, messages |
 | message box | `POST /api/runs/<run-id>/messages` writes through `core.message_box.add`; run and node views list `message-box/*.json` | pending counts, message rows |
+| sessions | `sessions/*/session.json`, tail of `events.jsonl`; `runs/*/ideas.json` of ideation runs for the Start-research modal | session status, `run_id` link on run tiles and headers, `claude_session_id`, event tail, idea catalog |
 
 The scanner never reads `nodes/<node-id>/workspace/`. Liveness is `status not in {completed, cancelled, failed, abandoned, accepted, rejected}`.
 

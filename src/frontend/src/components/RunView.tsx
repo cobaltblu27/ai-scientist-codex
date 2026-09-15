@@ -6,6 +6,8 @@ import { NodeGraph } from "./NodeGraph";
 import { NodeModal } from "./NodeModal";
 import { ReportPane } from "./ReportPane";
 import { Markdown } from "./Markdown";
+import { SessionBadge } from "./SessionBadge";
+import { SessionConsole } from "./SessionConsole";
 
 export function RunView({ run }: { run: RunDetail }) {
   const [openNode, setOpenNode] = useState<string | null>(null);
@@ -22,6 +24,7 @@ export function RunView({ run }: { run: RunDetail }) {
             {run.active === false && run.phase_status && <> · finished</>}
             {run.updated_at && <> · updated {relTime(run.updated_at)}</>}
           </div>
+          {run.session && <SessionBadge session={run.session} />}
         </div>
         <div className="head-stats">
           {ideation ? <Stat label="Ideas" value={run.idea_count ?? "—"} /> : <Stat label="Nodes" value={run.node_count} />}
@@ -96,6 +99,7 @@ function ResearchBody({ run, live, onOpen }: { run: RunDetail; live: number; onO
       </section>
 
       <aside className="rail">
+        {run.session && <SessionConsole session={run.session} />}
         <div className="card rail-card lime">
           <div className="tile-kicker">Next action</div>
           <div className="rail-big">{run.next_action ?? "—"}</div>
@@ -162,6 +166,7 @@ function IdeationBody({ run }: { run: RunDetail }) {
         <ReportPane runId={run.run_id} reports={run.reports} />
       </section>
       <aside className="rail">
+        {run.session && <SessionConsole session={run.session} />}
         <div className="card rail-card">
           <div className="tile-kicker">run.md</div>
           {run.run_md ? <Markdown source={run.run_md} /> : <div className="muted">missing</div>}

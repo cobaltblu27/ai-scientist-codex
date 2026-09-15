@@ -27,7 +27,48 @@ export interface RunSummary {
   /** message-box/*.json records with status pending. */
   pending_messages: number;
   mtime: number | null;
+  /** sessions/<id>/session.json bound to this run, or null when none is. */
+  session: SessionRecord | null;
 }
+
+/** One sessions/<id>/session.json record: a Claude Code session owned by the dashboard server. */
+export interface SessionRecord {
+  id: string;
+  backend: "claude" | string;
+  /** starting | running | idle are live; stopped | failed | detached are final. */
+  status: "starting" | "running" | "idle" | "stopped" | "failed" | "detached" | string;
+  created_at: string;
+  updated_at: string;
+  run_id: string | null;
+  contract_path: string | null;
+  idea_batch: string | null;
+  prompt: string | null;
+  cwd: string | null;
+  owner_pid: number | null;
+  claude_session_id: string | null;
+  num_turns: number | null;
+  total_cost_usd: number | null;
+  error: string | null;
+}
+
+/** One line of sessions/<id>/events.jsonl. */
+export interface SessionEvent {
+  ts: string;
+  type: "system" | "assistant" | "user" | "result" | "stderr" | "dashboard" | string;
+  subtype?: string | null;
+  text?: string | null;
+  tool?: string | null;
+  /** For user events: who sent it (dashboard, launcher, ...). */
+  origin?: string | null;
+}
+
+export interface SessionDetail extends SessionRecord {
+  /** Oldest to newest, last 200. */
+  events: SessionEvent[];
+}
+
+export const LIVE_SESSION = new Set(["starting", "running", "idle"]);
+export const isSessionLive = (s: SessionRecord | null | undefined): boolean => !!s && LIVE_SESSION.has(s.status);
 
 /** One message-box/<id>.json record (docs/SCHEMA.md 3.11). */
 export interface SteerMessage {
@@ -169,6 +210,13 @@ export interface ContractSummary {
   valid: boolean;
 }
 
+/** Ideas of one ideation run, as offered to the Start-research modal. */
+export interface IdeasCatalogEntry {
+  run_id: string;
+  goal: string | null;
+  ideas: { id: string; title: string | null; idea_file: string | null; pilot_report: string | null }[];
+}
+
 export interface Overview {
   target_repo: string;
   ai_root: string;
@@ -176,4 +224,8 @@ export interface Overview {
   active_run: { run_id: string; phase?: string; status?: string } | null;
   runs: RunSummary[];
   contracts: ContractSummary[];
+  /** Every ideation run that has an ideas.json, for launching research. */
+  ideas: IdeasCatalogEntry[];
+  /** Newest first. */
+  sessions: SessionRecord[];
 }

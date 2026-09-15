@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Home } from "./components/Home";
 import { RunView } from "./components/RunView";
+import { StartResearchModal } from "./components/StartResearchModal";
 import { useOverview, useRun } from "./lib/api";
 
 function runFromHash(): string | null {
@@ -12,6 +13,8 @@ function runFromHash(): string | null {
 export default function App() {
   const [selected, setSelected] = useState<string | null>(runFromHash);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const closeStart = useCallback(() => setStarting(false), []);
   const overview = useOverview();
   const run = useRun(selected);
 
@@ -41,6 +44,9 @@ export default function App() {
                 live: {overview.data.active_run.run_id}
               </span>
             )}
+            <button className="pill start-btn" onClick={() => setStarting(true)} disabled={!overview.data} title="Launch a research loop in a dashboard-owned Claude session">
+              ▶ Start research
+            </button>
             <button className="icon-btn" onClick={() => { overview.refresh(); run.refresh(); }} title="Refresh">↻</button>
           </div>
         </div>
@@ -48,11 +54,21 @@ export default function App() {
         {selected ? (
           run.data ? <RunView run={run.data} /> : !error && <div className="card empty">Loading {selected}…</div>
         ) : overview.data ? (
-          <Home overview={overview.data} onSelect={select} />
+          <Home overview={overview.data} onSelect={select} onStart={() => setStarting(true)} />
         ) : (
           !error && <div className="card empty">Scanning…</div>
         )}
       </main>
+      {starting && overview.data && (
+        <StartResearchModal
+          overview={overview.data}
+          onClose={closeStart}
+          onLaunched={(runId) => {
+            overview.refresh();
+            if (runId) setSelected(runId);
+          }}
+        />
+      )}
     </div>
   );
 }

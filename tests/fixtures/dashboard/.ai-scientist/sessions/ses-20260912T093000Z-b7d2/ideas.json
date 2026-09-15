@@ -1,0 +1,26 @@
+{
+  "session_id": "ses-20260912T093000Z-b7d2",
+  "ideas": [
+    {
+      "id": "mixup-cutout-schedule",
+      "title": "Mixup and cutout on a cosine schedule",
+      "idea_file": ".ai-scientist/runs/20260910-ideation-cifar10/ideas/mixup-cutout-schedule.md",
+      "pilot_report": ".ai-scientist/runs/20260910-ideation-cifar10/logs/pilots/mixup-cutout-schedule/report.md",
+      "source_run_id": "20260910-ideation-cifar10"
+    },
+    {
+      "id": "snapshot-ensemble",
+      "title": "Snapshot ensemble of three checkpoints",
+      "idea_file": ".ai-scientist/runs/20260910-ideation-cifar10/ideas/snapshot-ensemble.md",
+      "pilot_report": ".ai-scientist/runs/20260910-ideation-cifar10/logs/pilots/snapshot-ensemble/report.md",
+      "source_run_id": "20260910-ideation-cifar10"
+    },
+    {
+      "id": "stochastic-depth-members",
+      "title": "Stochastic depth for ensemble members",
+      "idea_file": ".ai-scientist/runs/20260910-ideation-cifar10/ideas/stochastic-depth-members.md",
+      "pilot_report": ".ai-scientist/runs/20260910-ideation-cifar10/logs/pilots/stochastic-depth-members/report.md",
+      "source_run_id": "20260910-ideation-cifar10"
+    }
+  ]
+}

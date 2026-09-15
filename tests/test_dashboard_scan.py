@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from dashboard.scan import find_run, find_run_file, node_detail, run_detail, run_summary, scan_overview
+from dashboard.scan import find_run, find_run_file, find_session, node_detail, run_detail, run_summary, scan_overview, session_detail
 from dashboard.server import make_handler
 from test_support import REPO_ROOT
 
@@ -60,6 +60,26 @@ def test_overview_lists_every_run_in_order(target: Path) -> None:
     assert contracts["cifar10-accuracy"]["valid"] is True
     assert contracts["cifar10-accuracy"]["goal"].startswith("Beat the ResNet-18")
     assert contracts["broken-draft"] == {"contract_id": "broken-draft", "goal": None, "valid": False}
+
+
+def test_overview_sessions_and_ideas(target: Path) -> None:
+    overview = scan_overview(target)
+    assert [s["id"] for s in overview["sessions"]] == [fx.SESSION_ID]
+    session = overview["sessions"][0]
+    assert session["status"] == "detached" and session["run_id"] == fx.RESEARCH_RUN and session["claude_session_id"] == fx.SESSION_CLAUDE_ID
+    runs = {r["run_id"]: r for r in overview["runs"]}
+    assert runs[fx.RESEARCH_RUN]["session"]["id"] == fx.SESSION_ID
+    assert runs[fx.SUCCESS_RUN]["session"] is None and runs[fx.IDEATION_RUN]["session"] is None
+    assert overview["ideas"] == [
+        {
+            "run_id": fx.IDEATION_RUN,
+            "goal": "Beat the ResNet-18 baseline on CIFAR-10 test accuracy",
+            "ideas": [{"id": i, "title": t, "idea_file": f"ideas/{i}.md", "pilot_report": f"logs/pilots/{i}/report.md"} for i, t in fx.IDEAS],
+        }
+    ]
+    detail = session_detail(find_session(target, fx.SESSION_ID))
+    assert detail["event_count"] == 6 and [e["type"] for e in detail["events"]][:2] == ["user", "system"]
+    assert run_detail(find_run(target, fx.RESEARCH_RUN))["session"]["id"] == fx.SESSION_ID
 
 
 def test_overview_research_summary_fields(target: Path) -> None:
@@ -393,8 +413,10 @@ def test_server_routes(server: str) -> None:
     assert json.load(urlopen(f"{server}/api/runs/{fx.RESEARCH_RUN}"))["node_count"] == 5
     node = json.load(urlopen(f"{server}/api/runs/{fx.RESEARCH_RUN}/nodes/N2"))
     assert node["node_id"] == "N2" and len(node["reports"]) == 2
-    for bad in (f"/api/runs/{fx.RESEARCH_RUN}/nodes/nope", f"/api/runs/{fx.RESEARCH_RUN}/other/N2", "/api/runs/nope", "/api/nope"):
+    for bad in (f"/api/runs/{fx.RESEARCH_RUN}/nodes/nope", f"/api/runs/{fx.RESEARCH_RUN}/other/N2", "/api/runs/nope", "/api/nope", "/api/sessions/nope"):
         assert _status(f"{server}{bad}") == 404, bad
+    assert [s["id"] for s in json.load(urlopen(f"{server}/api/sessions"))] == [fx.SESSION_ID]
+    assert json.load(urlopen(f"{server}/api/sessions/{fx.SESSION_ID}"))["event_count"] == 6
     assert _status(f"{server}/") == 503  # frontend not built
 
 

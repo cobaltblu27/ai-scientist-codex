@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { NodeDetail, Overview, RunDetail, SteerMessage } from "./types";
+import type { NodeDetail, Overview, RunDetail, SessionDetail, SessionEvent, SessionRecord, SteerMessage } from "./types";
 
 async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -28,6 +28,36 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
 /** Queue a human steering message for a node; the orchestrator picks it up at its next sweep. */
 export function sendMessage(runId: string, body: { node_id: string; kind: SteerMessage["kind"]; prompt: string }): Promise<SteerMessage> {
   return postJson<SteerMessage>(`/api/runs/${encodeURIComponent(runId)}/messages`, body);
+}
+
+/* ---- dashboard-owned Claude sessions ---- */
+
+export interface LaunchBody {
+  contract_id: string;
+  idea_ids: string[];
+  prompt: string;
+  /** Omitted when the user left the run id blank; the server then picks one. */
+  run_id?: string;
+}
+
+/** Start a research campaign in a server-owned Claude session. 201 -> the new record. */
+export function launchSession(body: LaunchBody): Promise<SessionRecord> {
+  return postJson<SessionRecord>("/api/sessions", body);
+}
+
+const sessionUrl = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
+
+/** Push a follow-up message straight into the running session. 202 -> the recorded user event. */
+export function sendSessionMessage(id: string, text: string): Promise<SessionEvent> {
+  return postJson<SessionEvent>(`${sessionUrl(id)}/messages`, { text });
+}
+
+export function interruptSession(id: string): Promise<SessionRecord> {
+  return postJson<SessionRecord>(`${sessionUrl(id)}/interrupt`, {});
+}
+
+export function stopSession(id: string): Promise<SessionRecord> {
+  return postJson<SessionRecord>(`${sessionUrl(id)}/stop`, {});
 }
 
 /** Poll a JSON endpoint. Returns latest data, error and a manual refresh. */
@@ -66,6 +96,8 @@ export const useOverview = () => usePolled<Overview>("/api/overview");
 export const useRun = (runId: string | null) => usePolled<RunDetail>(runId ? `/api/runs/${encodeURIComponent(runId)}` : null);
 export const useNode = (runId: string | null, nodeId: string | null) =>
   usePolled<NodeDetail>(runId && nodeId ? `/api/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}` : null);
+
+export const useSession = (id: string | null) => usePolled<SessionDetail>(id ? sessionUrl(id) : null);
 
 /** Fetch a text file from inside a run via /api/runs/<id>/files/<path>. */
 export function useRunFile(runId: string | null, path: string | null) {

@@ -12,13 +12,16 @@ from urllib.parse import unquote, urlparse
 
 from core.message_box import MessageBoxError, add as add_message
 from core.plugin import plugin_root
-from dashboard.scan import find_run, find_run_file, node_detail, run_detail, scan_overview
+from dashboard.scan import find_run, find_run_file, find_session, node_detail, run_detail, scan_overview, session_detail
+from dashboard.sessions import SessionError, SessionManager
 
 DIST_DIR = plugin_root() / "src" / "frontend" / "dist"
 MAX_POST_BYTES = 64 * 1024
 
 
-def make_handler(target_repo: Path, dist_dir: Path):
+def make_handler(target_repo: Path, dist_dir: Path, manager: SessionManager | None = None):
+    manager = manager or SessionManager(target_repo)
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):  # quiet
             pass
@@ -93,11 +96,47 @@ def make_handler(target_repo: Path, dist_dir: Path):
                     except MessageBoxError as exc:
                         return self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return self._json(HTTPStatus.CREATED, record)
+            # POST /api/sessions                      {contract_id, idea_ids, prompt, run_id?}
+            # POST /api/sessions/<id>/messages        {text}
+            # POST /api/sessions/<id>/interrupt | stop
+            if route == "/api/sessions" or route.startswith("/api/sessions/"):
+                parts = [unquote(p) for p in route[len("/api/sessions"):].strip("/").split("/") if p]
+                body, failure = self._read_json_body()
+                if failure is not None:
+                    return self._json(failure[0], {"error": failure[1]})
+                try:
+                    if not parts:
+                        ideas = body.get("idea_ids")
+                        record = manager.launch(
+                            str(body.get("contract_id") or ""),
+                            ideas if isinstance(ideas, list) else [],
+                            str(body.get("prompt") or ""),
+                            str(body.get("run_id") or "") or None,
+                        )
+                        return self._json(HTTPStatus.CREATED, record)
+                    if len(parts) == 2 and parts[1] == "messages":
+                        return self._json(HTTPStatus.ACCEPTED, manager.send(parts[0], str(body.get("text") or "")))
+                    if len(parts) == 2 and parts[1] == "interrupt":
+                        return self._json(HTTPStatus.OK, manager.interrupt(parts[0]))
+                    if len(parts) == 2 and parts[1] == "stop":
+                        return self._json(HTTPStatus.OK, manager.stop(parts[0]))
+                except SessionError as exc:
+                    return self._json(HTTPStatus(exc.status), {"error": str(exc)})
             return self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
 
         def _route(self, route: str) -> None:
             if route == "/api/overview":
                 return self._json(HTTPStatus.OK, scan_overview(target_repo))
+            if route == "/api/sessions":
+                return self._json(HTTPStatus.OK, manager.records())
+            if route.startswith("/api/sessions/"):
+                # /api/sessions/<session-id>  (record plus the events tail)
+                session_id = unquote(route[len("/api/sessions/"):].strip("/"))
+                session = find_session(target_repo, session_id)
+                detail = session_detail(session) if session else None
+                if detail is None:
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": f"unknown session: {session_id}"})
+                return self._json(HTTPStatus.OK, detail)
             if route.startswith("/api/runs/"):
                 # /api/runs/<run-id>
                 # /api/runs/<run-id>/nodes/<node-id>
@@ -140,7 +179,8 @@ def make_handler(target_repo: Path, dist_dir: Path):
 
 
 def serve(target_repo: Path, host: str = "127.0.0.1", port: int = 8765, *, open_browser: bool = False, dist_dir: Path | None = None) -> None:
-    server = ThreadingHTTPServer((host, port), make_handler(target_repo, dist_dir or DIST_DIR))
+    manager = SessionManager(target_repo)
+    server = ThreadingHTTPServer((host, port), make_handler(target_repo, dist_dir or DIST_DIR, manager))
     url = f"http://{host}:{server.server_port}/"
     print(f"ai-scientist dashboard: {url}  (watching {target_repo}/.ai-scientist)", flush=True)
     if open_browser:
@@ -150,4 +190,5 @@ def serve(target_repo: Path, host: str = "127.0.0.1", port: int = 8765, *, open_
     except KeyboardInterrupt:
         pass
     finally:
+        manager.stop_all()
         server.server_close()

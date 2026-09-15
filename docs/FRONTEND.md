@@ -12,6 +12,18 @@ React, TypeScript and Vite. Built artifact is served by the Python CLI.
   - `components/NodeModal.tsx` — status, result metric, assignment / evidence / next action, work items, leftover ledger keys, report tabs (Markdown via `marked`), and the per-node history built from journal events, `state.work` items and report files.
   - `components/MessageBox.tsx` — the human steering form inside the node modal: pick `revision` or `branch`, write a prompt, and `POST` it; below it the node's `message-box/*.json` records with status, kind, work id and result node. The run rail shows the run-wide queue and every run tile carries a pending count.
   - `components/ReportPane.tsx` — run-level Markdown reports, opened on demand through the files route. Ideation runs show `ideas.json` and `run.md` instead of the node tree.
+  - `components/StartResearchModal.tsx` — the **Start research** button (topbar and the empty Home state). Pick one contract from `contracts/`, tick ideas from any ideation run's `ideas.json`, add free-text instructions, optionally edit the run id, then **Launch**. `POST /api/sessions` answers with the session record and the view jumps to the run.
+  - `components/SessionBadge.tsx` / `components/SessionConsole.tsx` — the Claude session id with a copy button (tooltip `claude --resume <id>`), and the rail card on a run with a session: status, turns, cost, a compose box that sends straight into the session, Interrupt and Stop, and the event tail. Home lists every session.
+
+## Dashboard-launched sessions
+`src/dashboard/sessions.py` owns Claude Code sessions started from the modal. Launch writes `sessions/<session-id>/{session.json, ideas.json}` (SCHEMA 3.12), builds a prompt that names the run id, the contract, the idea batch and the user's instructions, and starts a daemon thread running `ClaudeSDKClient` from `claude-agent-sdk` with `cwd` = target repo, this checkout as `--plugin-dir`, and `permission_mode=bypassPermissions`. Every SDK message becomes a row in `events.jsonl`; `init` and `result` messages update the record. Messages from the console go to `client.query()` immediately (the CLI queues mid-turn input), Interrupt calls `client.interrupt()`, Stop cancels the session task, which ends the subprocess.
+
+Things to know:
+- The session runs unattended with permissions bypassed inside the target repo. Stop kills the orchestrator process, not experiment jobs it started through resource leases or Slurm.
+- The dashboard process is the owner. If it dies, `reconcile()` at the next start marks its live records `detached`; the `claude` subprocess may still be running.
+- `claude --resume <claude_session_id>` is the way to take over from a terminal after Stop or on a detached record. Resuming while the dashboard still drives the session opens a second driver on the same transcript.
+- Requires `uv sync --extra dashboard` (installs `claude-agent-sdk`) and a `claude` binary on `PATH`; without the SDK the launch route answers 503 with that hint.
+- TODO(codex): a `CodexBackend` behind the same `SessionBackend` protocol; only the Claude backend exists.
 
 ## Artifacts the dashboard reads
 Everything is agent-written; the dashboard only reads. Shapes and required keys are defined in [`SCHEMA.md`](SCHEMA.md), section 4 lists what each view uses. Summary:
@@ -22,16 +34,22 @@ Everything is agent-written; the dashboard only reads. Shapes and required keys 
 | run | above plus `journal.jsonl`, `selection.json`, `baseline/baseline.json`, `links`, every `*.md` under the run root and `logs/` | node ledger (`state.nodes`) with depth from `parent_node_id`, work grouped by `node`, raw `resources` / `resource_queue` / `open_questions`, report list, journal tail |
 | node | ledger entry, `state.work` entries whose `node` matches, journal records whose `node_id` matches, files named by `result_ref`, `message-box/*.json` for the node | status, assignment, evidence summary, metrics, work list, history, report contents, messages |
 | message box | `POST /api/runs/<run-id>/messages` writes one `message-box/<id>.json` through `core.message_box.add`; run and node views list `message-box/*.json` | pending counts on tiles, nodes and the run header, message rows |
+| sessions | `sessions/*/session.json` + `events.jsonl`; ideation `ideas.json` files for the modal | session badge on tiles and run headers, console, Start-research choices |
 
 Liveness: a node or work item is live when its `status` is not one of `completed cancelled failed abandoned accepted rejected`. The graph animates a few conventional live words (`planned`, `queued`, `implementing`, `revising`, `blocked`, `candidate`) and treats any other live word as "experimenting". An edge is live when anything in the child's subtree is live.
 
-API: `/api/overview`, `/api/runs/<run-id>`, `/api/runs/<run-id>/nodes/<node-id>`, `/api/runs/<run-id>/files/<run-relative-path>` (text files only, path-checked to stay inside the run), `POST /api/runs/<run-id>/messages` with `{node_id, kind, prompt}` (201 with the message record; 400 on validation failure, 404 unknown run, 413 oversized). The dashboard never edits a message after creating it; status moves through `ai-scientist message-box update`.
+API: `/api/overview` (adds `ideas` and `sessions`; each run carries `session`), `/api/runs/<run-id>`, `/api/runs/<run-id>/nodes/<node-id>`, `/api/runs/<run-id>/files/<run-relative-path>` (text files only, path-checked to stay inside the run), `POST /api/runs/<run-id>/messages` with `{node_id, kind, prompt}` (201 with the message record; 400 on validation failure, 404 unknown run, 413 oversized). The dashboard never edits a message after creating it; status moves through `ai-scientist message-box update`.
+
+Sessions: `GET /api/sessions` (records, newest first), `GET /api/sessions/<id>` (record plus the last 200 events), `POST /api/sessions` with `{contract_id, idea_ids, prompt, run_id?}` (201 record; 400 bad input, 409 run id taken or already has a live session, 503 SDK missing), `POST /api/sessions/<id>/messages` with `{text}` (202 with the event row; 409 when the session is not live or not owned by this process), `POST /api/sessions/<id>/interrupt` and `.../stop` (200 record).
 - `references/ui-reference.jpg` — visual reference for the design language (cream ground, ink sidebar, lime / pink / orange accents, rounded tiles).
 
 ## Commands
 ```sh
 # build once (required before `ai-scientist dashboard` can serve the UI)
 cd src/frontend && npm install && npm run build
+
+# optional: let the dashboard launch Claude sessions (Start research)
+uv sync --extra dashboard
 
 # serve a target repo's artifacts
 ai-scientist --target-repo <repo> dashboard [--host 127.0.0.1] [--port 8765] [--open]
@@ -44,10 +62,12 @@ cd src/frontend && npm run dev                # terminal 2
 ## Plans
 - Node detail view (trials, critic reviews, metrics history).
 - Human-in-the-loop actions (approve / reject / annotate) wired to CLI commands.
+- Resume a `detached` or `stopped` session from the dashboard (`ClaudeAgentOptions.resume`).
+- Codex backend for dashboard-launched sessions.
 - Live updates via file watching instead of polling.
 
 ## Dummy data
-`tests/fixtures/dashboard/.ai-scientist` is generated from `make_fixture.py` following `SCHEMA.md`: a research run mid-loop with branches, one `success` with `selection.json`, one `exhausted`, one `blocked`, one ideation run, one broken `loop-state.json`, and contracts including a malformed one. Timestamps are pinned so the tree is deterministic.
+`tests/fixtures/dashboard/.ai-scientist` is generated from `make_fixture.py` following `SCHEMA.md`: a research run mid-loop with branches, one `success` with `selection.json`, one `exhausted`, one `blocked`, one ideation run, one broken `loop-state.json`, contracts including a malformed one, and one `detached` dashboard session bound to the research run. Timestamps are pinned so the tree is deterministic.
 ```sh
 python3 tests/fixtures/dashboard/make_fixture.py
 ai-scientist --target-repo tests/fixtures/dashboard dashboard --open

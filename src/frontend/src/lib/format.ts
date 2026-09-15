@@ -52,6 +52,8 @@ export function tone(status: string | null | undefined): "lime" | "pink" | "oran
     case "planned":
     case "queued":
     case "pending":
+    case "starting":
+    case "idle":
       return "pink";
     case "blocked":
     case "exhausted":
@@ -61,6 +63,7 @@ export function tone(status: string | null | undefined): "lime" | "pink" | "oran
     case "abandoned":
     case "revising":
     case "repairing":
+    case "detached":
       return "orange";
     default:
       return "neutral";

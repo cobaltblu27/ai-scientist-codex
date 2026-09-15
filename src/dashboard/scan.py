@@ -397,10 +397,13 @@ def _empty_summary(run: Path, mtime: float | None) -> dict[str, Any]:
 
 def _summary(ctx: dict[str, Any]) -> dict[str, Any]:
     if ctx["kind"] == "research":
-        return _research_summary(ctx)
-    if ctx["kind"] == "ideation":
-        return _ideation_summary(ctx)
-    return _empty_summary(ctx["run"], ctx["mtime"])
+        summary = _research_summary(ctx)
+    elif ctx["kind"] == "ideation":
+        summary = _ideation_summary(ctx)
+    else:
+        summary = _empty_summary(ctx["run"], ctx["mtime"])
+    summary["session"] = None  # filled by scan_overview / run_detail from sessions/*/session.json
+    return summary
 
 
 def run_summary(run: Path) -> dict[str, Any]:
@@ -457,6 +460,7 @@ def run_detail(run: Path) -> dict[str, Any]:
         "config": ctx["config"] or None,
         "run_md": None,
         "ideas": None,
+        "session": _session_for_run(_sessions(ai_root(_target_repo(run))), summary["run_id"]),
     }
     if ctx["kind"] == "ideation":
         detail["run_md"] = _read_text(run / "run.md")
@@ -538,6 +542,73 @@ def node_detail(run: Path, node_id: str) -> dict[str, Any] | None:
     }
 
 
+# --- sessions and ideas catalog ---------------------------------------------
+
+SESSION_EVENT_TAIL = 200
+
+
+def _sessions(root: Path) -> list[dict[str, Any]]:
+    """Every readable `sessions/*/session.json` (SCHEMA.md section 3.12), newest first."""
+    try:
+        dirs = [p for p in (root / "sessions").iterdir() if p.is_dir()]
+    except OSError:
+        return []
+    out = []
+    for d in dirs:
+        data = _load_json(d / "session.json")
+        if isinstance(data, dict) and isinstance(data.get("id"), str):
+            out.append(data)
+    out.sort(key=lambda r: (str(r.get("created_at") or ""), r["id"]), reverse=True)
+    return out
+
+
+def _session_for_run(sessions: list[dict[str, Any]], run_id: str) -> dict[str, Any] | None:
+    """The newest session bound to `run_id` (sessions are newest first)."""
+    return next((s for s in sessions if s.get("run_id") == run_id), None)
+
+
+def find_session(target_repo: Path, session_id: str) -> Path | None:
+    if not _safe_segment(session_id):
+        return None
+    path = ai_root(target_repo) / "sessions" / session_id
+    return path if (path / "session.json").is_file() else None
+
+
+def session_detail(session: Path) -> dict[str, Any] | None:
+    record = _load_json(session / "session.json")
+    if not isinstance(record, dict):
+        return None
+    events = _load_jsonl(session / "events.jsonl")
+    return {**record, "events": events[-SESSION_EVENT_TAIL:], "event_count": len(events)}
+
+
+def _ideas_catalog(root: Path) -> list[dict[str, Any]]:
+    """Ideas of every ideation run: `{run_id, goal, ideas: [{id, title, idea_file, pilot_report}]}`."""
+    try:
+        run_dirs = sorted(p for p in (root / "runs").iterdir() if p.is_dir())
+    except OSError:
+        return []
+    out = []
+    for run in run_dirs:
+        if _is_file(run / "loop-state.json") or not _is_file(run / "ideas.json"):
+            continue
+        ideas = _ideas_list(_load_json(run / "ideas.json"))
+        if not ideas:
+            continue
+        out.append(
+            {
+                "run_id": run.name,
+                "goal": _contract_goal(_load_json(run / "contract.json")),
+                "ideas": [
+                    {"id": _str(i.get("id")), "title": _str(i.get("title")), "idea_file": _str(i.get("idea_file")), "pilot_report": _str(i.get("pilot_report"))}
+                    for i in ideas
+                    if _str(i.get("id"))
+                ],
+            }
+        )
+    return out
+
+
 # --- overview ----------------------------------------------------------------
 
 
@@ -563,7 +634,10 @@ def scan_overview(target_repo: Path) -> dict[str, Any]:
         run_dirs = [p for p in runs_dir.iterdir() if p.is_dir()]
     except OSError:
         run_dirs = []
+    sessions = _sessions(root)
     runs = [run_summary(p) for p in run_dirs]
+    for summary in runs:
+        summary["session"] = _session_for_run(sessions, summary["run_id"])
     runs.sort(key=lambda r: _epoch(r.get("updated_at")) or r.get("mtime") or 0, reverse=True)
     active = _load_json(root / "active-run.json")
     return {
@@ -573,6 +647,8 @@ def scan_overview(target_repo: Path) -> dict[str, Any]:
         "active_run": active if isinstance(active, dict) else None,
         "runs": runs,
         "contracts": _contracts(root),
+        "ideas": _ideas_catalog(root),
+        "sessions": sessions,
     }
 
 

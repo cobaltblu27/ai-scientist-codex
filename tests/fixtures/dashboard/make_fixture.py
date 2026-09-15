@@ -27,6 +27,10 @@ BROKEN_RUN = "20260913-broken-loop-state"
 
 RUN_IDS = [RESEARCH_RUN, SUCCESS_RUN, EXHAUSTED_RUN, BLOCKED_RUN, IDEATION_RUN, BROKEN_RUN]
 
+# Dashboard session bound to the research run (docs/SCHEMA.md 3.12); its owner process is long gone.
+SESSION_ID = "ses-20260912T093000Z-b7d2"
+SESSION_CLAUDE_ID = "3f0c1a2e-5b6d-4c7e-8f90-1a2b3c4d5e6f"
+
 # Message ids in the research run's message box (docs/SCHEMA.md 3.11).
 MSG_N2_PENDING = "msg-20260912T095600Z-7c1e"
 MSG_N1_ACK = "msg-20260912T093000Z-2b9d"
@@ -481,6 +485,59 @@ def build_blocked(root: Path, out: Path) -> None:
     ]), at=ts(1300))
 
 
+def build_session(root: Path, out: Path) -> None:
+    """A dashboard-launched session whose dashboard process died: the scanner shows it as `detached`."""
+    session = root / "sessions" / SESSION_ID
+    launch_prompt = f"/goal Complete a full ai-scientist research campaign for run {RESEARCH_RUN}: invoke the ai-scientist:research-loop skill ..."
+    write(
+        session / "session.json",
+        {
+            "id": SESSION_ID,
+            "backend": "claude",
+            "status": "detached",
+            "created_at": ts(30),
+            "updated_at": ts(5),
+            "run_id": RESEARCH_RUN,
+            "contract_path": ".ai-scientist/contracts/cifar10-accuracy/research-contract.json",
+            "idea_batch": f".ai-scientist/sessions/{SESSION_ID}/ideas.json",
+            "prompt": "Use `uv run python`; at most 2 GPUs.",
+            "cwd": str(out),
+            "owner_pid": 2_000_000_000,
+            "claude_session_id": SESSION_CLAUDE_ID,
+            "num_turns": 12,
+            "total_cost_usd": 4.2,
+            "error": None,
+        },
+        at=ts(5),
+    )
+    write(
+        session / "ideas.json",
+        {
+            "session_id": SESSION_ID,
+            "ideas": [
+                {
+                    "id": idea,
+                    "title": title,
+                    "idea_file": f".ai-scientist/runs/{IDEATION_RUN}/ideas/{idea}.md",
+                    "pilot_report": f".ai-scientist/runs/{IDEATION_RUN}/logs/pilots/{idea}/report.md",
+                    "source_run_id": IDEATION_RUN,
+                }
+                for idea, title in IDEAS
+            ],
+        },
+        at=ts(30),
+    )
+    events = [
+        {"ts": ts(30), "type": "user", "origin": "launch", "text": launch_prompt},
+        {"ts": ts(29.9), "type": "system", "subtype": "init", "session_id": SESSION_CLAUDE_ID, "text": "model claude-opus-5; skills ai-scientist:research-loop, ..."},
+        {"ts": ts(29), "type": "assistant", "text": "Goal active. Running preflight for the research loop.", "tool": "Skill"},
+        {"ts": ts(20), "type": "user", "origin": "dashboard", "text": "prefer the snapshot ensemble first"},
+        {"ts": ts(19), "type": "assistant", "text": "Noted; N2 gets the first worker."},
+        {"ts": ts(5), "type": "dashboard", "subtype": "detached"},
+    ]
+    write(session / "events.jsonl", "".join(json.dumps(e) + "\n" for e in events), at=ts(5))
+
+
 def build(out: Path) -> None:
     root = out / ".ai-scientist"
     if root.exists():
@@ -496,6 +553,7 @@ def build(out: Path) -> None:
     build_blocked(root, out)
     write(root / "runs" / BROKEN_RUN / "loop-state.json", '{"run_id": "' + BROKEN_RUN + '", "phase": "research", "state": {', at=ts(1))
 
+    build_session(root, out)
     write(root / "active-run.json", {"schema_version": 1, "run_id": RESEARCH_RUN, "phase": "research", "status": "active", "updated_at": ts(3), "target_repository": str(out)}, at=ts(3))
     print(f"wrote fixture to {root}")
 
