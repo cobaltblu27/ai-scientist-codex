@@ -49,22 +49,22 @@ Stalled sessions: the orchestrator sometimes declares the campaign done too earl
 
 ## Commands
 ```sh
-# serve a target repo's artifacts; builds src/frontend/dist first when it is missing or older than the sources
+# build the frontend once (npm install on first use, then npm run build); needs npm on PATH
+ai-scientist dashboard --build-only
+
+# serve a target repo's artifacts from src/frontend/dist; errors when dist/ is missing, warns when sources are newer
 ai-scientist --target-repo <repo> dashboard [--host 127.0.0.1] [--port 8765] [--open]
+
+# rebuild, then serve
+ai-scientist --target-repo <repo> dashboard --build --open
 
 # frontend dev loop in one command: API server plus Vite hot reload, browser opens on the Vite port
 ai-scientist --target-repo <repo> dashboard --dev [--dev-port 5173] [--open]
 
-# build the frontend and exit (CI, or before copying the checkout somewhere without npm)
-ai-scientist dashboard --build-only
-
-# serve whatever is in dist/ without checking the sources
-ai-scientist --target-repo <repo> dashboard --no-build
-
 # optional: let the dashboard launch Claude sessions (Start research)
 uv sync --extra dashboard
 ```
-Building needs `npm` on `PATH`; `node_modules` is installed on first use. Without `npm`, an existing `dist/` is served as is and a missing one is an error. `--dev` runs `npm run dev` as a child process in its own process group and stops it with the server; `vite.config.ts` reads `VITE_API_PROXY` so the proxy follows `--host`/`--port`.
+Plain `dashboard` never runs npm. `--build`, `--build-only` and `--dev` do, and say so on stderr before each command. An install that ships only `dist/` (no `package.json` next to it) is served as is. A plugin installed from git has the sources but no `dist/` (it is gitignored), so the first run on such a machine is `ai-scientist dashboard --build-only`. `--dev` runs `npm run dev` as a child process in its own process group and stops it with the server; `vite.config.ts` reads `VITE_API_PROXY` so the proxy follows `--host`/`--port`.
 
 ## Plans
 - Node detail view (trials, critic reviews, metrics history).

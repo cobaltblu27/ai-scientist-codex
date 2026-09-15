@@ -11,7 +11,7 @@ import pytest
 
 from cli.main import build_parser, main as cli_main
 from dashboard import frontend
-from dashboard.frontend import FrontendBuildError, dist_state, ensure_built
+from dashboard.frontend import FrontendBuildError, build, check_built, dist_state
 
 
 def _touch(path: Path, when: float, text: str = "x") -> None:
@@ -39,68 +39,96 @@ def test_dist_state(fe: tuple[Path, Path]) -> None:
     assert dist_state(front, dist) == "stale"
 
 
-def test_ensure_built_runs_npm(fe: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_built_never_runs_npm(fe: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    front, dist = fe
+    monkeypatch.setattr(frontend, "npm_path", lambda: "/usr/bin/npm")
+    monkeypatch.setattr(frontend.subprocess, "run", lambda cmd, cwd: pytest.fail("plain dashboard must not run npm"))
+    with pytest.raises(FrontendBuildError, match="--build"):
+        check_built(frontend_dir=front, dist_dir=dist)
+    _touch(dist / "index.html", time.time() - 50)
+    logged: list[str] = []
+    assert check_built(frontend_dir=front, dist_dir=dist, log=logged.append) == "fresh" and logged == []
+    _touch(front / "src" / "New.tsx", time.time())
+    assert check_built(frontend_dir=front, dist_dir=dist, log=logged.append) == "stale"
+    assert logged and "existing build" in logged[0]
+
+
+def test_packaged_install_without_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A packaged CLI ships dist/ only: served as is, never rebuilt, and a missing dist is a clear error."""
+    front = tmp_path / "frontend"
+    dist = front / "dist"
+    assert dist_state(front, dist) == "unavailable"
+    with pytest.raises(FrontendBuildError, match="sources are not in this install"):
+        check_built(frontend_dir=front, dist_dir=dist)
+    with pytest.raises(FrontendBuildError, match="nothing to build"):
+        build(frontend_dir=front, dist_dir=dist)
+    _touch(dist / "index.html", time.time() - 10)
+    assert dist_state(front, dist) == "fresh"
+    monkeypatch.setattr(frontend, "npm_path", lambda: "/usr/bin/npm")
+    monkeypatch.setattr(frontend.subprocess, "run", lambda cmd, cwd: pytest.fail("npm must not run without sources"))
+    assert check_built(frontend_dir=front, dist_dir=dist) == "fresh"
+    assert build(frontend_dir=front, dist_dir=dist) == "fresh"
+
+
+def test_build_runs_npm(fe: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     front, dist = fe
     calls: list[list[str]] = []
 
     def fake_run(cmd, cwd):
         calls.append(cmd)
         assert cwd == front
-        if cmd[1:] == ["run", "build"]:
-            _touch(dist / "index.html", time.time() + 1)
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(frontend, "npm_path", lambda: "/usr/bin/npm")
     monkeypatch.setattr(frontend.subprocess, "run", fake_run)
     logged: list[str] = []
-    assert ensure_built(frontend_dir=front, dist_dir=dist, log=logged.append) == "built"
+    assert build(frontend_dir=front, dist_dir=dist, log=logged.append) == "built"
     assert calls == [["/usr/bin/npm", "install"], ["/usr/bin/npm", "run", "build"]]  # no node_modules yet
-    assert any("npm run build" in line for line in logged)
+    assert [line for line in logged if "npm install" in line] and [line for line in logged if "npm run build" in line]
 
     calls.clear()
-    assert ensure_built(frontend_dir=front, dist_dir=dist) == "fresh"  # up to date: nothing runs
-    assert calls == []
-
     (front / "node_modules").mkdir()
-    assert ensure_built(force=True, frontend_dir=front, dist_dir=dist, log=logged.append) == "built"
+    assert build(frontend_dir=front, dist_dir=dist) == "built"
     assert calls == [["/usr/bin/npm", "run", "build"]]
 
 
-def test_ensure_built_failure_and_missing_npm(fe: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_failure_and_missing_npm(fe: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     front, dist = fe
     monkeypatch.setattr(frontend, "npm_path", lambda: None)
-    with pytest.raises(FrontendBuildError, match="not on PATH"):
-        ensure_built(frontend_dir=front, dist_dir=dist)
-    _touch(dist / "index.html", time.time() - 500)  # stale but present: served as is
-    logged: list[str] = []
-    assert ensure_built(frontend_dir=front, dist_dir=dist, log=logged.append) == "fresh"
-    assert any("existing build" in line for line in logged)
-
+    with pytest.raises(FrontendBuildError, match="needs `npm`"):
+        build(frontend_dir=front, dist_dir=dist)
     (front / "node_modules").mkdir()
     monkeypatch.setattr(frontend, "npm_path", lambda: "/usr/bin/npm")
     monkeypatch.setattr(frontend.subprocess, "run", lambda cmd, cwd: subprocess.CompletedProcess(cmd, 2))
     with pytest.raises(FrontendBuildError, match="exit code 2"):
-        ensure_built(force=True, frontend_dir=front, dist_dir=dist)
+        build(frontend_dir=front, dist_dir=dist)
 
 
 def test_dashboard_flags() -> None:
-    args = build_parser().parse_args(["dashboard", "--dev", "--dev-port", "5200", "--no-build", "--build-only", "--port", "9000"])
-    assert (args.dev, args.dev_port, args.no_build, args.build_only, args.port, args.host) == (True, 5200, True, True, 9000, "127.0.0.1")
+    args = build_parser().parse_args(["dashboard", "--dev", "--dev-port", "5200", "--build", "--build-only", "--port", "9000"])
+    assert (args.dev, args.dev_port, args.build, args.build_only, args.port, args.host) == (True, 5200, True, True, 9000, "127.0.0.1")
     defaults = build_parser().parse_args(["dashboard"])
-    assert (defaults.dev, defaults.dev_port, defaults.no_build, defaults.build_only) == (False, 5173, False, False)
+    assert (defaults.dev, defaults.dev_port, defaults.build, defaults.build_only) == (False, 5173, False, False)
 
 
-def test_cli_build_only(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(frontend, "ensure_built", lambda force=False, **kw: "built")
+def test_cli_build_only_and_missing_dist(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(frontend, "build", lambda **kw: "built")
     assert cli_main(["dashboard", "--build-only"]) == 0
     assert json.loads(capsys.readouterr().out) == {"frontend": "built", "status": "ok"}
 
-    def boom(force=False, **kw):
+    def boom(**kw):
         raise FrontendBuildError("no npm")
 
-    monkeypatch.setattr(frontend, "ensure_built", boom)
+    monkeypatch.setattr(frontend, "build", boom)
     assert cli_main(["dashboard", "--build-only"]) == 1
     assert json.loads(capsys.readouterr().out)["error"] == "no npm"
+
+    def missing(**kw):
+        raise FrontendBuildError("frontend is not built; run --build")
+
+    monkeypatch.setattr(frontend, "check_built", missing)
+    assert cli_main(["dashboard"]) == 1  # plain dashboard stops before serving, without touching npm
+    assert "not built" in json.loads(capsys.readouterr().out)["error"]
 
 
 def test_dev_server_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

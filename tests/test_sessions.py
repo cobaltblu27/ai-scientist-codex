@@ -363,7 +363,9 @@ def test_scanner_exposes_sessions_and_ideas(target: Path, backend: FakeBackend, 
             "ideas": [{"id": i, "title": t, "idea_file": f"ideas/{i}.md", "pilot_report": f"logs/pilots/{i}/report.md"} for i, t in IDEAS],
         }
     ]
-    assert overview["runs"][0]["run_id"] == IDEATION_RUN and overview["runs"][0]["session"] is None
+    runs = {r["run_id"]: r for r in overview["runs"]}
+    assert runs[IDEATION_RUN]["session"] is None
+    assert runs["run-e"]["pending"] is True and runs["run-e"]["session"]["id"] == record["id"]  # placeholder card until bootstrap
 
     detail = session_detail(find_session(target, record["id"]))
     assert detail["id"] == record["id"] and detail["event_count"] == len(detail["events"]) >= 3
