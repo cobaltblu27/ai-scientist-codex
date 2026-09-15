@@ -175,17 +175,26 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 
 ## Install
 
-Two pieces: the plugin (skills, agents, prompts) comes from git through Claude Code's plugin system, and the `ai-scientist` CLI that the skills call comes as a wheel attached to each GitHub release. The wheel bundles the JSON schemas and the built dashboard, and its `dashboard` extra pulls in `claude-agent-sdk` (which ships its own `claude` binary) so the dashboard can launch sessions.
+Two pieces at one version: the plugin (skills, agents, prompts) goes into Claude Code through its plugin system, and the `ai-scientist` CLI that the skills call is a wheel that bundles the JSON schemas and the built dashboard. The wheel's `dashboard` extra pulls in `claude-agent-sdk` (which ships its own `claude` binary) so the dashboard can launch sessions.
+
+The one-step way is to clone the repository and run the installer, which registers the checkout as the plugin marketplace, installs or updates the plugin, builds the wheel from the same checkout, and installs it with `uv tool install` (needs `uv`, `claude`, and `npm` for the frontend build):
+
+```bash
+git clone https://github.com/cobaltblu27/ai-scientist-codex.git
+cd ai-scientist-codex
+./install.sh            # ./install.sh --wheel <path-or-url> skips the build; --no-dashboard skips the frontend and the SDK
+```
+
+Rerun `./install.sh` after `git pull` to move both halves together. Without a clone, the same two halves install by hand from GitHub and a release wheel:
 
 ```bash
 claude plugin marketplace add cobaltblu27/ai-scientist-codex
 claude plugin install ai-scientist@ai-scientist
-
 uv tool install --python 3.12 "ai-scientist[dashboard] @ https://github.com/cobaltblu27/ai-scientist-codex/releases/download/v0.2.0/ai_scientist-0.2.0-py3-none-any.whl"
 ai-scientist doctor
 ```
 
-`ai-scientist doctor` prints where the install found the plugin (`plugin_source`: `env`, `checkout`, or `installed` from `~/.claude/plugins/installed_plugins.json`), the schemas, the frontend, and the SDK, and lists anything missing. It also flags a version skew between the plugin manifest and the CLI: upgrade both together (`claude plugin update ai-scientist@ai-scientist` and the `uv tool install` line for the new release). `AI_SCIENTIST_PLUGIN_ROOT` overrides plugin discovery; `ai-scientist dashboard --plugin-dir <path>` does the same for one dashboard.
+`ai-scientist doctor` prints where the install found the plugin (`plugin_source`: `env`, `checkout`, or `installed` from `~/.claude/plugins/installed_plugins.json`), the schemas, the frontend, and the SDK, and lists anything missing. It also flags a version skew between the plugin manifest and the CLI: upgrade both together (`./install.sh` again, or `claude plugin update ai-scientist@ai-scientist` plus the `uv tool install` line for the new release). `AI_SCIENTIST_PLUGIN_ROOT` overrides plugin discovery; `ai-scientist dashboard --plugin-dir <path>` does the same for one dashboard.
 
 Run each long-lived workflow under `/goal` in Claude Code or Codex. The goal provides persistence, while `.ai-scientist/active-run.json` and the run artifacts provide durable resume context and completion evidence.
 

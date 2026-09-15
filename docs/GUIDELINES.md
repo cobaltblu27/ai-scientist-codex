@@ -80,7 +80,7 @@ The CLI reaches users as a wheel attached to a GitHub release; the plugin reache
 2. Update the wheel URL in the README install section to the new version.
 3. Run `uv run pytest -q`, commit, then `git tag v<version> && git push origin main --tags`.
 4. `.github/workflows/release.yml` builds the frontend, the wheel and the sdist, smoke-tests the wheel, and creates the GitHub release with both files attached. It refuses a tag that does not match the `pyproject.toml` version.
-5. Users upgrade both halves: `claude plugin update ai-scientist@ai-scientist` and the `uv tool install` line from the README.
+5. Users upgrade both halves: `git pull && ./install.sh` in their clone, or `claude plugin update ai-scientist@ai-scientist` plus the `uv tool install` line from the README.
 
 ## Documentation standards
 

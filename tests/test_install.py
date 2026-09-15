@@ -119,6 +119,14 @@ def test_doctor_flags_skew_and_missing_plugin(tmp_path: Path, monkeypatch: pytes
     assert out["plugin_dir"] is None and any("claude plugin install" in p for p in out["problems"])
 
 
+def test_install_script_parses_and_documents_itself() -> None:
+    script = REPO_ROOT / "install.sh"
+    assert os.access(script, os.X_OK)
+    subprocess.run(["sh", "-n", str(script)], check=True)
+    help_text = subprocess.run([str(script), "--help"], check=True, capture_output=True, text=True).stdout
+    assert "--wheel" in help_text and "--no-plugin" in help_text and "--no-dashboard" in help_text
+
+
 # --- packaging -----------------------------------------------------------------
 
 
