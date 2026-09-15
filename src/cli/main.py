@@ -240,9 +240,21 @@ def cmd_handoff_record(args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
+    from dashboard.frontend import FrontendBuildError, ensure_built
     from dashboard.server import serve
 
-    serve(target_repo(args), host=args.host, port=args.port, open_browser=args.open)
+    if args.build_only:
+        try:
+            state = ensure_built(force=True)
+        except FrontendBuildError as exc:
+            return response("error", error=str(exc))
+        return response("ok", frontend=state)
+    if not args.dev and not args.no_build:
+        try:
+            ensure_built()  # rebuild only when dist/ is missing or older than the sources
+        except FrontendBuildError as exc:
+            return response("error", error=str(exc))
+    serve(target_repo(args), host=args.host, port=args.port, open_browser=args.open, dev=args.dev, dev_port=args.dev_port)
     return 0
 
 
@@ -430,6 +442,10 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--host", default="127.0.0.1")
     dashboard.add_argument("--port", type=int, default=8765)
     dashboard.add_argument("--open", action="store_true", help="Open the dashboard in a browser.")
+    dashboard.add_argument("--dev", action="store_true", help="Also run the Vite dev server (hot reload) and open that instead of the built frontend.")
+    dashboard.add_argument("--dev-port", type=int, default=5173, help="Port for the Vite dev server with --dev.")
+    dashboard.add_argument("--no-build", action="store_true", help="Serve dist/ as is, even when the frontend sources are newer.")
+    dashboard.add_argument("--build-only", action="store_true", help="Build the frontend into src/frontend/dist and exit.")
     dashboard.set_defaults(func=cmd_dashboard)
 
     resource = sub.add_parser("resource")

@@ -185,17 +185,33 @@ def make_handler(target_repo: Path, dist_dir: Path, manager: SessionManager | No
     return Handler
 
 
-def serve(target_repo: Path, host: str = "127.0.0.1", port: int = 8765, *, open_browser: bool = False, dist_dir: Path | None = None) -> None:
+def serve(
+    target_repo: Path,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    *,
+    open_browser: bool = False,
+    dist_dir: Path | None = None,
+    dev: bool = False,
+    dev_port: int = 5173,
+) -> None:
+    """Serve the API and the built frontend. With `dev`, also run Vite with hot reload and point the browser at it."""
+    from dashboard.frontend import start_dev_server, stop_dev_server
+
     manager = SessionManager(target_repo)
     server = ThreadingHTTPServer((host, port), make_handler(target_repo, dist_dir or DIST_DIR, manager))
-    url = f"http://{host}:{server.server_port}/"
-    print(f"ai-scientist dashboard: {url}  (watching {target_repo}/.ai-scientist)", flush=True)
+    api_url = f"http://{host}:{server.server_port}/"
+    vite = start_dev_server(api_url=api_url.rstrip("/"), port=dev_port) if dev else None
+    url = f"http://127.0.0.1:{dev_port}/" if dev else api_url
+    print(f"ai-scientist dashboard: {url}  (watching {target_repo}/.ai-scientist{'; API on ' + api_url + ', Vite hot reload' if dev else ''})", flush=True)
     if open_browser:
-        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+        threading.Timer(1.5 if dev else 0.5, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if vite is not None:
+            stop_dev_server(vite)
         manager.stop_all()
         server.server_close()

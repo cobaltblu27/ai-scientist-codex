@@ -49,19 +49,22 @@ Stalled sessions: the orchestrator sometimes declares the campaign done too earl
 
 ## Commands
 ```sh
-# build once (required before `ai-scientist dashboard` can serve the UI)
-cd src/frontend && npm install && npm run build
+# serve a target repo's artifacts; builds src/frontend/dist first when it is missing or older than the sources
+ai-scientist --target-repo <repo> dashboard [--host 127.0.0.1] [--port 8765] [--open]
+
+# frontend dev loop in one command: API server plus Vite hot reload, browser opens on the Vite port
+ai-scientist --target-repo <repo> dashboard --dev [--dev-port 5173] [--open]
+
+# build the frontend and exit (CI, or before copying the checkout somewhere without npm)
+ai-scientist dashboard --build-only
+
+# serve whatever is in dist/ without checking the sources
+ai-scientist --target-repo <repo> dashboard --no-build
 
 # optional: let the dashboard launch Claude sessions (Start research)
 uv sync --extra dashboard
-
-# serve a target repo's artifacts
-ai-scientist --target-repo <repo> dashboard [--host 127.0.0.1] [--port 8765] [--open]
-
-# frontend dev loop: hot reload, /api proxied to the Python server on :8765
-ai-scientist --target-repo <repo> dashboard   # terminal 1
-cd src/frontend && npm run dev                # terminal 2
 ```
+Building needs `npm` on `PATH`; `node_modules` is installed on first use. Without `npm`, an existing `dist/` is served as is and a missing one is an error. `--dev` runs `npm run dev` as a child process in its own process group and stops it with the server; `vite.config.ts` reads `VITE_API_PROXY` so the proxy follows `--host`/`--port`.
 
 ## Plans
 - Node detail view (trials, critic reviews, metrics history).
