@@ -1,4 +1,7 @@
 #!/bin/sh
+# Fallback launcher: runs the CLI from this checkout with the system python3 (3.12+, no
+# claude-agent-sdk). The supported install is the release wheel (`uv tool install ...`),
+# which puts `ai-scientist` on PATH with its dependencies. See docs/README.md, Install.
 set -eu
 
 PLUGIN_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"

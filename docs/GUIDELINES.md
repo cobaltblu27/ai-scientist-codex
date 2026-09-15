@@ -49,7 +49,7 @@ A valid run should include:
 If the artifact contract changes, update all of these together:
 
 1. `docs/SCHEMA.md`
-2. Relevant schema files in `schemas/`
+2. Relevant schema files in `src/validation/schemas/`
 3. `src/validation/run.py`
 4. Skill instructions that mention the changed contract
 
@@ -67,9 +67,20 @@ If the artifact contract changes, update all of these together:
 Before claiming a change is complete, run at minimum:
 
 ```bash
-python3 -m json.tool .codex-plugin/plugin.json >/dev/null
-python3 -m unittest discover -s tests -p 'test_*.py'
+uv run pytest -q
 ```
+
+CI (`.github/workflows/ci.yml`) runs the same suite plus the frontend build, `uv build`, and a smoke test of the wheel installed into a fresh virtualenv.
+
+## Releases
+
+The CLI reaches users as a wheel attached to a GitHub release; the plugin reaches them through `claude plugin install` from git. To cut a release:
+
+1. Bump `version` in `pyproject.toml`, `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json` (`<version>+codex.<timestamp>`) together; `tests/test_install.py` fails when they drift.
+2. Update the wheel URL in the README install section to the new version.
+3. Run `uv run pytest -q`, commit, then `git tag v<version> && git push origin main --tags`.
+4. `.github/workflows/release.yml` builds the frontend, the wheel and the sdist, smoke-tests the wheel, and creates the GitHub release with both files attached. It refuses a tag that does not match the `pyproject.toml` version.
+5. Users upgrade both halves: `claude plugin update ai-scientist@ai-scientist` and the `uv tool install` line from the README.
 
 ## Documentation standards
 

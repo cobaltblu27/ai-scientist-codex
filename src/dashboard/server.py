@@ -11,11 +11,11 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from core.message_box import MessageBoxError, add as add_message
-from core.plugin import plugin_root
+from core.assets import frontend_dist_dir
 from dashboard.scan import find_run, find_run_file, find_session, node_detail, pending_run_detail, run_detail, scan_overview, session_detail
 from dashboard.sessions import SessionError, SessionManager
 
-DIST_DIR = plugin_root() / "src" / "frontend" / "dist"
+DIST_DIR = frontend_dist_dir()
 MAX_POST_BYTES = 64 * 1024
 
 
@@ -174,7 +174,7 @@ def make_handler(target_repo: Path, dist_dir: Path, manager: SessionManager | No
             if not dist_dir.is_dir():
                 return self._json(
                     HTTPStatus.SERVICE_UNAVAILABLE,
-                    {"error": f"frontend not built: run `npm install && npm run build` in {dist_dir.parent}"},
+                    {"error": "frontend not built: install the release wheel, or run `ai-scientist dashboard --build-only` from a checkout"},
                 )
             rel = route.lstrip("/") or "index.html"
             candidate = (dist_dir / rel).resolve()
@@ -194,11 +194,12 @@ def serve(
     dist_dir: Path | None = None,
     dev: bool = False,
     dev_port: int = 5173,
+    plugin_dir: Path | None = None,
 ) -> None:
     """Serve the API and the built frontend. With `dev`, also run Vite with hot reload and point the browser at it."""
     from dashboard.frontend import start_dev_server, stop_dev_server
 
-    manager = SessionManager(target_repo)
+    manager = SessionManager(target_repo, plugin_dir=plugin_dir)
     server = ThreadingHTTPServer((host, port), make_handler(target_repo, dist_dir or DIST_DIR, manager))
     api_url = f"http://{host}:{server.server_port}/"
     vite = start_dev_server(api_url=api_url.rstrip("/"), port=dev_port) if dev else None

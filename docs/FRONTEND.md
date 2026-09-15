@@ -3,7 +3,7 @@ Frontend is managed using auxiliary cli.
 Running `ai-scientist dashboard` launches a dashboard that watches and visualizes runs and nodes inside `./.ai-scientist`.
 
 ## Stack
-React, TypeScript and Vite. Built artifact is served by the Python CLI.
+React, TypeScript and Vite. `npm run build` writes `src/dashboard/dist/`, package data of the `dashboard` Python package, so the release wheel ships the built dashboard and the Python CLI serves it from wherever it is installed.
 
 ## Layout
 - `src/dashboard/` — Python side. `scan.py` reads `.ai-scientist/` into plain JSON (read-only, lenient to half-written artifacts). `server.py` is a stdlib HTTP server exposing the API below and the built frontend.
@@ -16,7 +16,7 @@ React, TypeScript and Vite. Built artifact is served by the Python CLI.
   - `components/SessionBadge.tsx` / `components/SessionConsole.tsx` / `components/UsageMeter.tsx` — the Claude session id with a copy button (tooltip `claude --resume <id>`), and the rail card on a run with a session: status, turns, subscription usage per rate-limit window (`5h 42%`, `7d 12%`, colored by headroom), a compose box that sends straight into the session, Interrupt and Stop, and the event tail. Home lists every session with its usage and shows the peak window of the newest live session as a head stat. Cost is deliberately not shown: campaigns run on a subscription, and the CLI's `rate_limit` events are what say how much of it is left.
 
 ## Dashboard-launched sessions
-`src/dashboard/sessions.py` owns Claude Code sessions started from the modal. Launch writes `sessions/<session-id>/{session.json, ideas.json}` (SCHEMA 3.12), builds a prompt that names the run id, the contract, the idea batch and the user's instructions, and starts a daemon thread running `ClaudeSDKClient` from `claude-agent-sdk` with `cwd` = target repo, this checkout as `--plugin-dir`, and `permission_mode=bypassPermissions`. Every SDK message becomes a row in `events.jsonl`; `init` and `result` messages update the record. Messages from the console go to `client.query()` immediately (the CLI queues mid-turn input), Interrupt calls `client.interrupt()`, Stop cancels the session task, which ends the subprocess.
+`src/dashboard/sessions.py` owns Claude Code sessions started from the modal. Launch writes `sessions/<session-id>/{session.json, ideas.json}` (SCHEMA 3.12), builds a prompt that names the run id, the contract, the idea batch and the user's instructions, and starts a daemon thread running `ClaudeSDKClient` from `claude-agent-sdk` with `cwd` = target repo, the plugin checkout as a local plugin (`--plugin-dir` of `dashboard`, else this checkout, else the install recorded in `~/.claude/plugins/installed_plugins.json`), and `permission_mode=bypassPermissions`. Every SDK message becomes a row in `events.jsonl`; `init` and `result` messages update the record. Messages from the console go to `client.query()` immediately (the CLI queues mid-turn input), Interrupt calls `client.interrupt()`, Stop cancels the session task, which ends the subprocess.
 
 Things to know:
 - The session runs unattended with permissions bypassed inside the target repo. Stop kills the orchestrator process, not experiment jobs it started through resource leases or Slurm.
@@ -24,7 +24,8 @@ Things to know:
 - Usage comes from the CLI's `rate_limit_event` stream (subscription accounts). An API-key session never reports one and the console shows "usage: not reported yet".
 - The dashboard process is the owner. If it dies, `reconcile()` at the next start marks its live records `detached`; the `claude` subprocess may still be running.
 - `claude --resume <claude_session_id>` is the way to take over from a terminal after Stop or on a detached record. Resuming while the dashboard still drives the session opens a second driver on the same transcript.
-- Requires `uv sync --extra dashboard` (installs `claude-agent-sdk`) and a `claude` binary on `PATH`; without the SDK the launch route answers 503 with that hint.
+- Requires `claude-agent-sdk`: the `dashboard` extra of the wheel (`uv tool install "ai-scientist[dashboard] @ <wheel url>"`) or `uv sync --extra dashboard` in a checkout. The SDK bundles its own `claude` binary. Without the SDK, or without a plugin checkout to load the skills from, the launch route answers 503 with the install hint.
+- The skills come from the plugin checkout and the CLI from the wheel. When their versions differ, launch writes a `dashboard` event with subtype `version_skew` so the mismatch is visible in the console; `ai-scientist doctor` reports the same.
 - TODO(codex): a `CodexBackend` behind the same `SessionBackend` protocol; only the Claude backend exists.
 
 ## Artifacts the dashboard reads
@@ -52,7 +53,7 @@ Stalled sessions: the orchestrator sometimes declares the campaign done too earl
 # build the frontend once (npm install on first use, then npm run build); needs npm on PATH
 ai-scientist dashboard --build-only
 
-# serve a target repo's artifacts from src/frontend/dist; errors when dist/ is missing, warns when sources are newer
+# serve a target repo's artifacts from src/dashboard/dist; errors when dist/ is missing, warns when sources are newer
 ai-scientist --target-repo <repo> dashboard [--host 127.0.0.1] [--port 8765] [--open]
 
 # rebuild, then serve
@@ -61,10 +62,10 @@ ai-scientist --target-repo <repo> dashboard --build --open
 # frontend dev loop in one command: API server plus Vite hot reload, browser opens on the Vite port
 ai-scientist --target-repo <repo> dashboard --dev [--dev-port 5173] [--open]
 
-# optional: let the dashboard launch Claude sessions (Start research)
+# optional, in a checkout: let the dashboard launch Claude sessions (Start research); the wheel's `dashboard` extra does the same
 uv sync --extra dashboard
 ```
-Plain `dashboard` never runs npm. `--build`, `--build-only` and `--dev` do, and say so on stderr before each command. An install that ships only `dist/` (no `package.json` next to it) is served as is. A plugin installed from git has the sources but no `dist/` (it is gitignored), so the first run on such a machine is `ai-scientist dashboard --build-only`. `--dev` runs `npm run dev` as a child process in its own process group and stops it with the server; `vite.config.ts` reads `VITE_API_PROXY` so the proxy follows `--host`/`--port`.
+Plain `dashboard` never runs npm. `--build`, `--build-only` and `--dev` do, and say so on stderr before each command. The release wheel ships `dist/` without the Vite sources and is served as is, never rebuilt. A checkout has the sources but no `dist/` (it is gitignored), so the first run there is `ai-scientist dashboard --build-only`. `--dev` runs `npm run dev` as a child process in its own process group and stops it with the server; `vite.config.ts` reads `VITE_API_PROXY` so the proxy follows `--host`/`--port`.
 
 ## Plans
 - Node detail view (trials, critic reviews, metrics history).

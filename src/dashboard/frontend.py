@@ -1,6 +1,7 @@
 """Build and dev-serve the Vite frontend from the CLI.
 
-`ai-scientist dashboard` serves `src/frontend/dist/`. This module reports on
+`ai-scientist dashboard` serves `src/dashboard/dist/` (built from `src/frontend/`,
+shipped in the release wheel). This module reports on
 that directory (`check_built`), builds it only on an explicit `--build` /
 `--build-only` (`build`), and for `--dev` runs `npm run dev` as a child
 process so one command gives the API server plus hot reload. Nothing here
@@ -15,10 +16,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from core.plugin import plugin_root
+from core.assets import frontend_dist_dir, frontend_source_dir
 
-FRONTEND_DIR = plugin_root() / "src" / "frontend"
-DIST_DIR = FRONTEND_DIR / "dist"
+FRONTEND_DIR = frontend_source_dir()
+DIST_DIR = frontend_dist_dir()
 # Files whose change makes `dist/` stale. `src/` is walked recursively.
 SOURCE_ROOTS = ("src", "index.html", "package.json", "package-lock.json", "vite.config.ts", "tsconfig.json")
 DEV_PORT = 5173
@@ -72,7 +73,7 @@ def check_built(*, frontend_dir: Path = FRONTEND_DIR, dist_dir: Path = DIST_DIR,
     log = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
     state = dist_state(frontend_dir, dist_dir)
     if state == "unavailable":
-        raise FrontendBuildError(f"frontend is not built and its sources are not in this install ({frontend_dir}); install a build that ships dist/")
+        raise FrontendBuildError(f"frontend is not built and its sources are not in this install ({frontend_dir}); install the release wheel, which ships dist/")
     if state == "missing":
         raise FrontendBuildError("frontend is not built; run `ai-scientist dashboard --build` (needs npm) or `--build-only`")
     if state == "stale":

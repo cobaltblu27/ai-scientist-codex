@@ -24,7 +24,7 @@ IDEATION_RUN = "20260910-ideation-cifar10"
 IDEAS = [("mixup-cutout-schedule", "Mixup and cutout"), ("snapshot-ensemble", "Snapshot ensemble"), ("stochastic-depth", "Stochastic depth")]
 RECORD_KEYS = {
     "id", "backend", "status", "created_at", "updated_at", "run_id", "contract_path", "idea_batch", "prompt", "cwd",
-    "owner_pid", "claude_session_id", "num_turns", "rate_limits", "error",
+    "owner_pid", "claude_session_id", "plugin_dir", "num_turns", "rate_limits", "error",
 }
 
 
@@ -232,6 +232,22 @@ def test_launch_unavailable_backend(target: Path) -> None:
     with pytest.raises(SessionError) as err:
         manager.launch(CONTRACT, ["snapshot-ensemble"], "")
     assert err.value.status == 503 and str(err.value) == "install it"
+
+
+def test_launch_needs_a_plugin_dir(target: Path, backend: FakeBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The skills come from the plugin checkout: an explicit dir wins, and no dir at all is a 503 with the install hint."""
+    explicit = tmp_path / "plugin"
+    explicit.mkdir()
+    manager = SessionManager(target, backend, plugin_dir=explicit)
+    record = manager.launch(CONTRACT, ["snapshot-ensemble"], "", run_id="run-plugin")
+    _wait(lambda: backend.specs)
+    assert backend.specs[0].plugin_dir == explicit.resolve() and record["plugin_dir"] == str(explicit.resolve())
+    manager.stop_all()
+
+    monkeypatch.setattr("dashboard.sessions.find_plugin_root", lambda: None)
+    with pytest.raises(SessionError) as err:
+        SessionManager(target, backend).launch(CONTRACT, ["snapshot-ensemble"], "", run_id="run-no-plugin")
+    assert err.value.status == 503 and "claude plugin install" in str(err.value)
 
 
 # --- steering ----------------------------------------------------------------

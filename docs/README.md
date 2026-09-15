@@ -151,17 +151,10 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 │   ├── FRONTEND.md
 │   ├── PLAN.md
 │   └── SCHEMA.md
+├── .github/workflows/        # ci.yml (tests, build, wheel smoke) and release.yml (wheel + sdist on a v* tag)
 ├── pyproject.toml
 ├── references/
 │   └── artifact-contract.md
-├── schemas/
-│   ├── active-run.schema.json
-│   ├── config.schema.json
-│   ├── journal.schema.json
-│   ├── loop-state.schema.json
-│   ├── node.schema.json
-│   └── selection.schema.json
-├── agents/
 ├── skills/
 │   ├── ideation/SKILL.md
 │   ├── research-loop/SKILL.md
@@ -170,45 +163,54 @@ The writeup must not present a rejected or engineer-mode result as a scientist-m
 ├── src/
 │   ├── cli/
 │   ├── core/
+│   ├── dashboard/            # API server, session launcher; dist/ is the built frontend (gitignored, shipped in the wheel)
+│   ├── frontend/             # Vite sources of the dashboard
 │   ├── research/
 │   ├── validation/
+│   │   └── schemas/          # JSON schemas the validator applies
 │   └── writeup/
 └── tests/
     └── fixtures/
 ```
 
-## Install or use locally
+## Install
 
-Use this repository root as the plugin root.
-
-For Claude Code development, no install script is needed:
+Two pieces: the plugin (skills, agents, prompts) comes from git through Claude Code's plugin system, and the `ai-scientist` CLI that the skills call comes as a wheel attached to each GitHub release. The wheel bundles the JSON schemas and the built dashboard, and its `dashboard` extra pulls in `claude-agent-sdk` (which ships its own `claude` binary) so the dashboard can launch sessions.
 
 ```bash
-claude --plugin-dir .
+claude plugin marketplace add cobaltblu27/ai-scientist-codex
+claude plugin install ai-scientist@ai-scientist
+
+uv tool install --python 3.12 "ai-scientist[dashboard] @ https://github.com/cobaltblu27/ai-scientist-codex/releases/download/v0.2.0/ai_scientist-0.2.0-py3-none-any.whl"
+ai-scientist doctor
 ```
 
-Claude discovers `skills/`, `agents/`, and `bin/` from the plugin root. `install.sh` is the Codex installer and should not be used for Claude Code.
-
-The manifests are:
-
-```bash
-.claude-plugin/plugin.json
-.codex-plugin/plugin.json
-```
-
-For Codex development, point your plugin tooling at this checkout or copy this checkout into your local plugin workspace.
+`ai-scientist doctor` prints where the install found the plugin (`plugin_source`: `env`, `checkout`, or `installed` from `~/.claude/plugins/installed_plugins.json`), the schemas, the frontend, and the SDK, and lists anything missing. It also flags a version skew between the plugin manifest and the CLI: upgrade both together (`claude plugin update ai-scientist@ai-scientist` and the `uv tool install` line for the new release). `AI_SCIENTIST_PLUGIN_ROOT` overrides plugin discovery; `ai-scientist dashboard --plugin-dir <path>` does the same for one dashboard.
 
 Run each long-lived workflow under `/goal` in Claude Code or Codex. The goal provides persistence, while `.ai-scientist/active-run.json` and the run artifacts provide durable resume context and completion evidence.
 
+## Development
+
+Use this checkout as the plugin root and run the CLI from its virtualenv:
+
+```bash
+claude --plugin-dir .
+uv sync --extra dashboard
+uv run ai-scientist dashboard --build-only     # builds src/dashboard/dist with npm; only needed for the dashboard
+uv run pytest -q
+```
+
+`bin/ai-scientist` is a fallback that runs the CLI with the system `python3` (3.12 or newer, no SDK) straight from a checkout, for example inside a git-installed plugin without the wheel. The manifests are `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`; their `version` must match `pyproject.toml` (a test enforces it). For Codex, point your plugin tooling at this checkout.
+
 ## Quick start
 
-From this repository root, verify the Claude Code components and bundled CLI:
+From this repository root, verify the Claude Code components and the CLI:
 
 ```bash
 claude plugin validate .claude-plugin/plugin.json
 claude plugin validate agents
 claude plugin validate skills
-bin/ai-scientist --help
+uv run ai-scientist doctor
 ```
 
 ## Ideation orchestrator
@@ -473,7 +475,7 @@ See [`GUIDELINES.md`](GUIDELINES.md) for detailed maintainer guidance.
 When changing the artifact contract, update these together:
 
 1. `docs/SCHEMA.md`
-2. schemas in `schemas/`
+2. schemas in `src/validation/schemas/`
 3. `uv run ai-scientist validate run`
 4. skill instructions that mention the changed contract
 

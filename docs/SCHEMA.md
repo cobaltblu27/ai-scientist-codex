@@ -2,7 +2,7 @@
 
 Ground truth for the files the plugin writes under `<target-repo>/.ai-scientist/`.
 Skills and agents write these files by hand. The CLI validates their shape. The
-dashboard reads them. When a skill prompt, a JSON schema under `schemas/`, the
+dashboard reads them. When a skill prompt, a JSON schema under `src/validation/schemas/`, the
 validator, or the scanner disagrees with this document, this document wins and
 the other side gets fixed.
 
@@ -418,6 +418,7 @@ sessions/<session-id>/
   "cwd": "/abs/target/repo",
   "owner_pid": 41234,
   "claude_session_id": "5b2c6d1e-…",
+  "plugin_dir": "/home/me/.claude/plugins/cache/ai-scientist/ai-scientist/0.2.0",
   "num_turns": 0,
   "rate_limits": {
     "five_hour": {"type": "five_hour", "status": "allowed", "utilization": 0.42, "resets_at": 1789470000}
@@ -437,11 +438,12 @@ sessions/<session-id>/
 | `prompt` | the user's extra instructions, at most 20 000 characters |
 | `cwd`, `owner_pid` | the target repository and the dashboard process holding the subprocess |
 | `claude_session_id` | the Claude Code session id; `claude --resume <id>` attaches once the session is stopped |
+| `plugin_dir` | the plugin checkout loaded into the session (skills, agents); `dashboard --plugin-dir`, else this checkout, else the Claude Code install |
 | `num_turns` | turns completed over the whole session (summed over result messages) |
 | `rate_limits` | latest subscription rate-limit window per `type` (`five_hour`, `seven_day`, ...), each `{type, status, utilization, resets_at}`: `status` is `allowed`, `allowed_warning` or `rejected`, `utilization` the consumed fraction 0..1 or null, `resets_at` unix seconds or null. Empty until the CLI reports one; API-key sessions never do |
 | `error` | from the latest failing result or the failure that ended the session |
 
-`ideas.json` keeps the 3.6 shape with `idea_file` / `pilot_report` rewritten to `.ai-scientist/runs/<ideation-run>/...` so a research run can name it as its `idea_batch`; entries also carry `source_run_id`. `events.jsonl` rows are `{"ts", "type", "subtype"?, "text"?, "tool"?, "origin"?}` with `type` one of `system`, `assistant`, `user`, `result`, `dashboard`; `user` rows carry `origin` (`launch`, `dashboard`, `resume`); `init` system rows and `result` rows also carry `session_id`, results carry `num_turns` (for that turn) and `is_error`, and `system` rows with subtype `rate_limit` carry every window the CLI reported as a list under `rate_limits`. Long text is clipped; readers skip malformed lines.
+`ideas.json` keeps the 3.6 shape with `idea_file` / `pilot_report` rewritten to `.ai-scientist/runs/<ideation-run>/...` so a research run can name it as its `idea_batch`; entries also carry `source_run_id`. `events.jsonl` rows are `{"ts", "type", "subtype"?, "text"?, "tool"?, "origin"?}` with `type` one of `system`, `assistant`, `user`, `result`, `dashboard`; `user` rows carry `origin` (`launch`, `dashboard`, `resume`); a `dashboard` row with subtype `version_skew` is written at launch when the plugin manifest version differs from the CLI version; `init` system rows and `result` rows also carry `session_id`, results carry `num_turns` (for that turn) and `is_error`, and `system` rows with subtype `rate_limit` carry every window the CLI reported as a list under `rate_limits`. Long text is clipped; readers skip malformed lines.
 
 A live session whose `run_id` has no `runs/<run-id>` yet (bootstrap has not run) appears in the overview as a `starting` research run carrying `pending: true` and the session; `GET /api/runs/<run-id>` serves the same placeholder until the directory exists.
 
@@ -470,7 +472,5 @@ Places where the CLI or its JSON schemas disagree with this document and must mo
 - `validation.run.check_config` loads `config.json`. It must parse `config.md` frontmatter.
 - The campaign validator requires `state.idea_batch` and `state.learning_notes.path`. Both come from `config.md` and `links`.
 - `research.workflow` writes `learning_notes_ref` as `learning-notes.jsonl`. The file is `learning-notes.md`.
-- `schemas/config.schema.json` and `schemas/node.schema.json` describe files this document removes. Delete them.
-- `schemas/active-run.schema.json` uses `target_repo`; this document uses `target_repository`.
-- `schemas/loop-state.schema.json`, `schemas/selection.schema.json`, `schemas/journal.schema.json` carry field lists beyond this document. Reduce to the required keys here.
-- Nothing under `src/` loads `schemas/*.json`. Once aligned, `ai-scientist validate run` should load them.
+- `src/validation/schemas/active-run.schema.json` uses `target_repo`; this document uses `target_repository`.
+- `loop-state.schema.json`, `selection.schema.json`, `journal.schema.json` under `src/validation/schemas/` carry field lists beyond this document. Reduce to the required keys here.

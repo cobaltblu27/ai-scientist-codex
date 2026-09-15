@@ -2,7 +2,7 @@
 """Fail-closed validator for AI Scientist run artifacts.
 
 The shapes checked here are defined in docs/SCHEMA.md. The JSON files under
-`schemas/` carry the same required keys and closed enums; `schema_problems`
+`src/validation/schemas/` carry the same required keys and closed enums; `schema_problems`
 applies them with a small in-tree checker so the two never drift apart.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from core.frontmatter import read_frontmatter
-from core.plugin import plugin_root
+from core.assets import schemas_dir
 from core.state import (
     JOURNAL_EVENT_TYPES,
     TERMINAL_PHASE_STATUSES,
@@ -73,7 +73,7 @@ def pick_run(root: Path, run_id: str | None) -> Path:
     return candidates[0]
 
 
-# --- schemas/*.json -----------------------------------------------------------------------------
+# --- validation/schemas/*.json -----------------------------------------------------------------------------
 
 _JSON_TYPES = {
     "object": dict,
@@ -85,7 +85,7 @@ _JSON_TYPES = {
 
 
 def load_schema(name: str) -> dict[str, Any] | None:
-    path = plugin_root() / "schemas" / f"{name}.schema.json"
+    path = schemas_dir() / f"{name}.schema.json"
     try:
         value = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):

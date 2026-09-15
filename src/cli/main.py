@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from core import agents as core_agents
+from core.version import cli_version
 from core.state import (
     TERMINAL_PHASE_STATUSES,
     append_journal_event,
@@ -116,6 +117,13 @@ def _dependency_error_message(status: dict[str, Any]) -> str:
     if status.get("missing_executables"):
         missing.append("executables: " + ", ".join(str(item) for item in status["missing_executables"]))
     return "missing writeup dependency (" + "; ".join(missing) + "). Install the missing dependency and rerun this command."
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from cli.doctor import report
+
+    result = report(Path(args.plugin_dir) if args.plugin_dir else None)
+    return response("error" if result["problems"] else "ok", **result)
 
 
 def cmd_writeup_doctor(_args: argparse.Namespace) -> int:
@@ -252,7 +260,15 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
             check_built()  # never runs npm on its own: missing dist is an error, stale dist a warning
     except FrontendBuildError as exc:
         return response("error", error=str(exc))
-    serve(target_repo(args), host=args.host, port=args.port, open_browser=args.open, dev=args.dev, dev_port=args.dev_port)
+    serve(
+        target_repo(args),
+        host=args.host,
+        port=args.port,
+        open_browser=args.open,
+        dev=args.dev,
+        dev_port=args.dev_port,
+        plugin_dir=Path(args.plugin_dir).resolve() if args.plugin_dir else None,
+    )
     return 0
 
 
@@ -312,7 +328,12 @@ def add_json_file_arg(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-repo", type=Path, help="Target repository. Defaults to current working directory.")
+    parser.add_argument("--version", action="version", version=f"ai-scientist {cli_version()}")
     sub = parser.add_subparsers(dest="area", required=True)
+
+    doctor = sub.add_parser("doctor", help="Report where this install finds the plugin, schemas, frontend, and SDK.")
+    doctor.add_argument("--plugin-dir", help="Check this plugin checkout instead of the resolved one.")
+    doctor.set_defaults(func=cmd_doctor)
 
     validate = sub.add_parser("validate")
     validate_sub = validate.add_subparsers(dest="command", required=True)
@@ -441,8 +462,9 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--port", type=int, default=8765)
     dashboard.add_argument("--open", action="store_true", help="Open the dashboard in a browser.")
     dashboard.add_argument("--build", action="store_true", help="Build the frontend (npm install on first use, then npm run build) before serving.")
-    dashboard.add_argument("--build-only", action="store_true", help="Build the frontend into src/frontend/dist and exit.")
+    dashboard.add_argument("--build-only", action="store_true", help="Build the frontend into src/dashboard/dist and exit.")
     dashboard.add_argument("--dev", action="store_true", help="Also run the Vite dev server (hot reload, npm install on first use) and open that instead of the built frontend.")
+    dashboard.add_argument("--plugin-dir", help="Plugin checkout to load into launched sessions (default: this checkout, else the Claude Code install).")
     dashboard.add_argument("--dev-port", type=int, default=5173, help="Port for the Vite dev server with --dev.")
     dashboard.set_defaults(func=cmd_dashboard)
 

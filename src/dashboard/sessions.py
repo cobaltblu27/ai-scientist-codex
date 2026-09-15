@@ -24,13 +24,14 @@ import secrets
 import threading
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncContextManager, Protocol
 
 from core.message_box import MAX_PROMPT_CHARS
-from core.plugin import plugin_root
+from core.plugin import INSTALL_HINT, find_plugin_root, plugin_version
+from core.version import cli_version
 from core.state import ai_root, append_jsonl, atomic_write_json, pid_is_running, utc_now
 
 DIR_NAME = "sessions"
@@ -65,7 +66,7 @@ class LaunchSpec:
     idea_batch: str
     idea_ids: list[str]
     prompt: str
-    plugin_dir: Path = field(default_factory=plugin_root)
+    plugin_dir: Path  # the plugin checkout Claude Code loads the skills from
 
 
 class SessionClient(Protocol):
@@ -108,7 +109,10 @@ class ClaudeSdkBackend:
         try:
             import claude_agent_sdk  # noqa: F401
         except ImportError as exc:
-            return f"claude-agent-sdk is not installed ({exc}); run `uv sync --extra dashboard`"
+            return (
+                f"claude-agent-sdk is not installed ({exc}); install the CLI with its `dashboard` extra "
+                "(`uv tool install \"ai-scientist[dashboard] @ <wheel url>\"`, or `uv sync --extra dashboard` in a checkout)"
+            )
         return None
 
     def open(self, spec: LaunchSpec) -> AsyncContextManager[SessionClient]:
@@ -298,6 +302,17 @@ class LiveSession:
     def start(self) -> None:
         self._thread.start()
 
+    def _warn_on_version_skew(self) -> None:
+        """The skills come from the plugin checkout, the CLI from the wheel; note when their versions differ."""
+        plugin, cli = plugin_version(self.spec.plugin_dir), cli_version()
+        if plugin != cli:
+            self.append_event({
+                "type": "dashboard",
+                "subtype": "version_skew",
+                "text": f"plugin {self.spec.plugin_dir} is version {plugin or 'unknown'} but the CLI is {cli}; "
+                "the skills and the CLI may disagree (update the plugin or reinstall the CLI)",
+            })
+
     def _run(self) -> None:
         try:
             asyncio.run(self._main())
@@ -316,6 +331,7 @@ class LiveSession:
             async with self.backend.open(self.spec) as client:
                 self._client = client
                 self._started.set()
+                self._warn_on_version_skew()
                 await client.query(self.prompt)
                 self.append_event({"type": "user", "origin": "launch", "text": self.prompt})
                 async for message in client.receive_messages():
@@ -461,9 +477,10 @@ def _idea_entries(root: Path, idea_ids: list[str]) -> list[dict[str, Any]]:
 
 
 class SessionManager:
-    def __init__(self, target_repo: Path, backend: SessionBackend | None = None):
+    def __init__(self, target_repo: Path, backend: SessionBackend | None = None, *, plugin_dir: Path | None = None):
         self.target_repo = target_repo.resolve()
         self.backend: SessionBackend = backend or ClaudeSdkBackend()
+        self.plugin_dir = plugin_dir.resolve() if plugin_dir else None
         self._live: dict[str, LiveSession] = {}
         self._lock = threading.Lock()
         self.reconcile()
@@ -507,6 +524,9 @@ class SessionManager:
         reason = self.backend.unavailable_reason()
         if reason:
             raise SessionError(reason, 503)
+        plugin_dir = self.plugin_dir or (lambda found: found[0] if found else None)(find_plugin_root())
+        if plugin_dir is None:
+            raise SessionError(INSTALL_HINT, 503)
         root = ai_root(self.target_repo)
         contract_id = (contract_id or "").strip()
         if not _safe_segment(contract_id):
@@ -546,6 +566,7 @@ class SessionManager:
                 idea_batch=idea_batch,
                 idea_ids=[i["id"] for i in ideas],
                 prompt=prompt,
+                plugin_dir=plugin_dir,
             )
             record = {
                 "id": session_id,
@@ -560,6 +581,7 @@ class SessionManager:
                 "cwd": str(self.target_repo),
                 "owner_pid": os.getpid(),
                 "claude_session_id": spec.claude_session_id,
+                "plugin_dir": str(plugin_dir),
                 "num_turns": 0,
                 "rate_limits": {},
                 "error": None,
