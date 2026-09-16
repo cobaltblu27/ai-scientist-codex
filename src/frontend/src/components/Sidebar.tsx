@@ -1,5 +1,6 @@
 import type { Overview } from "../lib/types";
 import { relTime, tone } from "../lib/format";
+import { useTheme } from "../lib/theme";
 
 interface Props {
   overview: Overview | null;
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export function Sidebar({ overview, selected, onSelect, open, onClose }: Props) {
+  const [theme, toggleTheme] = useTheme();
   const runs = overview?.runs ?? [];
   const activeId = overview?.active_run?.run_id ?? null;
   const live = runs.filter((r) => r.active);
@@ -58,6 +60,18 @@ export function Sidebar({ overview, selected, onSelect, open, onClose }: Props) 
         </ul>
 
         <div className="sidebar-foot">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={theme === "dark"}
+            className="theme-switch"
+            onClick={toggleTheme}
+          >
+            <span>Dark mode</span>
+            <span className="switch-track" aria-hidden="true">
+              <span className="switch-knob" />
+            </span>
+          </button>
           <div className="muted ellipsis" title={overview?.ai_root}>{overview?.ai_root ?? "…"}</div>
         </div>
       </aside>
