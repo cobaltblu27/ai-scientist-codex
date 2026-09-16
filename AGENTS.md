@@ -46,4 +46,12 @@ When developing CLI features, you may use git issues for keeping track of non-tr
 Dashboard is additional package for running frontend, for monitoring and allowing human-in-the loop research in research loop.
 Read `docs/FRONTEND.md` for frontend development and checking its plans, and `docs/SCHEMA.md` for what the scanner may read.
 
+## CLI
+ai-scientist cli, used for maintaining session and backend for dashboard.
+
+# Issues
+Non-trivial tasks will be managed using github issues. 
+When working based on an issue, make sure to check them occasionally for updates.
+You may also use git worktrees for simulateous editing using subagents.
+
 

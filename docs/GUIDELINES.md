@@ -53,6 +53,9 @@ If the artifact contract changes, update all of these together:
 3. `src/validation/run.py`
 4. Skill instructions that mention the changed contract
 
+## Issues and Branching Guidelines
+When asked to implement multiple feature/bugfix/etc simultaneously, you may use git worktrees. create it in `../../WORKTREES/ai-scientist`.
+
 ## Dependency and API policy
 
 - Prepare a dependency plan before research execution.
