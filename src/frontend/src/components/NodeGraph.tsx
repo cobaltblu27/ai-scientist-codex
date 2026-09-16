@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { NodeSummary } from "../lib/types";
 import { layoutGraph, NODE_R, type LaidNode } from "../lib/graph";
 import { primaryMetric, relTime, statusKind, tone } from "../lib/format";
@@ -22,25 +23,14 @@ const KINDS: { kind: ReturnType<typeof statusKind>; label: string }[] = [
 
 export function NodeGraph({ nodes, primaryMetricName, selectedNode, onOpen }: Props) {
   const layout = useMemo(() => layoutGraph(nodes), [nodes]);
-  const [hover, setHover] = useState<string | null>(null);
-  const hovered = hover ? layout.nodes.find((n) => n.node.node_id === hover) : undefined;
-  // The canvas is at least as wide as the board, so measure the board to know how much room a hover card has.
-  const boardRef = useRef<HTMLDivElement>(null);
-  const [boardW, setBoardW] = useState(0);
-  useEffect(() => {
-    const el = boardRef.current;
-    if (!el) return;
-    const update = () => setBoardW(el.clientWidth);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const canvasW = Math.max(layout.width, boardW);
+  // The hover card is portalled to the body so the scrolling board cannot clip it, so it needs
+  // the hovered node's viewport rect rather than its position inside the canvas.
+  const [hover, setHover] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const hovered = hover ? layout.nodes.find((n) => n.node.node_id === hover.id) : undefined;
 
   return (
     <div className="graph">
-      <div className="graph-board" ref={boardRef}>
+      <div className="graph-board" onScroll={() => setHover(null)}>
         <div className="graph-canvas" style={{ width: layout.width, height: layout.height }}>
           <svg width={layout.width} height={layout.height} className="graph-svg">
             <g className="edges">
@@ -64,7 +54,12 @@ export function NodeGraph({ nodes, primaryMetricName, selectedNode, onOpen }: Pr
               ))}
             </g>
           </svg>
-          {hovered && <HoverCard ln={hovered} metricName={primaryMetricName} canvasW={canvasW} canvasH={layout.height} />}
+          {hovered &&
+            hover &&
+            createPortal(
+              <HoverCard ln={hovered} metricName={primaryMetricName} anchor={hover.rect} />,
+              document.body,
+            )}
         </div>
       </div>
       <div className="graph-legend">
@@ -105,7 +100,7 @@ function GraphNode({
   ln: LaidNode;
   metricName: string | null;
   isSelected: boolean;
-  onHover: (id: string | null) => void;
+  onHover: (hover: { id: string; rect: DOMRect } | null) => void;
   onOpen: (id: string) => void;
 }) {
   const n = ln.node;
@@ -115,7 +110,7 @@ function GraphNode({
     <g
       className={`gnode kind-${kind} ${isSelected ? "selected" : ""}`}
       transform={`translate(${ln.x} ${ln.y})`}
-      onMouseEnter={() => onHover(n.node_id)}
+      onMouseEnter={(e) => onHover({ id: n.node_id, rect: e.currentTarget.getBoundingClientRect() })}
       onMouseLeave={() => onHover(null)}
       onClick={() => onOpen(n.node_id)}
       role="button"
@@ -145,20 +140,22 @@ function GraphNode({
 }
 
 const CARD_W = 260;
-const CARD_HALF_H = 90; // rough: keeps a vertically-centred card inside the canvas
+const CARD_HALF_H = 90; // rough: keeps a vertically-centred card inside the viewport
+const EDGE = 8;
 
-function HoverCard({ ln, metricName, canvasW, canvasH }: { ln: LaidNode; metricName: string | null; canvasW: number; canvasH: number }) {
+function HoverCard({ ln, metricName, anchor }: { ln: LaidNode; metricName: string | null; anchor: DOMRect }) {
   const n = ln.node;
   const m = primaryMetric(n.metrics, metricName);
   const status = n.status;
-  const gap = NODE_R + 10;
-  const top = Math.min(Math.max(ln.y, CARD_HALF_H), Math.max(canvasH - CARD_HALF_H, CARD_HALF_H));
+  const gap = 10;
+  const top = Math.min(
+    Math.max(anchor.top + anchor.height / 2, CARD_HALF_H + EDGE),
+    Math.max(window.innerHeight - CARD_HALF_H - EDGE, CARD_HALF_H + EDGE),
+  );
   const style: React.CSSProperties =
-    ln.x + gap + CARD_W <= canvasW
-      ? { left: ln.x + gap, top }
-      : ln.x - gap - CARD_W >= 0
-        ? { left: ln.x - gap - CARD_W, top }
-        : { left: Math.max(8, Math.min(ln.x - CARD_W / 2, canvasW - CARD_W - 8)), top: ln.y + NODE_R + 28, transform: "none" };
+    anchor.right + gap + CARD_W <= window.innerWidth
+      ? { left: anchor.right + gap, top }
+      : { left: Math.max(EDGE, anchor.left - gap - CARD_W), top };
   return (
     <div className="graph-hover" style={style}>
       <div className="tile-kicker">

@@ -271,7 +271,7 @@ button.tile:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(30,
 
 /* hover card */
 .graph-hover {
-  position: absolute; z-index: 5; width: 260px; transform: translateY(-50%);
+  position: fixed; z-index: 30; width: 260px; transform: translateY(-50%);
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
   padding: 12px 14px; display: grid; gap: 4px; box-shadow: 0 12px 30px rgba(30, 30, 36, 0.14);
   pointer-events: none;
