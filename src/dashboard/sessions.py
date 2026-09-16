@@ -32,7 +32,7 @@ from typing import Any, AsyncContextManager, Protocol
 from core.message_box import MAX_PROMPT_CHARS
 from core.plugin import INSTALL_HINT, find_plugin_root, plugin_version
 from core.version import cli_version
-from core.state import ai_root, append_jsonl, atomic_write_json, pid_is_running, utc_now
+from core.state import TERMINAL_PHASE_STATUSES, ai_root, append_jsonl, atomic_write_json, pid_is_running, utc_now
 
 DIR_NAME = "sessions"
 LIVE_STATUSES = {"starting", "running", "idle"}
@@ -67,6 +67,7 @@ class LaunchSpec:
     idea_ids: list[str]
     prompt: str
     plugin_dir: Path  # the plugin checkout Claude Code loads the skills from
+    resume_from: str | None = None  # a Claude session id to reattach to instead of starting a fresh transcript
 
 
 class SessionClient(Protocol):
@@ -118,14 +119,17 @@ class ClaudeSdkBackend:
     def open(self, spec: LaunchSpec) -> AsyncContextManager[SessionClient]:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
+        # A relaunch reattaches to the stored transcript. The SDK forbids `session_id` next to `resume`
+        # unless the session forks, and forking would strand the id the operator copied, so only one is passed.
+        ids: dict[str, Any] = {"resume": spec.resume_from} if spec.resume_from else {"session_id": spec.claude_session_id}
         options = ClaudeAgentOptions(
             cwd=str(spec.cwd),
-            session_id=spec.claude_session_id,
             plugins=[{"type": "local", "path": str(spec.plugin_dir)}],
             setting_sources=["user", "project"],
             permission_mode=self.permission_mode,  # type: ignore[arg-type]
             system_prompt={"type": "preset", "preset": "claude_code"},
             model=self.model,
+            **ids,
         )
         return ClaudeSDKClient(options=options)
 
@@ -245,28 +249,107 @@ def build_launch_prompt(spec: LaunchSpec) -> str:
     return "\n".join(lines)
 
 
-def build_resume_prompt(spec: LaunchSpec, note: str = "", last_event_at: str | None = None) -> str:
-    """Nudge for a session that went idle while its run is still `running`: re-arm the goal, check the artifacts."""
+@dataclass
+class RunPhase:
+    """As much of `runs/<run-id>/loop-state.json` as the resume path needs."""
+
+    exists: bool = False
+    phase_status: str | None = None
+    active: bool | None = None
+    run_outcome: str | None = None
+
+    @property
+    def ended(self) -> bool:
+        """The loop reached a terminal outcome: resuming it means reopening it under a new bar."""
+        return self.phase_status in TERMINAL_PHASE_STATUSES
+
+
+def read_run_phase(target_repo: Path, run_id: str) -> RunPhase:
+    state = _read_json(ai_root(target_repo) / "runs" / run_id / "loop-state.json") if _safe_segment(run_id) else None
+    if not isinstance(state, dict):
+        return RunPhase()
+    phase_status = state.get("phase_status")
+    run_outcome = state.get("run_outcome")
+    return RunPhase(
+        exists=True,
+        phase_status=phase_status if isinstance(phase_status, str) else None,
+        active=state.get("active") if isinstance(state.get("active"), bool) else None,
+        run_outcome=run_outcome if isinstance(run_outcome, str) else None,
+    )
+
+
+def note_required_reason(phase: RunPhase) -> str | None:
+    """Reopening a run that already ended needs the operator to say what the new bar is."""
+    if phase.ended:
+        return f"a note is required to reopen a run that already ended ({phase.phase_status})"
+    return None
+
+
+def _check_note(note: str, phase: RunPhase) -> None:
+    if len(note or "") > MAX_PROMPT_CHARS:
+        raise SessionError(f"note longer than {MAX_PROMPT_CHARS} characters")
+    reason = note_required_reason(phase)
+    if reason and not (note or "").strip():
+        raise SessionError(reason)
+
+
+def build_resume_prompt(spec: LaunchSpec, note: str = "", last_event_at: str | None = None, phase: RunPhase | None = None) -> str:
+    """The prompt a Resume sends, framed by what the run's loop-state.json says.
+
+    Three cases: the loop is still running and the session went quiet, the loop already ended
+    and the operator is reopening it under a tightened bar, or bootstrap never created the run.
+    """
+    phase = phase or RunPhase()
     since = f" since {last_event_at}" if last_event_at else ""
-    lines = [
+    goal = (
         f"/goal Complete the ai-scientist research campaign for run {spec.run_id}: the ai-scientist:research-loop skill must reach one of its "
-        "terminal outcomes with completion audit and handoff evidence.",
-        f"The dashboard flagged this session as stalled: the run's loop-state.json still has phase_status \"running\" and no orchestrator activity{since}.",
-        "Re-read loop-state.json and journal.jsonl and check the research-loop terminal conditions against the durable state, not your memory of the conversation. "
-        "If the goal is not met, continue the campaign from that state. If it is met, checkpoint the terminal outcome so the run is no longer active.",
-    ]
-    if note.strip():
-        lines += ["Note from the user:", note.strip()]
+        "terminal outcomes with completion audit and handoff evidence."
+    )
+    if not phase.exists:
+        lines = [
+            goal,
+            f"Run id: {spec.run_id}. Target repository: {spec.cwd}.",
+            f"Research contract: {spec.contract_path}. Idea batch: {spec.idea_batch}.",
+            f"The dashboard resumed this session and `runs/{spec.run_id}/` does not exist yet, so the run still has to be bootstrapped. "
+            "Check the target repository before assuming the earlier attempt left nothing behind.",
+        ]
+        if note.strip():
+            lines += ["Note from the user:", note.strip()]
+    elif phase.ended:
+        outcome = f" (run_outcome {phase.run_outcome})" if phase.run_outcome else ""
+        lines = [
+            goal,
+            f"The operator is reopening this run from the dashboard. Its loop-state.json reads phase_status \"{phase.phase_status}\"{outcome}, "
+            "so the loop already terminated once and the bar it was judged against has been tightened.",
+            "The new bar, from the operator:",
+            note.strip(),
+            "Re-read loop-state.json, journal.jsonl and the research contract, then judge the new bar against the evidence the run already produced. "
+            "Say plainly if it is unreachable or already met rather than reopening for the sake of it.",
+            "To reopen: record the new bar as a binding_amendment in the run state, put phase_status back to \"running\" with active true and no stale "
+            "run_outcome, and journal the transition that did it so the durable state explains why the run is live again. Leave the previous outcome and "
+            "its evidence in the journal; the reopened run terminates again under the research-loop terminal conditions, judged against the amended bar.",
+        ]
+    else:
+        lines = [
+            goal,
+            f"The dashboard flagged this session as stalled: the run's loop-state.json still has phase_status \"running\" and no orchestrator activity{since}.",
+            "Re-read loop-state.json and journal.jsonl and check the research-loop terminal conditions against the durable state, not your memory of the conversation. "
+            "If the goal is not met, continue the campaign from that state. If it is met, checkpoint the terminal outcome so the run is no longer active.",
+        ]
+        if note.strip():
+            lines += ["Note from the user:", note.strip()]
     return "\n".join(lines)
 
 
 class LiveSession:
-    def __init__(self, target_repo: Path, backend: SessionBackend, spec: LaunchSpec, record: dict[str, Any]):
+    def __init__(self, target_repo: Path, backend: SessionBackend, spec: LaunchSpec, record: dict[str, Any], prompt: str | None = None):
         self.target_repo = target_repo
         self.backend = backend
         self.spec = spec
         self.record = record
-        self.prompt = build_launch_prompt(spec)
+        # A relaunch opens with the resume prompt instead; the process restart also drops the /goal stop hook, so both re-arm it.
+        self.prompt = prompt or build_launch_prompt(spec)
+        self.first_origin = "resume" if spec.resume_from else "launch"
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[Any] | None = None
@@ -333,7 +416,7 @@ class LiveSession:
                 self._started.set()
                 self._warn_on_version_skew()
                 await client.query(self.prompt)
-                self.append_event({"type": "user", "origin": "launch", "text": self.prompt})
+                self.append_event({"type": "user", "origin": self.first_origin, "text": self.prompt})
                 async for message in client.receive_messages():
                     self._on_message(message)
             self._finish("stopped", None)
@@ -404,11 +487,11 @@ class LiveSession:
             raise SessionError(f"could not deliver message: {exc.__class__.__name__}: {exc}", 502) from exc
         return event
 
-    def resume(self, note: str = "") -> dict[str, Any]:
-        """Nudge an idle orchestrator back to work. The process is still alive; this is a message, not a relaunch."""
+    def resume(self, note: str = "", phase: RunPhase | None = None) -> dict[str, Any]:
+        """Nudge an orchestrator whose process is still alive: this is a message, not a relaunch."""
         if len(note or "") > MAX_PROMPT_CHARS:
             raise SessionError(f"note longer than {MAX_PROMPT_CHARS} characters")
-        return self.send(build_resume_prompt(self.spec, note or "", self.last_event_at), origin="resume")
+        return self.send(build_resume_prompt(self.spec, note or "", self.last_event_at, phase), origin="resume")
 
     def interrupt(self) -> None:
         self._started.wait(SEND_TIMEOUT_SEC)
@@ -443,6 +526,23 @@ def _read_json(path: Path) -> Any:
 
 def _safe_segment(value: str) -> bool:
     return bool(value) and "/" not in value and value not in {".", ".."}
+
+
+def _last_event_ts(target_repo: Path, session_id: str) -> str | None:
+    """The `ts` of the last readable events.jsonl row; a relaunched process has no in-memory history."""
+    try:
+        lines = (session_dir(target_repo, session_id) / "events.jsonl").read_text().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        row = None
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and isinstance(row.get("ts"), str):
+            return row["ts"]
+    return None
 
 
 def _idea_entries(root: Path, idea_ids: list[str]) -> list[dict[str, Any]]:
@@ -519,14 +619,22 @@ class SessionManager:
     def get(self, session_id: str) -> LiveSession | None:
         return self._live.get(session_id)
 
+    def _plugin_dir(self, recorded: Any = None) -> Path:
+        """The plugin checkout to load: what the session used before if it is still there, else this dashboard's."""
+        if isinstance(recorded, str) and recorded and Path(recorded).is_dir():
+            return Path(recorded)
+        found = find_plugin_root()
+        plugin_dir = self.plugin_dir or (found[0] if found else None)
+        if plugin_dir is None:
+            raise SessionError(INSTALL_HINT, 503)
+        return plugin_dir
+
     # -- actions
     def launch(self, contract_id: str, idea_ids: list[str], prompt: str, run_id: str | None = None) -> dict[str, Any]:
         reason = self.backend.unavailable_reason()
         if reason:
             raise SessionError(reason, 503)
-        plugin_dir = self.plugin_dir or (lambda found: found[0] if found else None)(find_plugin_root())
-        if plugin_dir is None:
-            raise SessionError(INSTALL_HINT, 503)
+        plugin_dir = self._plugin_dir()
         root = ai_root(self.target_repo)
         contract_id = (contract_id or "").strip()
         if not _safe_segment(contract_id):
@@ -606,7 +714,69 @@ class SessionManager:
         return self._require(session_id).send(text)
 
     def resume(self, session_id: str, note: str = "") -> dict[str, Any]:
-        return self._require(session_id).resume(note)
+        """Resume a halted session: a message when the process is still alive, a relaunch when it is gone."""
+        live = self._live.get(session_id)
+        if live is not None and live.alive:
+            phase = read_run_phase(self.target_repo, str(live.record.get("run_id") or ""))
+            _check_note(note, phase)
+            return live.resume(note, phase)
+        return self._relaunch(live.record if live is not None else self._record(session_id), note)
+
+    def _record(self, session_id: str) -> dict[str, Any]:
+        """The stored record for a session this process does not hold."""
+        if not _safe_segment(session_id) or not session_dir(self.target_repo, session_id).is_dir():
+            raise SessionError(f"unknown session: {session_id}", 404)
+        record = _read_json(session_dir(self.target_repo, session_id) / "session.json")
+        if not isinstance(record, dict):
+            raise SessionError(f"session {session_id} has no readable session.json", 409)
+        record["id"] = session_id
+        return record
+
+    def _relaunch(self, record: dict[str, Any], note: str) -> dict[str, Any]:
+        """Start a process again for a session whose own one is gone, reattached to its Claude transcript."""
+        session_id = str(record["id"])
+        reason = self.backend.unavailable_reason()
+        if reason:
+            raise SessionError(reason, 503)
+        pid = record.get("owner_pid")
+        if record.get("status") in LIVE_STATUSES and isinstance(pid, int) and pid != os.getpid() and pid_is_running(pid):
+            raise SessionError(f"session {session_id} is not owned by this dashboard process", 409)
+        claude_session_id = record.get("claude_session_id")
+        if not isinstance(claude_session_id, str) or not claude_session_id:
+            raise SessionError(f"session {session_id} never reported a Claude session id, so there is no transcript to resume", 409)
+        run_id = str(record.get("run_id") or "")
+        if not _safe_segment(run_id):
+            raise SessionError(f"session {session_id} has no usable run id")
+        phase = read_run_phase(self.target_repo, run_id)
+        _check_note(note, phase)
+        plugin_dir = self._plugin_dir(record.get("plugin_dir"))
+        ideas = _read_json(session_dir(self.target_repo, session_id) / "ideas.json")
+        idea_ids = [i["id"] for i in (ideas or {}).get("ideas", []) if isinstance(i, dict) and isinstance(i.get("id"), str)] if isinstance(ideas, dict) else []
+        with self._lock:
+            for other in self._live.values():
+                if other.alive and other.record.get("run_id") == run_id:
+                    raise SessionError(f"run {run_id} already has a live session {other.spec.session_id}", 409)
+            spec = LaunchSpec(
+                session_id=session_id,
+                claude_session_id=claude_session_id,
+                run_id=run_id,
+                cwd=self.target_repo,
+                contract_path=str(record.get("contract_path") or ""),
+                idea_batch=str(record.get("idea_batch") or ""),
+                idea_ids=idea_ids,
+                prompt=str(record.get("prompt") or ""),
+                plugin_dir=plugin_dir,
+                resume_from=claude_session_id,
+            )
+            prompt = build_resume_prompt(spec, note or "", _last_event_ts(self.target_repo, session_id), phase)
+            record.update(status="starting", owner_pid=os.getpid(), error=None, plugin_dir=str(plugin_dir), updated_at=utc_now())
+            atomic_write_json(session_dir(self.target_repo, session_id) / "session.json", record)
+            live = LiveSession(self.target_repo, self.backend, spec, record, prompt=prompt)
+            # The same directory and the same transcript: events.jsonl reads as one console across the restart.
+            event = live.append_event({"type": "dashboard", "subtype": "relaunch", "text": f"resumed by the dashboard, reattached to Claude session {claude_session_id}"})
+            self._live[session_id] = live
+        live.start()
+        return event
 
     def interrupt(self, session_id: str) -> dict[str, Any]:
         live = self._require(session_id)

@@ -16,7 +16,16 @@ import pytest
 
 from dashboard.scan import scan_overview, session_detail, find_session
 from dashboard.server import make_handler
-from dashboard.sessions import LIVE_STATUSES, LaunchSpec, SessionError, SessionManager, build_launch_prompt, build_resume_prompt, session_dir
+from dashboard.sessions import (
+    LIVE_STATUSES,
+    LaunchSpec,
+    SessionError,
+    SessionManager,
+    build_launch_prompt,
+    build_resume_prompt,
+    read_run_phase,
+    session_dir,
+)
 from test_support import read_json, write_json
 
 CONTRACT = "cifar10-accuracy"
@@ -116,6 +125,15 @@ def _target(tmp_path: Path) -> Path:
         {"run_id": IDEATION_RUN, "ideas": [{"id": i, "title": t, "idea_file": f"ideas/{i}.md", "pilot_report": f"logs/pilots/{i}/report.md"} for i, t in IDEAS]},
     )
     return tmp_path
+
+
+def _loop_state(target: Path, run_id: str, phase_status: str = "running", run_outcome: str | None = None) -> None:
+    """The run the session drives; the resume prompt and the note rule read phase_status from it."""
+    write_json(
+        target / ".ai-scientist" / "runs" / run_id / "loop-state.json",
+        {"schema_version": 1, "run_id": run_id, "phase": "research", "phase_status": phase_status,
+         "active": phase_status == "running", "run_outcome": run_outcome, "state": {}},
+    )
 
 
 def _events(target: Path, session_id: str) -> list[dict]:
@@ -279,10 +297,11 @@ def test_send_mid_turn_interrupt_and_result(target: Path, backend: FakeBackend, 
     assert _record(target, sid)["status"] == "idle"
 
     # Resume: a nudge into the still-alive process, re-arming /goal and pointing at the artifacts.
+    _loop_state(target, "run-c")
     idle_at = _events(target, sid)[-1]["ts"]
     event = manager.resume(sid, "N2 was still training")
     assert event["type"] == "user" and event["origin"] == "resume"
-    assert event["text"] == build_resume_prompt(backend.specs[0], "N2 was still training", idle_at)
+    assert event["text"] == build_resume_prompt(backend.specs[0], "N2 was still training", idle_at, read_run_phase(target, "run-c"))
     assert event["text"].startswith("/goal ") and "run-c" in event["text"] and f"since {idle_at}" in event["text"]
     assert "loop-state.json" in event["text"] and event["text"].endswith("N2 was still training")
     assert client.queries[-1] == event["text"]
@@ -305,9 +324,6 @@ def test_send_mid_turn_interrupt_and_result(target: Path, backend: FakeBackend, 
     assert not manager.get(sid)._thread.is_alive()
     with pytest.raises(SessionError) as err:
         manager.send(sid, "again")
-    assert err.value.status == 409
-    with pytest.raises(SessionError) as err:
-        manager.resume(sid)
     assert err.value.status == 409
     manager.stop(sid)  # idempotent
     manager.stop_all()
@@ -365,6 +381,77 @@ def test_reconcile_marks_orphans_detached(target: Path, backend: FakeBackend) ->
     with pytest.raises(SessionError) as err:
         manager.send("ses-dead", "x")
     assert err.value.status == 409 and "not owned" in str(err.value)
+
+
+def _stored(root: Path, session_id: str, run_id: str, **extra: Any) -> dict:
+    """A session record left behind by a dashboard process that is gone."""
+    record = {
+        "id": session_id, "backend": "claude", "status": "detached", "created_at": "2026-09-14T10:00:00Z",
+        "updated_at": "2026-09-14T10:30:00Z", "run_id": run_id, "contract_path": f".ai-scientist/contracts/{CONTRACT}/research-contract.json",
+        "idea_batch": f".ai-scientist/sessions/{session_id}/ideas.json", "prompt": "use the conda env ml", "cwd": "/old/checkout",
+        "owner_pid": 2_000_000_000, "claude_session_id": "5b2c6d1e-old", "num_turns": 12, "rate_limits": {}, "error": None,
+        **extra,
+    }
+    write_json(root / "sessions" / session_id / "session.json", record)
+    write_json(root / "sessions" / session_id / "ideas.json", {"session_id": session_id, "ideas": [{"id": "snapshot-ensemble"}]})
+    return record
+
+
+def test_relaunch_reattaches_to_the_stored_transcript(target: Path, backend: FakeBackend) -> None:
+    root = target / ".ai-scientist"
+    _stored(root, "ses-gone", "run-r")
+    _loop_state(target, "run-r")
+    manager = SessionManager(target, backend, plugin_dir=target)
+    try:
+        event = manager.resume("ses-gone", "N1 never finished")
+        assert event["type"] == "dashboard" and event["subtype"] == "relaunch" and "5b2c6d1e-old" in event["text"]
+        _wait(lambda: any(r["type"] == "user" for r in _events(target, "ses-gone")))
+
+        spec = backend.specs[-1]
+        assert spec.session_id == "ses-gone" and spec.resume_from == "5b2c6d1e-old" and spec.claude_session_id == "5b2c6d1e-old"
+        assert spec.run_id == "run-r" and spec.idea_ids == ["snapshot-ensemble"] and spec.cwd == target.resolve()
+        assert _record(target, "ses-gone")["owner_pid"] == os.getpid()
+
+        # One continuous console: the same directory, the relaunch row, then the resume prompt as a user event.
+        rows = _events(target, "ses-gone")
+        assert rows[0]["subtype"] == "relaunch"
+        first_user = next(r for r in rows if r["type"] == "user")
+        assert first_user["origin"] == "resume" and first_user["text"].endswith("N1 never finished")
+        assert "stalled" in first_user["text"] and first_user["text"].startswith("/goal ")
+    finally:
+        manager.stop_all()
+
+
+def test_resume_reopens_a_finished_run_only_with_a_note(target: Path, backend: FakeBackend) -> None:
+    root = target / ".ai-scientist"
+    _stored(root, "ses-won", "run-s")
+    _loop_state(target, "run-s", phase_status="success", run_outcome="success")
+    manager = SessionManager(target, backend, plugin_dir=target)
+    try:
+        with pytest.raises(SessionError) as err:
+            manager.resume("ses-won")
+        assert err.value.status == 400 and "reopen" in str(err.value) and "success" in str(err.value)
+
+        manager.resume("ses-won", "beat 0.94 top-1, not 0.92")
+        _wait(lambda: any(r["type"] == "user" for r in _events(target, "ses-won")))
+        prompt = next(r for r in _events(target, "ses-won") if r["type"] == "user")["text"]
+        assert "reopening" in prompt and "beat 0.94 top-1, not 0.92" in prompt
+        assert "binding_amendment" in prompt and "phase_status" in prompt
+    finally:
+        manager.stop_all()
+
+
+def test_relaunch_refuses_a_record_another_dashboard_owns(target: Path, backend: FakeBackend) -> None:
+    root = target / ".ai-scientist"
+    _stored(root, "ses-theirs", "run-t", status="running", owner_pid=os.getppid())
+    _stored(root, "ses-idless", "run-u", claude_session_id=None)
+    manager = SessionManager(target, backend, plugin_dir=target)
+    with pytest.raises(SessionError) as err:
+        manager.resume("ses-theirs", "carry on")
+    assert err.value.status == 409 and "not owned" in str(err.value)
+    with pytest.raises(SessionError) as err:
+        manager.resume("ses-idless", "carry on")
+    assert err.value.status == 409 and "transcript" in str(err.value)
 
 
 def test_scanner_exposes_sessions_and_ideas(target: Path, backend: FakeBackend, manager: SessionManager) -> None:
@@ -461,6 +548,7 @@ def test_server_session_routes(server: str, target: Path, backend: FakeBackend) 
     status, overview = _get(f"{server}/api/overview")
     assert overview["sessions"][0]["id"] == sid and overview["ideas"][0]["run_id"] == IDEATION_RUN
 
+    _loop_state(target, "run-h")
     status, event = _post(f"{server}/api/sessions/{sid}/resume", {"note": "keep going"})
     assert status == 202 and event["origin"] == "resume" and event["text"].endswith("keep going")
     _wait(lambda: backend.clients[0].queries[-1] == event["text"])
@@ -473,8 +561,14 @@ def test_server_session_routes(server: str, target: Path, backend: FakeBackend) 
     assert status == 200 and rec["status"] == "stopped"
     status, err = _post(f"{server}/api/sessions/{sid}/messages", {"text": "again"})
     assert status == 409
-    assert _post(f"{server}/api/sessions/{sid}/resume", {})[0] == 409
     assert _post(f"{server}/api/sessions/nope/resume", {})[0] == 404
+
+    # Resume on a stopped session relaunches it, reattached to the same Claude transcript.
+    status, event = _post(f"{server}/api/sessions/{sid}/resume", {"note": "one more sweep"})
+    assert status == 202 and event["type"] == "dashboard" and event["subtype"] == "relaunch"
+    _wait(lambda: _get(f"{server}/api/sessions/{sid}")[1]["status"] in LIVE_STATUSES)
+    assert backend.specs[-1].resume_from == "fake-session-1"
+    assert _post(f"{server}/api/sessions/{sid}/stop", {})[0] == 200
 
     assert _post(f"{server}/api/sessions/nope/messages", {"text": "x"})[0] == 404
     assert _post(f"{server}/api/sessions/nope/stop", {})[0] == 404

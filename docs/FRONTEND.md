@@ -23,7 +23,7 @@ Things to know:
 - The launch prompt starts with `/goal`, whose stop hook keeps the turn open until the campaign reaches a terminal outcome. A campaign session therefore stays `running` and only shows `idle` after Interrupt or once the goal is met; Interrupt is the way to get a `result` out of a long turn.
 - Usage comes from the CLI's `rate_limit_event` stream (subscription accounts). An API-key session never reports one and the console shows "usage: not reported yet".
 - The dashboard process is the owner. If it dies, `reconcile()` at the next start marks its live records `detached`; the `claude` subprocess may still be running.
-- `claude --resume <claude_session_id>` is the way to take over from a terminal after Stop or on a detached record. Resuming while the dashboard still drives the session opens a second driver on the same transcript.
+- `claude --resume <claude_session_id>` is the way to take over from a terminal after Stop or on a detached record, and the dashboard's own Resume does the same thing in-process. Either way, driving a session the dashboard still holds opens a second driver on one transcript.
 - Requires `claude-agent-sdk`: the `dashboard` extra of the wheel (`uv tool install "ai-scientist[dashboard] @ <wheel url>"`) or `uv sync --extra dashboard` in a checkout. The SDK bundles its own `claude` binary. Without the SDK, or without a plugin checkout to load the skills from, the launch route answers 503 with the install hint.
 - The skills come from the plugin checkout and the CLI from the wheel. When their versions differ, launch writes a `dashboard` event with subtype `version_skew` so the mismatch is visible in the console; `ai-scientist doctor` reports the same.
 - TODO(codex): a `CodexBackend` behind the same `SessionBackend` protocol; only the Claude backend exists.
@@ -43,9 +43,15 @@ Liveness: a node or work item is live when its `status` is not one of `completed
 
 API: `/api/overview` (adds `ideas` and `sessions`; each run carries `session`), `/api/runs/<run-id>`, `/api/runs/<run-id>/nodes/<node-id>`, `/api/runs/<run-id>/files/<run-relative-path>` (text files only, path-checked to stay inside the run), `POST /api/runs/<run-id>/messages` with `{node_id, kind, prompt}` (201 with the message record; 400 on validation failure, 404 unknown run, 413 oversized). The dashboard never edits a message after creating it; status moves through `ai-scientist message-box update`.
 
-Sessions: `GET /api/sessions` (records, newest first), `GET /api/sessions/<id>` (record plus the last 200 events), `POST /api/sessions` with `{contract_id, idea_ids, prompt, run_id?}` (201 record; 400 bad input, 409 run id taken or already has a live session, 503 SDK missing), `POST /api/sessions/<id>/messages` with `{text}` (202 with the event row; 409 when the session is not live or not owned by this process), `POST /api/sessions/<id>/resume` with `{note?}` (202 with the event row: the resume nudge, see below), `POST /api/sessions/<id>/interrupt` and `.../stop` (200 record).
+Sessions: `GET /api/sessions` (records, newest first), `GET /api/sessions/<id>` (record plus the last 200 events), `POST /api/sessions` with `{contract_id, idea_ids, prompt, run_id?}` (201 record; 400 bad input, 409 run id taken or already has a live session, 503 SDK missing), `POST /api/sessions/<id>/messages` with `{text}` (202 with the event row; 409 when the session is not live or not owned by this process), `POST /api/sessions/<id>/resume` with `{note?}` (202 with the event row: the nudge for a live session, the `relaunch` row for a halted one, see below; 400 when a reopen arrives without a note, 409 when another dashboard process owns the record or the session never reported a Claude session id, 503 SDK missing), `POST /api/sessions/<id>/interrupt` and `.../stop` (200 record).
 
-Stalled sessions: the orchestrator sometimes declares the campaign done too early. When a session is `idle` (its turn returned a result) while the run is still `active`, tiles and the run header show `stalled` and the session card offers **Resume**. Resume does not relaunch anything: the process is still alive, so it sends one message that re-arms `/goal`, states that `loop-state.json` is still `running`, and asks the orchestrator to re-check the terminal conditions against the artifacts and either continue or checkpoint the terminal outcome. The console textarea text, if any, goes along as a note. The event row carries `origin: resume`.
+Resume: one textarea and one button cover every way a campaign halts. What the server does depends on the session and on the run's `loop-state.json`.
+
+- **Stalled** — the session is `idle` while the run is still `active`, so the orchestrator declared the campaign done too early or is waiting for an answer. Tiles and the run header show `stalled`. The process is alive, so Resume sends one message that re-arms `/goal`, states that `loop-state.json` is still `running`, and asks the orchestrator to re-check the terminal conditions against the artifacts. The note is optional.
+- **Halted** — the session is `stopped`, `failed` or `detached`, so there is no process to message. Resume starts one again with `ClaudeAgentOptions(resume=<claude_session_id>)`, in the same session directory and on the same transcript, and opens it with the resume prompt. `events.jsonl` gains a `dashboard` row with subtype `relaunch` at the seam and then reads as one continuous console. The note is optional. The button reads **Relaunch**.
+- **Finished** — the run's `phase_status` is terminal. Resuming means reopening the run, so the note is required and is the new bar: a stricter threshold, an added criterion, or a comparison the contract did not require. The prompt asks the orchestrator to judge that bar against the evidence the run already produced and, if it reopens, to record the bar as a `binding_amendment`, put `phase_status` back to `running` with `active` true, and journal the transition. The dashboard writes no run artifacts; `skills/research-loop/SKILL.md` and `skills/research-loop-checkpoint/SKILL.md` own that.
+
+A relaunch takes `owner_pid` over and refuses when another dashboard process is still running with that record, or when the session never reported a Claude session id. The user event that opens a resumed session carries `origin: resume`.
 - `references/ui-reference.jpg` — visual reference for the design language (cream ground, ink sidebar, lime / pink / orange accents, rounded tiles).
 
 ## Commands
@@ -70,7 +76,6 @@ Plain `dashboard` never runs npm. `--build`, `--build-only` and `--dev` do, and 
 ## Plans
 - Node detail view (trials, critic reviews, metrics history).
 - Human-in-the-loop actions (approve / reject / annotate) wired to CLI commands.
-- Resume a `detached` or `stopped` session from the dashboard (`ClaudeAgentOptions.resume`).
 - Codex backend for dashboard-launched sessions.
 - Live updates via file watching instead of polling.
 

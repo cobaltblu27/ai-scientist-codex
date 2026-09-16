@@ -115,7 +115,7 @@ function ResearchBody({ run, live, onOpen }: { run: RunDetail; live: number; onO
       </section>
 
       <aside className="rail">
-        {run.session && <SessionConsole session={run.session} runActive={run.active} />}
+        {run.session && <SessionConsole session={run.session} run={{ active: run.active, phase_status: run.phase_status }} />}
         <div className="card rail-card lime">
           <div className="tile-kicker">Next action</div>
           <div className="rail-big">{run.next_action ?? "—"}</div>
@@ -182,7 +182,7 @@ function IdeationBody({ run }: { run: RunDetail }) {
         <ReportPane runId={run.run_id} reports={run.reports} />
       </section>
       <aside className="rail">
-        {run.session && <SessionConsole session={run.session} runActive={run.active} />}
+        {run.session && <SessionConsole session={run.session} run={{ active: run.active, phase_status: run.phase_status }} />}
         <div className="card rail-card">
           <div className="tile-kicker">run.md</div>
           {run.run_md ? <Markdown source={run.run_md} /> : <div className="muted">missing</div>}

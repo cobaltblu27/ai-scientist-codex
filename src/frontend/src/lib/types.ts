@@ -88,6 +88,16 @@ export const isSessionLive = (s: SessionRecord | null | undefined): boolean => !
 export const isSessionStalled = (s: SessionRecord | null | undefined, runActive: boolean | null | undefined): boolean =>
   !!s && s.status === "idle" && runActive === true;
 
+/** Terminal phase_status values from docs/SCHEMA.md 3.3: the loop reached an outcome and stopped. */
+export const ENDED_PHASE_STATUS = new Set(["success", "exhausted", "cancelled", "blocked", "complete"]);
+export const hasRunEnded = (phaseStatus: string | null | undefined): boolean => !!phaseStatus && ENDED_PHASE_STATUS.has(phaseStatus);
+
+/** Resume covers three halts: the session stalled, its process is gone, or the loop ended and wants a tighter bar. */
+export const canResume = (
+  s: SessionRecord | null | undefined,
+  run: { active: boolean | null; phase_status: string | null } | null | undefined,
+): boolean => !!s && (isSessionStalled(s, run?.active) || !isSessionLive(s) || hasRunEnded(run?.phase_status));
+
 /** One message-box/<id>.json record (docs/SCHEMA.md 3.11). */
 export interface SteerMessage {
   id: string;

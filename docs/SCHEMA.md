@@ -180,7 +180,7 @@ A run's `contract.json` (ideation) or the file named by `contract_path` in `conf
 | `run_id` * | |
 | `phase` * | `research`, `review`, `writeup` |
 | `phase_status` * | `running` while the loop is active. Terminal for research: `success`, `exhausted`, `cancelled`, `blocked` (from `skills/research-loop/SKILL.md`). Terminal for review and writeup: `complete`, `cancelled` |
-| `active` * | `false` once `phase_status` is terminal |
+| `active` * | `false` once `phase_status` is terminal. A terminated run the user reopens under a tightened bar goes back to `running` / `true` with `run_outcome` cleared; the journal keeps the outcome it was reopened from |
 | `updated_at` * | |
 | `last_transition_id` | matches the newest `state_transition` journal record |
 | `run_outcome` | repeats the terminal `phase_status` |
@@ -200,6 +200,7 @@ Waiting on the user or on a resource is not a status: the run stays `running` an
 | `last_checkpoint_at` | |
 | `open_questions` | conventional: object keyed by question id, each with `statement` and `status` |
 | `completion_audit` | conventional: prose or path, at terminal |
+| `amendments` | conventional: requirements added after the contract was frozen, each with `id`, `created_at`, `authority` (`binding_amendment`), and the requirement itself. This is where a reopened run keeps the bar it was reopened against |
 
 **`state.baseline`**
 
@@ -431,19 +432,19 @@ sessions/<session-id>/
 |---|---|
 | `id` * | equals the directory name |
 | `backend` * | `claude`; `codex` reserved |
-| `status` * | `starting` → `running` (a turn is in flight) ↔ `idle` (the last turn returned a result); terminal `stopped`, `failed`, `detached` (the owning dashboard process is gone) |
+| `status` * | `starting` → `running` (a turn is in flight) ↔ `idle` (the last turn returned a result); terminal `stopped`, `failed`, `detached` (the owning dashboard process is gone). A relaunch puts a terminal record back to `starting` in the same directory |
 | `created_at` *, `updated_at` * | |
 | `run_id` | chosen by the launcher and handed to the orchestrator in the prompt; links the session to `runs/<run-id>` once bootstrap creates it |
 | `contract_path`, `idea_batch` | repo-relative, the same form `config.md` uses |
 | `prompt` | the user's extra instructions, at most 20 000 characters |
-| `cwd`, `owner_pid` | the target repository and the dashboard process holding the subprocess |
-| `claude_session_id` | the Claude Code session id; `claude --resume <id>` attaches once the session is stopped |
+| `cwd`, `owner_pid` | the target repository and the dashboard process holding the subprocess; a relaunch takes ownership over, so `owner_pid` follows whichever process holds it now |
+| `claude_session_id` | the Claude Code session id, stable for the life of the record: a relaunch reattaches to this transcript rather than starting another. `claude --resume <id>` attaches from a terminal once the session is stopped |
 | `plugin_dir` | the plugin checkout loaded into the session (skills, agents); `dashboard --plugin-dir`, else this checkout, else the Claude Code install |
 | `num_turns` | turns completed over the whole session (summed over result messages) |
 | `rate_limits` | latest subscription rate-limit window per `type` (`five_hour`, `seven_day`, ...), each `{type, status, utilization, resets_at}`: `status` is `allowed`, `allowed_warning` or `rejected`, `utilization` the consumed fraction 0..1 or null, `resets_at` unix seconds or null. Empty until the CLI reports one; API-key sessions never do |
 | `error` | from the latest failing result or the failure that ended the session |
 
-`ideas.json` keeps the 3.6 shape with `idea_file` / `pilot_report` rewritten to `.ai-scientist/runs/<ideation-run>/...` so a research run can name it as its `idea_batch`; entries also carry `source_run_id`. `events.jsonl` rows are `{"ts", "type", "subtype"?, "text"?, "tool"?, "origin"?}` with `type` one of `system`, `assistant`, `user`, `result`, `dashboard`; `user` rows carry `origin` (`launch`, `dashboard`, `resume`); a `dashboard` row with subtype `version_skew` is written at launch when the plugin manifest version differs from the CLI version; `init` system rows and `result` rows also carry `session_id`, results carry `num_turns` (for that turn) and `is_error`, and `system` rows with subtype `rate_limit` carry every window the CLI reported as a list under `rate_limits`. Long text is clipped; readers skip malformed lines.
+`ideas.json` keeps the 3.6 shape with `idea_file` / `pilot_report` rewritten to `.ai-scientist/runs/<ideation-run>/...` so a research run can name it as its `idea_batch`; entries also carry `source_run_id`. `events.jsonl` rows are `{"ts", "type", "subtype"?, "text"?, "tool"?, "origin"?}` with `type` one of `system`, `assistant`, `user`, `result`, `dashboard`; `user` rows carry `origin` (`launch`, `dashboard`, `resume`); a `dashboard` row with subtype `relaunch` marks where a resumed process reattached, so one file reads as a continuous console across restarts; a `dashboard` row with subtype `version_skew` is written at launch when the plugin manifest version differs from the CLI version; `init` system rows and `result` rows also carry `session_id`, results carry `num_turns` (for that turn) and `is_error`, and `system` rows with subtype `rate_limit` carry every window the CLI reported as a list under `rate_limits`. Long text is clipped; readers skip malformed lines.
 
 A live session whose `run_id` has no `runs/<run-id>` yet (bootstrap has not run) appears in the overview as a `starting` research run carrying `pending: true` and the session; `GET /api/runs/<run-id>` serves the same placeholder until the directory exists.
 
