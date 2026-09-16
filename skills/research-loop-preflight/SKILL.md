@@ -1,16 +1,16 @@
 ---
 name: research-loop-preflight
-description: Validates the prerequisites for starting an AI Scientist research loop and creates its active goal. Use only when explicitly called before a new research-loop run; do not invoke implicitly or for resuming an existing run.
+description: Validates the prerequisites for starting an AI Scientist research loop. Use only when explicitly called by research-loop before a new run; do not invoke for resuming an existing run.
 ---
 
 # Research Loop Preflight
 
 <Purpose>
-Validate the inputs and repository prerequisites for a new AI Scientist research-loop run, then create the active goal that will own the loop.
+Validate the inputs and repository prerequisites for a new AI Scientist research-loop run.
 </Purpose>
 
 <Use_When>
-- The user explicitly calls `$research-loop-preflight` before initially starting a research loop.
+- The explicitly invoked research-loop calls `ai-scientist:research-loop-preflight` before initially starting a run.
 - A new research-loop run needs its target idea, environment, repository, dependencies, and benchmark contract checked before orchestration begins.
 </Use_When>
 
@@ -29,24 +29,8 @@ When initially starting research-loop, without continuing from a previous loop, 
 - Read the idea and consider what the implementation would look like. Identify likely dependencies. If required dependencies are not installed, exit and ask the user to install them. The user may install the dependency, explicitly authorize you to install it, or choose to run the loop without it.
 - Check the benchmark contract. For campaign mode, verify that the fixed dataset, split/protocol, baseline, metric(s), evaluator command, and target threshold are already defined. If a prerequisite dataset, checkpoint, baseline artifact, or evaluator asset is missing, exit immediately and ask the user to provide it.
 
-<Setting_Goal>
-When the run is ready to start, first set a goal using `create_goal`.
-
-Set the goal as follows:
-
-```text
-Follow the $research-loop skill guide to achieve the following:
-- Perform experiments using subagents
-- From the results, find what can be done to improve the architecture.
-- Continue improving the research tree to iteratively enhance the model architecture.
-- The goal is finished when we have a node that meets the success criteria, or a given halt criterion is met.
-- Include additional pause criteria such as token or time constraints only when they are given by the user.
-
-The research-loop may be long-running, but duration alone neither requires stopping nor justifies creating work. Continue while contract-relevant runnable work remains; explicitly retire advisory or unsupported work.
-```
-</Setting_Goal>
 </Goal_Preflight>
 
 <Next_Step>
-After all checks pass and the goal is created, explicitly call `$research-loop-bootstrap` to freeze the run configuration and initialize its Markdown artifacts.
+After all checks pass, invoke `ai-scientist:research-loop-bootstrap` through Claude Code's Skill tool to freeze the run configuration and initialize its artifacts. `/goal` provides persistence; durable run state provides resume context.
 </Next_Step>

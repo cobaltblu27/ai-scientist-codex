@@ -1,12 +1,12 @@
 ---
 name: local-literature-search
-description: Search a target repo's local `papers/` corpus for AI Scientist ideation or research-loop revision brainstorming. Use alongside `skills/literature-search/SKILL.md` when brainstorming needs literature grounding from local paper index JSONL, detail JSON, metadata, or original PDFs, especially for bottleneck diagnosis, branch candidates, priors, baselines, reusable components, source-code hooks, or related biomedical methods.
+description: Search a target repo's local `papers/` corpus for AI Scientist ideation or research-loop revision brainstorming. Use alongside the ai-scientist:literature-search skill when brainstorming needs literature grounding from local paper index JSONL, detail JSON, metadata, or original PDFs, especially for bottleneck diagnosis, branch candidates, priors, baselines, reusable components, source-code hooks, or related biomedical methods.
 ---
 
 # Local Literature Search
 
 <Purpose>
-Use this skill to search the target repo's local `papers/` directory before or during brainstorming. It complements `skills/literature-search/SKILL.md`: external search finds broader/current evidence, while local search mines the curated project corpus for task-specific priors, methods, datasets, reusable components, limitations, and source-code links.
+Use this skill to search the target repo's local `papers/` directory before or during brainstorming. It complements `ai-scientist:literature-search`: external search finds broader/current evidence, while local search mines the curated project corpus for task-specific priors, methods, datasets, reusable components, limitations, and source-code links.
 </Purpose>
 
 <Corpus_Contract>

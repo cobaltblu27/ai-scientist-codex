@@ -1,6 +1,7 @@
 ---
 name: ideation
-description: Generate structured research ideas from an inline prompt by running a Codex-native, goal-driven loop. DO NOT USE; this skill is explicit-usuage ONLY.
+description: Generate structured research ideas from an inline prompt with Claude Code agents. Explicit use only.
+disable-model-invocation: true
 ---
 
 # Ideation
@@ -8,7 +9,7 @@ description: Generate structured research ideas from an inline prompt by running
 <Intro>
 
 <Purpose>
-You are the ideation orchestrator. The current Codex session owns the loop, driven by a goal created with `create_goal`. You will create and update the run directory, freeze the research contract, log progress, coordinate subagents, check the final idea files, and prepare the handoff.
+You are the ideation orchestrator. The current Claude Code session owns the loop. You will create and update the run directory, freeze the research contract, log progress, coordinate subagents, check the final idea files, and prepare the handoff.
 </Purpose>
 
 <Persona>
@@ -25,16 +26,20 @@ Your higher duty is to seed genuine scientific or engineering discovery. The sel
 
 </Intro>
 
+<Persistence>
+Run the complete ideation workflow under `/goal` in both Claude Code and Codex. The goal is complete only after the selected idea files, pilot reports, `ideas.json`, and final `run.md` status are written and checked. Use `run.md` as durable resume context.
+</Persistence>
+
 <Big_Picture_And_Flow>
 
 <Workflow_Overview>
-The ideation loop starts only after the user explicitly calls this skill with a research topic. First, create a goal with `create_goal`, choose a run id, create the run directory, and freeze the research contract. Before asking agents to brainstorm, do a short preflight: scan for reference papers, run the Heiemeier question pass, run the required data-insight pass, and turn those findings into a compact shared assignment brief.
+The ideation loop starts only after the user explicitly calls this skill with a research topic. First choose a run id, create the run directory, and freeze the research contract. Before asking agents to brainstorm, do a short preflight: scan for reference papers, run the Heiemeier question pass, run the required data-insight pass, and turn those findings into a compact shared assignment brief.
 
 Then spawn generator subagents to brainstorm a pool of ideas. Filter the generated ideas with hard obvious rules, removing duplicates and ideas that are obviously impossible. Turn survivors into idea files, send those files through constructive critic and generator reflection rounds, pilot the refined ideas, and select the best final set. Finish by manually checking the selected idea files and writing the lightweight `ideas.json` index.
 </Workflow_Overview>
 
 <Contract>
-The run must have a research contract before generation starts. If the user supplies one, copy it to `.ai-scientist/runs/<run-id>/contract.json`. Otherwise create that file using create-contract skill from the user request. At minimum it records the research goal, dataset/data source, split or evaluation protocol, baseline, metrics, evaluator, resource constraints, and non-drift rules.
+The run must have a research contract before generation starts. If the user supplies one, copy it to `.ai-scientist/runs/<run-id>/contract.json`. Otherwise draft that file directly from the user request; ask for any missing field that would materially change the experiment. At minimum it records the research goal, dataset/data source, split or evaluation protocol, baseline, metrics, evaluator, resource constraints, and non-drift rules.
 
 Once the first generator is spawned, `contract.json` is frozen: do not edit it during the run. If the goal or benchmark must change materially, start a new run with a new contract instead of quietly changing the existing one.
 </Contract>
@@ -43,17 +48,19 @@ Once the first generator is spawned, `contract.json` is frozen: do not edit it d
 All source-of-truth artifacts live under `.ai-scientist/runs/<run-id>/`:
 
 - `contract.json`: frozen research contract.
-- `run.md`: run id, original request, arguments, current phase, completed phase checklist, blockers, and important decisions.
+- `run.md`: begins with a bullet `- status: <token>` (`running`, `complete`, or `cancelled`) that is updated with the phase checklist; then run id, original request, arguments, current phase, completed phase checklist, blockers, and important decisions.
 - `ideas/<idea-id>.md`: canonical idea files. Critic comments and generator refinements happen in these files.
 - `logs/pilots/<idea-id>/report.md`: pilot evidence for each surviving idea.
-- `ideas.json`: final index containing each selected idea's id, title, idea-file path, and pilot-report path.
+- `ideas.json`: final index; each selected idea entry has `id`, `title`, and `idea_file`, plus `pilot_report` by convention.
+
+Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 
 The detailed idea content lives in the idea files, not duplicated into a large JSON schema. Update `run.md` after every major phase and before ending a turn.
 </Required_Artifacts>
 
 <Arguments>
 These are variables that may be provided with prompt, when using this skill. arguments are not restricted to these, user may add a tweak to workflow.
-Add these 'arguments' in goal below, to freeze them.
+Record resolved arguments in `run.md` to freeze them.
 Common arguments may include:
 - Research goal (required)
 - number of final ideas to select (default: 10)
@@ -63,26 +70,6 @@ Common arguments may include:
 - etc
 
 </Arguments>
-
-<Goal_Preflight>
-Before starting the ideation run, call `create_goal` with this objective:
-
-```text
-Follow the $ideation skill guide to achieve the following:
-- Brainstorm the ideas using subagents
-- Go through reflection, and refinement using critic
-- Select final ideas.
-- Manually check the selected idea files and write the lightweight final index.
-- The goal is finished when all workflow phases are complete, every selected idea file is implementation-ready, `ideas.json` indexes the selected files, and `run.md` records the completed handoff.
-
-
-- <Arguments from prompt>
-
-To check for the goal criteria, check the $ideation skill again. Check which step you are in, and keep following the instruction.
-```
-
-The active goal is the continuation mechanism for ideation.
-</Goal_Preflight>
 
 <Pre_Generation_Synthesis>
 Before the first generator batch for a topic, follow this order:
@@ -96,7 +83,7 @@ Before the first generator batch for a topic, follow this order:
 The orchestrator must obtain a valid data-insight report, or record a blocker in `run.md` explaining why data insight cannot be performed, before spawning generator subagents. Keep the synthesis compact enough to copy into generator assignments.
 
 <Preflight_Reference_Scan>
-Use the `literature-search` skill to check API works (only for API check, you don't have to search for references). Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later includes stable source refs in its draft/report.
+Invoke `ai-scientist:literature-search` through the Skill tool to check that a search surface works (only for an availability check; you do not have to search for references). Because no canonical idea id may exist yet, these preflight references are advisory seed context only. Do not treat them as canonical `evidence_refs` unless a generator later includes stable source refs in its draft/report.
 
 Capture a short brief:
 
@@ -106,15 +93,15 @@ Capture a short brief:
 </Preflight_Reference_Scan>
 
 <Heiemeier_Question_Pass>
-Use `skills/heiemeier-question/SKILL.md` on the original topic plus the preflight reference brief. Lay out the questions and answer them one by one. Extract only the high-signal insights needed for generator assignments: problem framing, current approaches, gap, key insight, smallest publishable version, skeptical-reviewer evidence, and success checks.
+Invoke `ai-scientist:heiemeier-question` through the Skill tool on the original topic plus the preflight reference brief. Lay out the questions and answer them one by one. Extract only the high-signal insights needed for generator assignments: problem framing, current approaches, gap, key insight, smallest publishable version, skeptical-reviewer evidence, and success checks.
 </Heiemeier_Question_Pass>
 
 <Required_Data_Insight_Ideation_Pass>
-Use `skills/data-insight-ideation/SKILL.md` before generator assignment synthesis. Serious AI/ML ideation must be grounded in dataset evidence, not only literature or abstract reasoning.
+Invoke `ai-scientist:data-insight-ideation` through the Skill tool before generator assignment synthesis. Serious AI/ML ideation must be grounded in dataset evidence, not only literature or abstract reasoning.
 
 First check whether `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/data_insight_ideation_report.md` already exists. Reuse it only when it matches the current frozen contract, dataset, split, evaluator, and artifact paths. If it is missing, stale, incomplete, or tied to a different contract, rerun the data-insight pass.
 
-Because this skill runs under an active goal, treat it as an autonomous loop. If there is no concrete data path, the required environment is unclear, or the pass would require an unsafe environment change, record a clear blocker in `run.md`, make the best defensible assignment from the available evidence, and continue. Never silently present paper-only assumptions as dataset findings.
+Treat this as an autonomous loop. If there is no concrete data path, the required environment is unclear, or the pass would require an unsafe environment change, record a clear blocker in `run.md`, make the best defensible assignment from the available evidence, and continue. Never silently present paper-only assumptions as dataset findings.
 
 Keep the pass lightweight: have the data-insight agent inspect repo/data interfaces, write and run task-specific inspection code under `.ai-scientist/runs/<run-id>/logs/data-insight/ideation/`, and return only artifact-backed findings. Copy only the compact generator assignment notes, dataset bottlenecks, leakage/split warnings, slice candidates, baseline requirements, and directions to avoid into generator prompts.
 </Required_Data_Insight_Ideation_Pass>
@@ -154,9 +141,9 @@ These are common rules for ideation. You MUST consider this for idea generation 
 
 Generated native agents:
 
-- Generator: `ai-scientist-ideation-generator`
-- Critic: `ai-scientist-ideation-critic`
-- Ranker: `ai-scientist-ideation-ranker`
+- Generator: `ai-scientist:ai-scientist-ideation-generator`
+- Critic: `ai-scientist:ai-scientist-ideation-critic`
+- Ranker: `ai-scientist:ai-scientist-ideation-ranker`
 </Scientific_Standard>
 
 </Ideation_Policy>
@@ -178,7 +165,7 @@ unclear and the command is required, ask or fail fast with a clear blocker.
 <Startup>
 Create `.ai-scientist/runs/<run-id>/`, its `ideas/` and `logs/` directories, the frozen `contract.json`, and `run.md`. Record the original request and resolved arguments in `run.md`.
 
-Verify the installed Codex agent roles are available before spawning subagents.
+Verify the three plugin-scoped ideation agents are available before spawning them.
 </Startup>
 
 <Prompting>
@@ -197,7 +184,7 @@ For sake of efficiency, you may prompt multiple agents, and give next piece of p
 
 <Ideation_Workflow>
 Spawn generators for idea brainstorming.
-Spawn generators with `agent_type: ai-scientist-ideation-generator` and critics with `agent_type: ai-scientist-ideation-critic`.
+Spawn generators and critics with Claude Code's Agent tool using the plugin-scoped identifiers above. Give agents stable names when they will be resumed, and use SendMessage with the returned agent ID or name for follow-up work.
 Run the process step-wise. give prompts to subagents in current step, so they can work concurrently. when they're all done, and all jobs for the current steps are finished, you may proceed to next step.
 
 Prompting will be done in stages.
@@ -205,7 +192,7 @@ Prompting will be done in stages.
 # Step 1: Idea generation
 
 ## Literature_Search
-Use any reliable search surface available in the session: scholarly search, venue pages, paper PDFs, local paper corpora, benchmark docs, dataset/model cards, source repositories, or web search that leads to primary sources. Use `literature-search` skill. Store stable source links or identifiers and the claims they support directly in candidate summaries and idea files.
+Use any reliable search surface available in the session: scholarly search, venue pages, paper PDFs, local paper corpora, benchmark docs, dataset/model cards, source repositories, or web search that leads to primary sources. Invoke `ai-scientist:literature-search` through the Skill tool. Store stable source links or identifiers and the claims they support directly in candidate summaries and idea files.
 
 Each generator proposes the configured 4–6 candidate ideas. Spawn enough generators for the combined pool to contain roughly 1.5 times the requested final idea count. Give different slot-specific emphases to reduce duplication.
 
@@ -342,7 +329,7 @@ Your job is to test if given idea is viable for research.
 Use <python env and other needed environments> to test <idea markdown path>.
 Work inside <workspace>. Do not edit file outside given directory. 
 
-In the directory, test the following (set the assignments into goal using `create_goal`):
+In the directory, test the following:
 - <constructed assignment list>
 - write the result into a `report.md` in root of the given workspace.
 
@@ -373,7 +360,7 @@ Write a lightweight `ideas.json` index:
 }
 ```
 
-The idea files are the detailed handoff artifacts. Do not duplicate them into a complicated JSON object. Update `run.md` with the selected ids, manual checks, artifact paths, and `status: complete`, then mark the active goal complete.
+The idea files are the detailed handoff artifacts. Do not duplicate them into a complicated JSON object. Update `run.md` with the selected ids, manual checks, artifact paths, and `status: complete`.
 
 </Ideation_Workflow>
 

@@ -6,11 +6,11 @@ description: Initializes a new AI Scientist research-loop run by freezing valida
 # Research Loop Bootstrap
 
 <Purpose>
-Replace command-based bootstrap with a small, human-readable run initializer. Freeze the validated startup contract in Markdown and create the files the orchestrator and Stop hook need for durable continuation.
+Replace command-based bootstrap with a small, human-readable run initializer. Freeze the validated startup contract in Markdown and create the durable files needed to resume the `/goal` research campaign.
 </Purpose>
 
 <Use_When>
-- The user explicitly calls `$research-loop-bootstrap` after `$research-loop-preflight` passes.
+- The research-loop invokes `ai-scientist:research-loop-bootstrap` after `ai-scientist:research-loop-preflight` passes.
 - A new research-loop run needs its startup inputs frozen and its run directory initialized.
 </Use_When>
 
@@ -34,19 +34,20 @@ Use the validated values from the preflight and the user's explicit request:
 1. Choose a stable run ID. Resolve `.ai-scientist/runs/<run-id>/` under the target repository.
 2. Fail immediately if that run directory or its `config.md` already exists. Never overwrite an existing run during bootstrap.
 3. Create the run directory and `logs/` directory.
-4. Write `config.md` with YAML frontmatter containing the immutable startup values. Include the full idea identities and binding contract in the Markdown body or as clearly referenced artifacts.
-5. Write `loop-state.json` with the initial state below:
+4. Write `config.md` with YAML frontmatter containing the immutable startup values; the frontmatter carries at least `run_id`, `contract_path`, `idea_batch`, `primary_metric`, and `success_threshold`. Include the full idea identities and binding contract in the Markdown body or as clearly referenced artifacts.
+5. Write `loop-state.json` with the schema-required top-level fields and initial state below:
 
-   - phase: `research`;
-   - status: `active`;
-   - next action: `plan`;
-   - empty nodes, work items, tasks, resource queue, and selection;
-   - baseline status: `not_required` unless the contract requires setup;
-   - links to `config.md`, `discovery-notes.md`, and `learning-notes.md`.
+   - `schema_version: 1`, the run ID, `active: true`, `phase: research`, `phase_status: running`, and UTC `updated_at`;
+   - `state.orchestrator.next_action: plan`;
+   - `state.nodes`, `state.work`, `state.tasks`, `state.resources`, `state.resource_queue`, and `state.selection` as empty objects;
+   - `state.baseline.status`: `not_required` unless the contract requires setup;
+   - `links` with `config`, `contract`, `idea_batch`, `discovery_notes`, and `learning_notes`.
+
+   Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 
 6. Create empty `learning-notes.md` and a starter `discovery-notes.md` with sections for current understanding, what worked, what failed, data/evaluation findings, transferable insights, branch seeds, and things to avoid repeating.
-7. Create `.ai-scientist/active-run.json` with the active research phase and append a `research bootstrap` entry to `journal.jsonl`. These compatibility files let state, resource, and Stop-hook utilities continue to work.
-8. Report the created paths and the next action: start the orchestrator-led research loop using `$research-loop`.
+7. Create `.ai-scientist/active-run.json` with schema version 1, run ID, phase `research`, status `active`, UTC `updated_at`, and absolute target repository. Append an `event_type: setup` entry to `journal.jsonl` with `details.command: research-loop-bootstrap`.
+8. Report the created paths and the next action: continue the already active `ai-scientist:research-loop` orchestration.
 </Workflow>
 
 <Config_Rules>

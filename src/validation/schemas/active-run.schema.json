@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "active-run.json (docs/SCHEMA.md section 3.1)",
+  "type": "object",
+  "required": ["run_id", "phase", "status", "updated_at", "target_repository"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "phase": {"enum": ["ideation", "research", "review", "writeup"]},
+    "status": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "target_repository": {"type": "string"}
+  },
+  "additionalProperties": true
+}

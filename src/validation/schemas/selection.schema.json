@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "selection.json (docs/SCHEMA.md section 3.7)",
+  "type": "object",
+  "required": ["run_id", "status", "selected_node", "acceptance_rationale"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "status": {"enum": ["final"]},
+    "selected_node": {"type": "string"},
+    "acceptance_rationale": {"type": "string"}
+  },
+  "additionalProperties": true
+}

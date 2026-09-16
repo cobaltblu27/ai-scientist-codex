@@ -1,0 +1,6 @@
+{"event_type": "setup", "timestamp": "2026-09-11T02:20:00Z", "run_id": "20260911-research-ogbn-blocked", "details": {"command": "research-loop-bootstrap"}}
+{"event_type": "state_transition", "timestamp": "2026-09-11T09:00:00Z", "run_id": "20260911-research-ogbn-blocked", "transition_id": "tr-015000", "node_id": "N1", "details": {"command": "research-loop-checkpoint", "changed_sections": ["nodes", "work"], "note": "N1 completed"}}
+{"event_type": "state_transition", "timestamp": "2026-09-11T10:40:00Z", "run_id": "20260911-research-ogbn-blocked", "transition_id": "tr-014000", "node_id": "N2", "details": {"command": "research-loop-checkpoint", "changed_sections": ["nodes", "work"], "note": "N2 dispatched"}}
+{"event_type": "state_transition", "timestamp": "2026-09-11T12:20:00Z", "run_id": "20260911-research-ogbn-blocked", "transition_id": "tr-013000", "details": {"command": "research-loop-checkpoint", "changed_sections": ["orchestrator"], "note": "blocked: dataset mount missing"}}
+this line is not json and must be skipped
+["not", "an", "object"]

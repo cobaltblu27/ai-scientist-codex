@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ai-scientist",
+  "description": "AI Scientist research workflows for Claude Code.",
+  "owner": {
+    "name": "cobaltblu27"
+  },
+  "plugins": [
+    {
+      "name": "ai-scientist",
+      "description": "Auditable research workflows: ideation, bounded experiment loops, evidence review, and final writeups.",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

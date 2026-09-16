@@ -1,0 +1,8 @@
+{
+  "status": "completed",
+  "fixed_split_dir": "nodes/baseline/workspace/split",
+  "split_manifest_ref": "nodes/baseline/workspace/split/manifest.json",
+  "baseline_score_refs": [
+    "logs/baseline/bl-001/result.md"
+  ]
+}

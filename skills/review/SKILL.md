@@ -1,9 +1,14 @@
 ---
 name: review
 description: Explicit-only final AI Scientist run-level evidence review; do not use for idea, draft, node, revision, paper, or code critic/review tasks. DO NOT USE; this skill is explicit-usuage ONLY.
+disable-model-invocation: true
 ---
 
 # Review
+
+<Persistence>
+Run the final run-level review under `/goal` in both Claude Code and Codex. Complete the goal only after the verdict and required audit artifacts are written.
+</Persistence>
 
 <Use_When>
 Use this skill ONLY when the user explicitly triggers the AI Scientist review skill for a final run-level review. This skill audits completed AI Scientist artifacts after the research loop, and after writeup when a writeup exists, to decide whether the run evidence supports the claimed outcome.
@@ -38,11 +43,11 @@ Use this skill for the explicit run-level review phase after research-loop artif
 
 ## Workflow
 
-1. Read `.ai-scientist/config.json`, node evidence, and `journal.jsonl`.
+1. Read the run's `config.md`, `loop-state.json`, node evidence, and `journal.jsonl`.
 2. Confirm benchmark/split was not changed unless explicitly part of setup.
 3. Confirm no train/test leakage and no deceptive metric selection.
 4. Compare the best accepted node to the baseline and check the contract's scientific acceptance criteria.
-5. Write `.ai-scientist/runs/<run-id>/review/structured-review.json` with sections for leakage, split integrity, baseline comparison, scientific acceptance criteria, limitations, and verdict.
+5. Write `.ai-scientist/runs/<run-id>/review/structured-review.json` with sections for leakage, split integrity, baseline comparison, scientific acceptance criteria, limitations, and verdict. Required keys: `verdict` with `decision` (`accept`, `revise`, `reject`, `negative-result`), and `leakage`, `split_integrity`, `baseline_comparison`, each with `pass` and `summary`. Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 6. Run `ai-scientist validate run <target> --gate review_to_writeup`.
 7. Any rejection blocks writeup unless the writeup is clearly marked failed/negative.
 

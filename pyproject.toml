@@ -1,11 +1,16 @@
 [project]
-name = "ai-scientist-codex"
-version = "0.1.3"
-description = "Add your description here"
-readme = "README.md"
+name = "ai-scientist"
+version = "0.2.0"
+description = "Auditable research workflows for Claude Code: ideation, bounded experiment loops, review, writeup, and a monitoring dashboard."
+readme = "docs/README.md"
+license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
 ]
+
+[project.urls]
+Homepage = "https://github.com/cobaltblu27/ai-scientist-codex"
+Releases = "https://github.com/cobaltblu27/ai-scientist-codex/releases"
 
 [dependency-groups]
 dev = [
@@ -16,9 +21,23 @@ dev = [
 [project.scripts]
 ai-scientist = "cli.main:main"
 
+[project.optional-dependencies]
+dashboard = [
+    "claude-agent-sdk>=0.2.152",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+# Only the six CLI packages; `src/frontend/` (Vite sources, node_modules) is not a package.
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["cli*", "core*", "dashboard*", "research*", "validation*", "writeup*"]
+namespaces = false
+
+# Data the CLI needs at runtime, in both the wheel and the sdist. `dashboard/dist/` is the
+# Vite build output (gitignored; produced by `npm run build` / `ai-scientist dashboard --build-only`).
+[tool.setuptools.package-data]
+validation = ["schemas/*.schema.json"]
+dashboard = ["dist/**/*"]

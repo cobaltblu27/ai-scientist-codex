@@ -11,7 +11,7 @@ Create one compact, canonical tree for each planned architecture. The tree is a 
 
 <Artifact_Location>
 
-Keep all trees together at `.ai-scientist/runs/<run-id>/architectures/`:
+Keep all trees together at `.ai-scientist/runs/<run-id>/architectures/`. Artifact shapes are defined in `docs/SCHEMA.md` (plugin repo); honor its required keys, everything else is free.
 
 - `<node-id>.json`: one machine-readable tree per research node.
 - `vocabulary.json`: the run-level canonical keyword registry.

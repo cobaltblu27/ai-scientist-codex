@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Build the dashboard frontend
+        run: npm ci --prefix src/frontend && npm run build --prefix src/frontend
+
+      - name: Install the project
+        run: uv sync --extra dashboard
+
+      - name: Tests (including the packaging check)
+        run: uv run pytest -q
+        env:
+          AI_SCIENTIST_PACKAGING_TESTS: "1"
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Smoke-test the wheel in a fresh virtualenv
+        run: |
+          uv venv /tmp/wheel-venv --python 3.12
+          uv pip install --python /tmp/wheel-venv "$(ls dist/ai_scientist-*.whl)[dashboard]"
+          /tmp/wheel-venv/bin/ai-scientist --version
+          AI_SCIENTIST_PLUGIN_ROOT="$PWD" /tmp/wheel-venv/bin/ai-scientist doctor
+          /tmp/wheel-venv/bin/python - <<'PY'
+          from core.assets import SCHEMA_NAMES, frontend_dist_dir, schemas_dir
+          from validation.run import load_schema
+          assert (frontend_dist_dir() / "index.html").is_file(), frontend_dist_dir()
+          assert all(isinstance(load_schema(n), dict) for n in SCHEMA_NAMES), schemas_dir()
+          print("wheel carries schemas and dist")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

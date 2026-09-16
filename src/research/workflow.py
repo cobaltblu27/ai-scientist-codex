@@ -13,36 +13,46 @@ from pathlib import Path
 from typing import Any
 
 from cli.response import emit
-from core.agents import research_agent_name
+from core.frontmatter import read_frontmatter
 from core.state import (
     append_journal_event,
     atomic_write_json,
     audit_block_reason,
-    block_for_manual_recovery,
     clear_active_run,
-    config_path,
+    config_md_path,
     data_hash,
     evaluate_loop_state_completion,
-    journal_path,
+    is_terminal_status,
     load_active_run,
-    load_json_if_exists,
     load_loop_state,
     mutate_loop_state,
     run_dir,
     run_lock,
     selection_path,
     set_active_run,
-    start_phase,
     utc_now,
     validate_active_run_contract,
     write_loop_state,
 )
 
-WORK_TERMINAL_STATUSES = {"completed", "cancelled", "failed", "abandoned", "accepted", "rejected"}
-TASK_TERMINAL_STATUSES = WORK_TERMINAL_STATUSES
 LEASE_ACTIVE_STATUSES = {"acquired", "running"}
 RESOURCE_KEYS = ("gpus", "cpu_cores", "memory_mb")
-REVISION_BRAINSTORM_SKILL = "skills/revision-brainstorm/SKILL.md"
+# config.md frontmatter is flat; resource caps use these keys (docs/SCHEMA.md section 3.5 leaves them free).
+RESOURCE_CAP_FRONTMATTER_KEYS = {
+    "max_parallel": "resource_max_parallel",
+    "gpus": "resource_gpus",
+    "cpu_cores": "resource_cpu_cores",
+    "memory_mb": "resource_memory_mb",
+}
+SCHEDULER_FRONTMATTER_KEYS = {
+    "type": "resource_scheduler",
+    "partition": "slurm_partition",
+    "time": "slurm_time",
+    "gres": "slurm_gres",
+    "cpus_per_task": "slurm_cpus_per_task",
+    "mem": "slurm_mem",
+    "job_name": "slurm_job_name",
+}
 
 
 class ResearchError(ValueError):
@@ -71,8 +81,6 @@ def active_run(target: Path, run_id: str | None = None) -> tuple[str, dict[str, 
         if state:
             reason = audit_block_reason(target, run_id, state)
             if reason:
-                if str(state.get("phase_status") or "") != "blocked_manual_recovery":
-                    block_for_manual_recovery(target, run_id, state, reason)
                 raise ResearchError(reason)
         return run_id, state
     active = load_active_run(target)
@@ -86,165 +94,8 @@ def active_run(target: Path, run_id: str | None = None) -> tuple[str, dict[str, 
     if state:
         block_reason = audit_block_reason(target, rid, state)
         if block_reason:
-            if str(state.get("phase_status") or "") != "blocked_manual_recovery":
-                block_for_manual_recovery(target, rid, state, block_reason)
             raise ResearchError(block_reason)
     return rid, state
-
-
-def prompt_path_for(kind: str) -> str | None:
-    if kind == "orchestrator":
-        return "skills/research-loop/SKILL.md"
-    if kind == "worker":
-        return "agents/ai-scientist-research-worker.toml"
-    if kind == "baseline-worker":
-        return "agents/ai-scientist-research-baseline-worker.toml"
-    if kind == "ranker":
-        return "agents/ai-scientist-research-ranker.toml"
-    if kind == "revision-worker":
-        return "agents/ai-scientist-research-revision-worker.toml"
-    return None
-
-
-def custom_criteria_from(payload: dict[str, Any]) -> Any:
-    if "custom_criteria" in payload:
-        return payload["custom_criteria"]
-    research = payload.get("research") if isinstance(payload.get("research"), dict) else {}
-    return research.get("custom_criteria")
-
-
-def load_resource_config(payload: dict[str, Any]) -> dict[str, Any] | None:
-    value = payload.get("resources")
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ResearchError("resources must be a JSON object")
-    return deepcopy(value)
-
-
-def selected_idea_from(payload: dict[str, Any]) -> Any:
-    return payload.get("selected_idea") or payload.get("idea")
-
-
-def idea_batch_from(payload: dict[str, Any], selected_idea: Any) -> list[dict[str, Any]]:
-    batch = payload.get("idea_batch") or payload.get("ideas")
-    if batch is None:
-        if isinstance(selected_idea, dict):
-            return [deepcopy(selected_idea)]
-        return []
-    if not isinstance(batch, list) or not batch:
-        raise ResearchError("idea_batch must be a non-empty list")
-    normalized: list[dict[str, Any]] = []
-    for index, idea in enumerate(batch, start=1):
-        if not isinstance(idea, dict):
-            raise ResearchError(f"idea_batch item {index} must be a JSON object")
-        idea_id = idea.get("id")
-        if not isinstance(idea_id, str) or not idea_id.strip():
-            raise ResearchError(f"idea_batch item {index} missing id")
-        normalized.append(deepcopy(idea))
-    return normalized
-
-
-def research_contract_from(payload: dict[str, Any], selected_idea: Any) -> Any:
-    if isinstance(selected_idea, dict) and "research_contract" in selected_idea:
-        return deepcopy(selected_idea["research_contract"])
-    if "research_contract" in payload:
-        return deepcopy(payload["research_contract"])
-    return None
-
-
-def frozen_arguments(target: Path, args: argparse.Namespace, payload: dict[str, Any], selected_idea: Any, idea_batch: list[dict[str, Any]]) -> dict[str, Any]:
-    provided = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
-    selected_idea_id = getattr(args, "selected_idea_id", None) or (selected_idea.get("id") if isinstance(selected_idea, dict) else None)
-    return {
-        "target_repo": str(target),
-        "target_idea": deepcopy(provided.get("target_idea", selected_idea or {"idea_batch": idea_batch})),
-        "selected_idea_id": selected_idea_id,
-        "idea_batch_ids": [idea["id"] for idea in idea_batch],
-        "python_environment": provided.get("python_environment", payload.get("python_environment")),
-        "target_venue": deepcopy(provided.get("target_venue", payload.get("target_venue"))),
-    }
-
-
-def initial_config(target: Path, args: argparse.Namespace, payload: dict[str, Any]) -> dict[str, Any]:
-    criteria = custom_criteria_from(payload)
-    resources = load_resource_config(payload)
-    selected_idea = selected_idea_from(payload)
-    idea_batch = idea_batch_from(payload, selected_idea)
-    research_contract = research_contract_from(payload, selected_idea)
-    if research_contract is None and idea_batch:
-        research_contract = payload.get("research_contract")
-    if not idea_batch:
-        raise ResearchError("research start requires idea_batch or selected_idea")
-    if research_contract is None:
-        raise ResearchError("research start requires research_contract for campaign runs or selected_idea.research_contract for legacy runs")
-    requested_research = payload.get("research") if isinstance(payload.get("research"), dict) else {}
-    ranking_top_n = requested_research.get("ranking_top_n", 3)
-    active_node_cap = requested_research.get("active_node_cap", ranking_top_n)
-    if isinstance(ranking_top_n, bool) or not isinstance(ranking_top_n, int) or ranking_top_n < 1:
-        raise ResearchError("research.ranking_top_n must be a positive integer")
-    if isinstance(active_node_cap, bool) or not isinstance(active_node_cap, int) or active_node_cap < ranking_top_n:
-        raise ResearchError("research.active_node_cap must be an integer greater than or equal to ranking_top_n")
-    selected_idea_id = args.selected_idea_id or (selected_idea.get("id") if isinstance(selected_idea, dict) else None)
-    cfg = {
-        "schema_version": 1,
-        "run_id": args.run_id,
-        "target_repo": str(target),
-        "selected_idea_id": selected_idea_id,
-        "selected_idea": selected_idea,
-        "idea_batch": idea_batch,
-        "campaign_mode": len(idea_batch) > 1 or selected_idea is None,
-        "learning_notes_ref": str(run_dir(target, args.run_id) / "learning-notes.jsonl"),
-        "discovery_notes_ref": str(run_dir(target, args.run_id) / "discovery-notes.md"),
-        "arguments": frozen_arguments(target, args, payload, selected_idea, idea_batch),
-        "research_contract": research_contract,
-        "custom_criteria": criteria,
-        "resources": resources,
-        "research": {
-            "prompt_root": "agents",
-            "orchestrator_prompt": prompt_path_for("orchestrator"),
-            "worker_agent": research_agent_name("worker"),
-            "worker_prompt_source": prompt_path_for("worker"),
-            "baseline_worker_agent": research_agent_name("baseline-worker"),
-            "baseline_worker_prompt_source": prompt_path_for("baseline-worker"),
-            "ranker_agent": research_agent_name("ranker"),
-            "ranker_prompt_source": prompt_path_for("ranker"),
-            "ranking_top_n": ranking_top_n,
-            "active_node_cap": active_node_cap,
-            "revision_worker_agent": research_agent_name("revision-worker"),
-            "revision_worker_prompt_source": prompt_path_for("revision-worker"),
-            "revision_brainstorm_skill": REVISION_BRAINSTORM_SKILL,
-        },
-        "created_at": utc_now(),
-    }
-    extra_config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
-    cfg.update(extra_config)
-    cfg["resources"] = resources
-    cfg["selected_idea"] = selected_idea
-    cfg["idea_batch"] = idea_batch
-    cfg["campaign_mode"] = len(idea_batch) > 1 or selected_idea is None
-    cfg["learning_notes_ref"] = str(run_dir(target, args.run_id) / "learning-notes.jsonl")
-    cfg["discovery_notes_ref"] = str(run_dir(target, args.run_id) / "discovery-notes.md")
-    cfg["selected_idea_id"] = selected_idea_id
-    cfg["arguments"] = frozen_arguments(target, args, payload, selected_idea, idea_batch)
-    research = cfg.setdefault("research", {})
-    if isinstance(research, dict):
-        research.setdefault("worker_agent", research_agent_name("worker"))
-        research.setdefault("worker_prompt_source", prompt_path_for("worker"))
-        research.setdefault("baseline_worker_agent", research_agent_name("baseline-worker"))
-        research.setdefault("baseline_worker_prompt_source", prompt_path_for("baseline-worker"))
-        research.setdefault("ranker_agent", research_agent_name("ranker"))
-        research.setdefault("ranker_prompt_source", prompt_path_for("ranker"))
-        research.setdefault("ranking_top_n", ranking_top_n)
-        research.setdefault("active_node_cap", active_node_cap)
-        research.setdefault("revision_worker_agent", research_agent_name("revision-worker"))
-        research.setdefault("revision_worker_prompt_source", prompt_path_for("revision-worker"))
-        research.setdefault("revision_brainstorm_skill", REVISION_BRAINSTORM_SKILL)
-    if research_contract is not None:
-        cfg["research_contract"] = research_contract
-    if criteria is not None:
-        cfg["custom_criteria"] = criteria
-    return cfg
 
 
 def phase_state_or_error(state: dict[str, Any] | None, run_id: str) -> dict[str, Any]:
@@ -263,19 +114,28 @@ def safe_log_name(value: str | None, default: str = "item") -> str:
     return clean or default
 
 
+def resource_config(target: Path, run_id: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Frozen resource policy: `state.resources.caps` in loop-state.json, else `resource_*` keys in config.md frontmatter."""
+    state = state if isinstance(state, dict) else load_loop_state(target, run_id)
+    phase_state = state.get("state") if isinstance(state, dict) and isinstance(state.get("state"), dict) else {}
+    resources = phase_state.get("resources") if isinstance(phase_state.get("resources"), dict) else {}
+    caps = resources.get("caps")
+    if isinstance(caps, dict):
+        return deepcopy(caps)
+    frontmatter = read_frontmatter(config_md_path(target, run_id))
+    caps = {key: frontmatter[fm_key] for key, fm_key in RESOURCE_CAP_FRONTMATTER_KEYS.items() if fm_key in frontmatter}
+    scheduler = {key: frontmatter[fm_key] for key, fm_key in SCHEDULER_FRONTMATTER_KEYS.items() if fm_key in frontmatter}
+    if scheduler:
+        caps["scheduler"] = scheduler
+    return caps
+
+
 def resource_caps_from_config(cfg: dict[str, Any]) -> dict[str, Any] | None:
-    resources = cfg.get("resources")
-    return resources if isinstance(resources, dict) else None
+    return cfg if isinstance(cfg, dict) and cfg else None
 
 
-def resource_scheduler_config(target: Path, run_id: str) -> dict[str, Any]:
-    cfg = load_json_if_exists(config_path(target, run_id))
-    if not isinstance(cfg, dict):
-        return {}
-    resources = cfg.get("resources")
-    if not isinstance(resources, dict):
-        return {}
-    scheduler = resources.get("scheduler")
+def resource_scheduler_config(target: Path, run_id: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
+    scheduler = resource_config(target, run_id, state).get("scheduler")
     if isinstance(scheduler, str):
         return {"type": scheduler}
     if isinstance(scheduler, dict):
@@ -518,8 +378,7 @@ def can_ever_fit(caps: dict[str, int | None], request: dict[str, int]) -> bool:
 
 
 def resource_summary(target: Path, run_id: str, state: dict[str, Any]) -> dict[str, Any]:
-    cfg = load_json_if_exists(config_path(target, run_id))
-    cfg = cfg if isinstance(cfg, dict) else {}
+    cfg = resource_config(target, run_id, state)
     phase_state = state.get("state") if isinstance(state.get("state"), dict) else {}
     leases = active_leases(phase_state)
     summary: dict[str, Any] = {
@@ -549,7 +408,7 @@ def terminal_task_ids(phase_state: dict[str, Any]) -> set[str]:
     return {
         str(task_id)
         for task_id, task in tasks.items()
-        if isinstance(task, dict) and str(task.get("status") or "") in TASK_TERMINAL_STATUSES
+        if isinstance(task, dict) and is_terminal_status(task.get("status"))
     }
 
 
@@ -564,124 +423,8 @@ def open_work_ids(phase_state: dict[str, Any]) -> list[str]:
     return sorted(
         str(work_id)
         for work_id, record in work.items()
-        if not isinstance(record, dict) or str(record.get("status") or "") not in WORK_TERMINAL_STATUSES
+        if not isinstance(record, dict) or not is_terminal_status(record.get("status"))
     )
-
-
-def update_nodes_from_result(phase_state: dict[str, Any], payload: dict[str, Any]) -> None:
-    nodes = phase_state.setdefault("nodes", {})
-    node_payload = payload.get("node") if isinstance(payload.get("node"), dict) else None
-    if node_payload:
-        node_id = str(node_payload.get("node_id") or node_payload.get("id") or "").strip()
-        if node_id:
-            current = nodes.setdefault(node_id, {})
-            current.update(node_payload)
-            current.setdefault("node_id", node_id)
-            current["updated_at"] = utc_now()
-    bulk = payload.get("nodes")
-    if isinstance(bulk, dict):
-        for node_id, node in bulk.items():
-            if isinstance(node, dict):
-                current = nodes.setdefault(str(node_id), {})
-                current.update(node)
-                current.setdefault("node_id", str(node_id))
-                current["updated_at"] = utc_now()
-    elif isinstance(bulk, list):
-        for node in bulk:
-            if isinstance(node, dict):
-                node_id = str(node.get("node_id") or node.get("id") or "").strip()
-                if node_id:
-                    current = nodes.setdefault(node_id, {})
-                    current.update(node)
-                    current.setdefault("node_id", node_id)
-                    current["updated_at"] = utc_now()
-
-
-def cmd_research_start(args: argparse.Namespace) -> int:
-    target = target_repo(args)
-    payload = load_payload(args)
-    cfg = initial_config(target, args, payload)
-    initial_state = {
-        "custom_criteria": cfg.get("custom_criteria"),
-        "selected_idea_id": cfg.get("selected_idea_id"),
-        "idea_batch": deepcopy(cfg.get("idea_batch") or []),
-        "campaign_mode": bool(cfg.get("campaign_mode")),
-        "learning_notes": {
-            "path": cfg.get("learning_notes_ref"),
-            "status": "active",
-        },
-        "discovery_notes": {
-            "path": cfg.get("discovery_notes_ref"),
-            "status": "active",
-        },
-        "orchestrator": {
-            "role": "main_codex_session",
-            "next_action": "plan",
-            "next_action_details": {"reason": "research run started"},
-            "prompt_path": prompt_path_for("orchestrator"),
-            "last_checkpoint_at": utc_now(),
-        },
-        "tasks": {},
-        "work": {},
-        "baseline": {
-            "required": False,
-            "status": "not_required",
-            "fixed_split_dir": str(run_dir(target, args.run_id) / "baseline" / "splits"),
-            "split_manifest_ref": str(run_dir(target, args.run_id) / "baseline" / "baseline.json"),
-            "baseline_score_refs": [],
-            "repo_refs": [],
-        },
-        "nodes": {},
-        "resource_queue": empty_resource_queue(),
-        "resources": {"caps": cfg.get("resources"), "leases": {}, "completed_leases": {}, "events": []},
-        "selection": {"status": "pending", "selected_node": None},
-    }
-    state_override = payload.get("state") if isinstance(payload.get("state"), dict) else {}
-    initial_state.update(state_override)
-    state = start_phase(target, args.run_id, "research", initial_state)
-    (run_dir(target, args.run_id) / "baseline").mkdir(parents=True, exist_ok=True)
-    set_active_run(
-        target,
-        args.run_id,
-        "research",
-        "active",
-        codex_session_id=os.environ.get("CODEX_SESSION_ID"),
-        codex_thread_id=os.environ.get("CODEX_THREAD_ID"),
-    )
-    atomic_write_json(config_path(target, args.run_id), cfg)
-    learning_notes_ref = cfg.get("learning_notes_ref")
-    if isinstance(learning_notes_ref, str) and learning_notes_ref:
-        notes_path = Path(learning_notes_ref)
-        notes_path.parent.mkdir(parents=True, exist_ok=True)
-        notes_path.touch(exist_ok=True)
-    discovery_notes_ref = cfg.get("discovery_notes_ref")
-    if isinstance(discovery_notes_ref, str) and discovery_notes_ref:
-        notes_path = Path(discovery_notes_ref)
-        notes_path.parent.mkdir(parents=True, exist_ok=True)
-        if not notes_path.exists():
-            notes_path.write_text(
-                "# Discovery Notes\n\n"
-                "## Current Best Understanding\n\n"
-                "No discovery synthesis recorded yet.\n\n"
-                "## What Worked\n\n"
-                "- TBD\n\n"
-                "## What Did Not Work\n\n"
-                "- TBD\n\n"
-                "## Data And Evaluation Findings\n\n"
-                "- TBD\n\n"
-                "## Model And Mechanism Hypotheses\n\n"
-                "- TBD\n\n"
-                "## Transferable Insights\n\n"
-                "- TBD\n\n"
-                "## Branch Seeds\n\n"
-                "- TBD\n\n"
-                "## Things To Avoid Repeating\n\n"
-                "- TBD\n\n"
-                "## Node Notes\n\n",
-                encoding="utf-8",
-            )
-    append_journal_event(target, args.run_id, "state_transition", details={"command": "research start", "state_hash": data_hash(state)})
-    return emit("ok", run_id=args.run_id, state_path=str(run_dir(target, args.run_id) / "loop-state.json"), config_path=str(config_path(target, args.run_id)))
 
 
 def cmd_research_resume(args: argparse.Namespace) -> int:
@@ -787,7 +530,7 @@ def cmd_research_select(args: argparse.Namespace) -> int:
         }
 
     updated = mutate_loop_state(target, run_id, "selection", {"command": "research select", "node_id": node_id}, mutator)
-    selection = updated["state"]["selection"]
+    selection = {"run_id": run_id, **updated["state"]["selection"]}
     atomic_write_json(selection_path(target, run_id), selection)
     return emit("ok", run_id=run_id, selection=selection)
 
@@ -802,21 +545,21 @@ def cmd_research_complete(args: argparse.Namespace) -> int:
         raise ResearchError("completion audit must include passed=true")
     simulated = deepcopy(state)
     simulated["active"] = False
-    simulated["phase_status"] = "complete"
-    simulated["completion_audit"] = audit
+    simulated["phase_status"] = "success"
     result = evaluate_loop_state_completion(simulated)
     if not result.complete:
         raise ResearchError(f"research completion blocked: {result.reason}")
 
     def mutator(new_state: dict[str, Any]) -> None:
         new_state["active"] = False
-        new_state["phase_status"] = "complete"
+        new_state["phase_status"] = "success"
+        new_state["run_outcome"] = "success"
         new_state["completed_at"] = utc_now()
         new_state["completion_audit"] = audit
 
     mutate_loop_state(target, run_id, "state_transition", {"command": "research complete"}, mutator)
-    set_active_run(target, run_id, "research", "validating")
-    return emit("ok", run_id=run_id, active_status="validating")
+    set_active_run(target, run_id, "research", "success")
+    return emit("ok", run_id=run_id, phase_status="success", active_status="success")
 
 
 def cmd_research_cancel(args: argparse.Namespace) -> int:
@@ -842,9 +585,7 @@ def acquire_lease(target: Path, run_id: str, task_id: str, request: dict[str, in
         with run_lock(target, run_id):
             state = load_loop_state(target, run_id)
             phase_state = phase_state_or_error(state, run_id)
-            cfg = load_json_if_exists(config_path(target, run_id))
-            if not isinstance(cfg, dict):
-                raise ResearchError(f"missing config.json for run {run_id}")
+            cfg = resource_config(target, run_id, state)
             caps = normalized_caps(cfg, request)
             if not can_ever_fit(caps, request):
                 raise ResearchError("resource_request_exceeds_caps")
@@ -860,7 +601,7 @@ def acquire_lease(target: Path, run_id: str, task_id: str, request: dict[str, in
                     "created_at": utc_now(),
                 }
                 resources = phase_state.setdefault("resources", {})
-                resources.setdefault("caps", cfg.get("resources"))
+                resources.setdefault("caps", cfg)
                 resources.setdefault("leases", {})[lease_id] = lease
                 tasks = phase_state.setdefault("tasks", {})
                 if isinstance(tasks.get(task_id), dict):

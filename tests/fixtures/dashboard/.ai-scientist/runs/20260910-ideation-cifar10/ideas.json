@@ -1,0 +1,23 @@
+{
+  "run_id": "20260910-ideation-cifar10",
+  "ideas": [
+    {
+      "id": "mixup-cutout-schedule",
+      "title": "Mixup and cutout on a cosine schedule",
+      "idea_file": "ideas/mixup-cutout-schedule.md",
+      "pilot_report": "logs/pilots/mixup-cutout-schedule/report.md"
+    },
+    {
+      "id": "snapshot-ensemble",
+      "title": "Snapshot ensemble of three checkpoints",
+      "idea_file": "ideas/snapshot-ensemble.md",
+      "pilot_report": "logs/pilots/snapshot-ensemble/report.md"
+    },
+    {
+      "id": "stochastic-depth-members",
+      "title": "Stochastic depth for ensemble members",
+      "idea_file": "ideas/stochastic-depth-members.md",
+      "pilot_report": "logs/pilots/stochastic-depth-members/report.md"
+    }
+  ]
+}

@@ -1,0 +1,259 @@
+/* Shapes returned by src/dashboard/scan.py. Field meanings are defined in docs/SCHEMA.md. */
+
+export interface RunSummary {
+  run_id: string;
+  path: string;
+  /** null when the run has no loop-state.json and no status line in run.md. */
+  active: boolean | null;
+  /** research | review | writeup from loop-state.json; "ideation" when only run.md exists; null when neither. */
+  phase: string | null;
+  phase_status: string | null;
+  run_outcome: string | null;
+  blocked_reason: string | null;
+  updated_at: string | null;
+  links: Record<string, unknown> | null;
+  next_action: string | null;
+  selection_status: string | null;
+  selected_node: string | null;
+  baseline_status: string | null;
+  primary_metric: string | null;
+  primary_metric_direction: string | null;
+  success_threshold: number | string | null;
+  contract_path: string | null;
+  idea_batch: string | null;
+  goal: string | null;
+  idea_count: number | null;
+  node_count: number;
+  /** message-box/*.json records with status pending. */
+  pending_messages: number;
+  mtime: number | null;
+  /** sessions/<id>/session.json bound to this run, or null when none is. */
+  session: SessionRecord | null;
+  /** True when runs/<run-id> does not exist yet and this card stands in for a live session bootstrapping it. */
+  pending?: boolean;
+}
+
+/** One subscription rate-limit window reported by the Claude CLI (five_hour, seven_day, ...). */
+export interface RateLimitWindow {
+  type: string;
+  /** allowed | allowed_warning | rejected */
+  status: string;
+  /** Fraction consumed, 0..1, when the CLI reported one. */
+  utilization: number | null;
+  /** Unix seconds when the window resets. */
+  resets_at: number | null;
+}
+
+/** One sessions/<id>/session.json record: a Claude Code session owned by the dashboard server. */
+export interface SessionRecord {
+  id: string;
+  backend: "claude" | string;
+  /** starting | running | idle are live; stopped | failed | detached are final. */
+  status: "starting" | "running" | "idle" | "stopped" | "failed" | "detached" | string;
+  created_at: string;
+  updated_at: string;
+  run_id: string | null;
+  contract_path: string | null;
+  idea_batch: string | null;
+  prompt: string | null;
+  cwd: string | null;
+  owner_pid: number | null;
+  claude_session_id: string | null;
+  /** Turns completed over the whole session. */
+  num_turns: number | null;
+  /** Latest window per rate-limit type; empty until the CLI reports one (API-key sessions never do). */
+  rate_limits: Record<string, RateLimitWindow> | null;
+  error: string | null;
+}
+
+/** One line of sessions/<id>/events.jsonl. */
+export interface SessionEvent {
+  ts: string;
+  type: "system" | "assistant" | "user" | "result" | "stderr" | "dashboard" | string;
+  subtype?: string | null;
+  text?: string | null;
+  tool?: string | null;
+  /** For user events: who sent it (dashboard, launcher, ...). */
+  origin?: string | null;
+}
+
+export interface SessionDetail extends SessionRecord {
+  /** Oldest to newest, last 200. */
+  events: SessionEvent[];
+}
+
+export const LIVE_SESSION = new Set(["starting", "running", "idle"]);
+export const isSessionLive = (s: SessionRecord | null | undefined): boolean => !!s && LIVE_SESSION.has(s.status);
+/** The orchestrator returned a result (idle) while the run still says it is active: an early stop or a question waiting. */
+export const isSessionStalled = (s: SessionRecord | null | undefined, runActive: boolean | null | undefined): boolean =>
+  !!s && s.status === "idle" && runActive === true;
+
+/** Terminal phase_status values from docs/SCHEMA.md 3.3: the loop reached an outcome and stopped. */
+export const ENDED_PHASE_STATUS = new Set(["success", "exhausted", "cancelled", "blocked", "complete"]);
+export const hasRunEnded = (phaseStatus: string | null | undefined): boolean => !!phaseStatus && ENDED_PHASE_STATUS.has(phaseStatus);
+
+/** Resume covers three halts: the session stalled, its process is gone, or the loop ended and wants a tighter bar. */
+export const canResume = (
+  s: SessionRecord | null | undefined,
+  run: { active: boolean | null; phase_status: string | null } | null | undefined,
+): boolean => !!s && (isSessionStalled(s, run?.active) || !isSessionLive(s) || hasRunEnded(run?.phase_status));
+
+/** One message-box/<id>.json record (docs/SCHEMA.md 3.11). */
+export interface SteerMessage {
+  id: string;
+  run_id: string;
+  node_id: string;
+  kind: "revision" | "branch";
+  prompt: string;
+  status: "pending" | "acknowledged" | "completed" | "rejected" | "cancelled" | string;
+  created_at: string;
+  updated_at: string | null;
+  work_id: string | null;
+  result_node_id: string | null;
+  note: string | null;
+}
+
+export interface WorkItem {
+  work_id: string;
+  status?: string | null;
+  agent_thread_id?: string | null;
+  result_ref?: string | null;
+  node?: string | null;
+  [key: string]: unknown;
+}
+
+export interface NodeSummary {
+  node_id: string;
+  status: string | null;
+  /** status is not one of the six work terminal tokens. */
+  alive: boolean;
+  parent_node_id: string | null;
+  depth: number;
+  updated_at: string | null;
+  title: string | null;
+  idea_id: string | null;
+  assignment: string | null;
+  result_ref: string | null;
+  evidence_summary: string | null;
+  next_action: string | null;
+  metrics: Record<string, unknown> | null;
+  /** state.work entries whose `node` is this node. */
+  work: WorkItem[];
+  report_count: number;
+  pending_messages: number;
+  /** Raw state.nodes[<id>] entry, so unknown keys can still be shown. */
+  ledger: Record<string, unknown> | null;
+}
+
+export interface NodeReport {
+  ref: string;
+  path: string | null;
+  name: string;
+  work_id: string | null;
+  updated_at: number | null;
+  content: string | null;
+}
+
+export type NodeHistoryEvent =
+  | {
+      kind: "journal";
+      event_type: string | null;
+      timestamp: string | null;
+      epoch: number | null;
+      transition_id: string | null;
+      subagent_id: string | null;
+      details: Record<string, unknown>;
+    }
+  | {
+      kind: "work";
+      work_id: string;
+      status: string | null;
+      timestamp: string | null;
+      epoch: number | null;
+      details: Record<string, unknown>;
+    }
+  | {
+      kind: "report";
+      path: string | null;
+      name: string;
+      work_id: string | null;
+      timestamp: string | null;
+      epoch: number | null;
+    };
+
+export interface NodeDetail extends NodeSummary {
+  reports: NodeReport[];
+  history: NodeHistoryEvent[];
+  /** This node's messages, newest first. */
+  messages: SteerMessage[];
+}
+
+export interface JournalEvent {
+  event_type: string;
+  timestamp: string;
+  run_id: string;
+  node_id?: string;
+  transition_id?: string;
+  subagent_id?: string;
+  details: Record<string, unknown>;
+}
+
+export interface ReportEntry {
+  /** Run-relative path, usable with /api/runs/<id>/files/<path>. */
+  path: string;
+  name: string;
+  updated_at: number | null;
+}
+
+export interface IdeaEntry {
+  id?: string;
+  title?: string;
+  idea_file?: string;
+  pilot_report?: string;
+  [key: string]: unknown;
+}
+
+export interface RunDetail extends RunSummary {
+  nodes: NodeSummary[];
+  work: Record<string, Record<string, unknown>> | null;
+  resources: unknown;
+  resource_queue: unknown;
+  open_questions: unknown;
+  baseline: { state: Record<string, unknown> | null; manifest: Record<string, unknown> | null } | null;
+  selection: Record<string, unknown> | null;
+  journal: JournalEvent[];
+  journal_count: number;
+  reports: ReportEntry[];
+  loop_state: Record<string, unknown> | null;
+  config: Record<string, unknown> | null;
+  run_md: string | null;
+  ideas: IdeaEntry[] | null;
+  /** Every message in the run, newest first. */
+  messages: SteerMessage[];
+}
+
+export interface ContractSummary {
+  contract_id: string;
+  goal: string | null;
+  valid: boolean;
+}
+
+/** Ideas of one ideation run, as offered to the Start-research modal. */
+export interface IdeasCatalogEntry {
+  run_id: string;
+  goal: string | null;
+  ideas: { id: string; title: string | null; idea_file: string | null; pilot_report: string | null }[];
+}
+
+export interface Overview {
+  target_repo: string;
+  ai_root: string;
+  exists: boolean;
+  active_run: { run_id: string; phase?: string; status?: string } | null;
+  runs: RunSummary[];
+  contracts: ContractSummary[];
+  /** Every ideation run that has an ideas.json, for launching research. */
+  ideas: IdeasCatalogEntry[];
+  /** Newest first. */
+  sessions: SessionRecord[];
+}

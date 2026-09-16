@@ -9,7 +9,9 @@ conceivable.
 A branch is a new node with its own worker, workspace, evidence trail, and
 resource records. It may use any evidence-backed parent. Multiple branches
 from one revision are allowed only when their mechanisms are distinct and the
-fixed active-node cap permits them.
+fixed active-node cap permits them. A user message of kind `branch` is a valid
+branch trigger: its prompt is the source evidence and the parent is the
+message's node.
 
 Checkpoint `parent_node_id`, branch rationale, source evidence, and available
 revision-plan or selected-candidate refs. Record borrowed insights when used.

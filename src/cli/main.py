@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from core import agents as core_agents
+from core.version import cli_version
 from core.state import (
+    TERMINAL_PHASE_STATUSES,
     append_journal_event,
     audit_block_reason,
-    block_for_manual_recovery,
     clear_active_run,
-    has_stop_release_evidence,
+    has_release_evidence,
     load_active_run,
     load_loop_state,
     run_dir,
@@ -48,8 +49,6 @@ def active_run(target: Path, run_id: str | None = None) -> tuple[str, dict[str, 
         if state:
             reason = audit_block_reason(target, run_id, state)
             if reason:
-                if str(state.get("phase_status") or "") != "blocked_manual_recovery":
-                    block_for_manual_recovery(target, run_id, state, reason)
                 raise CliError(reason)
         return run_id, state
     active = load_active_run(target)
@@ -63,8 +62,6 @@ def active_run(target: Path, run_id: str | None = None) -> tuple[str, dict[str, 
     if state:
         block_reason = audit_block_reason(target, rid, state)
         if block_reason:
-            if str(state.get("phase_status") or "") != "blocked_manual_recovery":
-                block_for_manual_recovery(target, rid, state, block_reason)
             raise CliError(block_reason)
     return rid, state
 
@@ -90,26 +87,17 @@ def cmd_validate_run(args: argparse.Namespace) -> int:
     return validate_run_main(argv)
 
 
-def cmd_hooks_install(args: argparse.Namespace) -> int:
-    from hooks.install import main as install_main
+def cmd_validate_loop_state(args: argparse.Namespace) -> int:
+    from validation.run import ValidationError, ai_root, pick_run, validate_loop_state_run
 
-    return install_main(["--project-root", str(args.project_root), "--python", args.python])
-
-
-def cmd_hooks_check(args: argparse.Namespace) -> int:
-    from hooks.install import main as install_main
-
-    return install_main(["--project-root", str(args.project_root), "--python", args.python, "--check"])
-
-
-def cmd_hooks_stop_gate(args: argparse.Namespace) -> int:
-    """Internal entrypoint retained for already-installed CLI-style hooks."""
-    from hooks.stop_gate import main as stop_gate_main
-
-    argv: list[str] = []
-    if args.target_repo:
-        argv.extend(["--target-repo", str(args.target_repo)])
-    return stop_gate_main(argv)
+    target = Path(args.target) if args.target else target_repo(args)
+    try:
+        root = ai_root(target)
+        run = pick_run(root, args.run_id)
+    except ValidationError as exc:
+        return response("error", error=str(exc), problems=[str(exc)])
+    problems = validate_loop_state_run(root, run)
+    return response("ok" if not problems else "error", run_id=run.name, run_dir=str(run), problems=problems)
 
 
 def cmd_agents_install(args: argparse.Namespace) -> int:
@@ -129,6 +117,13 @@ def _dependency_error_message(status: dict[str, Any]) -> str:
     if status.get("missing_executables"):
         missing.append("executables: " + ", ".join(str(item) for item in status["missing_executables"]))
     return "missing writeup dependency (" + "; ".join(missing) + "). Install the missing dependency and rerun this command."
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from cli.doctor import report
+
+    result = report(Path(args.plugin_dir) if args.plugin_dir else None)
+    return response("error" if result["problems"] else "ok", **result)
 
 
 def cmd_writeup_doctor(_args: argparse.Namespace) -> int:
@@ -245,11 +240,85 @@ def cmd_handoff_record(args: argparse.Namespace) -> int:
     if (
         args.approved
         and state
-        and state.get("phase_status") == "complete"
-        and has_stop_release_evidence(target, run_id, str(state.get("phase") or "research"))
+        and str(state.get("phase_status") or "") in TERMINAL_PHASE_STATUSES
+        and has_release_evidence(target, run_id, str(state.get("phase") or "research"))
     ):
         clear_active_run(target, run_id)
     return response("ok", run_id=run_id, gate=args.gate, approved=args.approved)
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    from dashboard.frontend import FrontendBuildError, build, check_built
+    from dashboard.server import serve
+
+    try:
+        if args.build_only:
+            return response("ok", frontend=build())
+        if args.build:
+            build()
+        elif not args.dev:
+            check_built()  # never runs npm on its own: missing dist is an error, stale dist a warning
+    except FrontendBuildError as exc:
+        return response("error", error=str(exc))
+    serve(
+        target_repo(args),
+        host=args.host,
+        port=args.port,
+        open_browser=args.open,
+        dev=args.dev,
+        dev_port=args.dev_port,
+        plugin_dir=Path(args.plugin_dir).resolve() if args.plugin_dir else None,
+    )
+    return 0
+
+
+def _message_box_run_id(args: argparse.Namespace, target: Path) -> str:
+    if args.run_id:
+        return args.run_id
+    active = load_active_run(target)
+    if not isinstance(active, dict) or not isinstance(active.get("run_id"), str):
+        raise CliError("no active AI Scientist run; pass --run-id")
+    return active["run_id"]
+
+
+def cmd_message_box_add(args: argparse.Namespace) -> int:
+    from core.message_box import MessageBoxError, add
+
+    target = target_repo(args)
+    prompt = args.prompt_file.read_text() if args.prompt_file else (args.prompt or "")
+    try:
+        record = add(target, _message_box_run_id(args, target), args.node_id, args.kind, prompt)
+    except MessageBoxError as exc:
+        return response("error", error=str(exc))
+    return response("ok", message=record)
+
+
+def cmd_message_box_list(args: argparse.Namespace) -> int:
+    from core.message_box import list_messages
+
+    target = target_repo(args)
+    run_id = _message_box_run_id(args, target)
+    messages = list_messages(target, run_id, status=args.status, node_id=args.node_id)
+    return response("ok", run_id=run_id, count=len(messages), messages=messages)
+
+
+def cmd_message_box_update(args: argparse.Namespace) -> int:
+    from core.message_box import MessageBoxError, update
+
+    target = target_repo(args)
+    try:
+        record = update(
+            target,
+            _message_box_run_id(args, target),
+            args.id,
+            args.status,
+            work_id=args.work_id,
+            result_node_id=args.result_node_id,
+            note=args.note,
+        )
+    except MessageBoxError as exc:
+        return response("error", error=str(exc))
+    return response("ok", message=record)
 
 
 def add_json_file_arg(parser: argparse.ArgumentParser) -> None:
@@ -259,7 +328,12 @@ def add_json_file_arg(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-repo", type=Path, help="Target repository. Defaults to current working directory.")
+    parser.add_argument("--version", action="version", version=f"ai-scientist {cli_version()}")
     sub = parser.add_subparsers(dest="area", required=True)
+
+    doctor = sub.add_parser("doctor", help="Report where this install finds the plugin, schemas, frontend, and SDK.")
+    doctor.add_argument("--plugin-dir", help="Check this plugin checkout instead of the resolved one.")
+    doctor.set_defaults(func=cmd_doctor)
 
     validate = sub.add_parser("validate")
     validate_sub = validate.add_subparsers(dest="command", required=True)
@@ -268,20 +342,10 @@ def build_parser() -> argparse.ArgumentParser:
     validate_run.add_argument("--gate", choices=["research_to_review", "review_to_writeup", "launch"], required=True)
     validate_run.add_argument("--run-id")
     validate_run.set_defaults(func=cmd_validate_run)
-
-    hooks = sub.add_parser("hooks")
-    hooks_sub = hooks.add_subparsers(dest="command", required=True)
-    hooks_install = hooks_sub.add_parser("install")
-    hooks_install.add_argument("--project-root", type=Path, default=Path.cwd())
-    hooks_install.add_argument("--python", default=sys.executable)
-    hooks_install.set_defaults(func=cmd_hooks_install)
-    hooks_check = hooks_sub.add_parser("check")
-    hooks_check.add_argument("--project-root", type=Path, default=Path.cwd())
-    hooks_check.add_argument("--python", default=sys.executable)
-    hooks_check.set_defaults(func=cmd_hooks_check)
-    stop_gate = hooks_sub.add_parser("stop-gate", help=argparse.SUPPRESS)
-    stop_gate.add_argument("--target-repo", type=Path)
-    stop_gate.set_defaults(func=cmd_hooks_stop_gate)
+    validate_loop_state = validate_sub.add_parser("loop-state", help="Check loop-state.json and journal.jsonl against docs/SCHEMA.md.")
+    validate_loop_state.add_argument("target", nargs="?", type=Path, help="Target repo or .ai-scientist directory. Defaults to --target-repo.")
+    validate_loop_state.add_argument("--run-id")
+    validate_loop_state.set_defaults(func=cmd_validate_loop_state)
 
     agents = sub.add_parser("agents")
     agents_sub = agents.add_subparsers(dest="command", required=True)
@@ -292,11 +356,6 @@ def build_parser() -> argparse.ArgumentParser:
     agents_install.set_defaults(func=cmd_agents_install)
     research = sub.add_parser("research")
     research_sub = research.add_subparsers(dest="command", required=True)
-    research_start = research_sub.add_parser("start")
-    research_start.add_argument("--run-id", required=True)
-    research_start.add_argument("--selected-idea-id")
-    add_json_file_arg(research_start)
-    research_start.set_defaults(func=research_workflow.cmd_research_start)
     research_resume = research_sub.add_parser("resume")
     research_resume.add_argument("--run-id")
     research_resume.set_defaults(func=research_workflow.cmd_research_resume)
@@ -373,6 +432,41 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_record.add_argument("--approved", action="store_true")
     handoff_record.add_argument("--reason")
     handoff_record.set_defaults(func=cmd_handoff_record)
+
+    message_box = sub.add_parser("message-box", help="Human steering messages targeting one node of a research run (docs/SCHEMA.md 3.11).")
+    message_box_sub = message_box.add_subparsers(dest="command", required=True)
+    mb_add = message_box_sub.add_parser("add", help="Queue a message for the orchestrator.")
+    mb_add.add_argument("--run-id")
+    mb_add.add_argument("--node-id", required=True)
+    mb_add.add_argument("--kind", choices=["revision", "branch"], required=True)
+    mb_prompt = mb_add.add_mutually_exclusive_group(required=True)
+    mb_prompt.add_argument("--prompt")
+    mb_prompt.add_argument("--prompt-file", type=Path)
+    mb_add.set_defaults(func=cmd_message_box_add)
+    mb_list = message_box_sub.add_parser("list", help="List messages, optionally filtered by status or node.")
+    mb_list.add_argument("--run-id")
+    mb_list.add_argument("--status", choices=["pending", "acknowledged", "completed", "rejected", "cancelled"])
+    mb_list.add_argument("--node-id")
+    mb_list.set_defaults(func=cmd_message_box_list)
+    mb_update = message_box_sub.add_parser("update", help="Record what the orchestrator did with a message.")
+    mb_update.add_argument("--run-id")
+    mb_update.add_argument("--id", required=True)
+    mb_update.add_argument("--status", choices=["acknowledged", "completed", "rejected", "cancelled"], required=True)
+    mb_update.add_argument("--work-id")
+    mb_update.add_argument("--result-node-id")
+    mb_update.add_argument("--note")
+    mb_update.set_defaults(func=cmd_message_box_update)
+
+    dashboard = sub.add_parser("dashboard", help="Serve the monitoring dashboard over .ai-scientist/ artifacts.")
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8765)
+    dashboard.add_argument("--open", action="store_true", help="Open the dashboard in a browser.")
+    dashboard.add_argument("--build", action="store_true", help="Build the frontend (npm install on first use, then npm run build) before serving.")
+    dashboard.add_argument("--build-only", action="store_true", help="Build the frontend into src/dashboard/dist and exit.")
+    dashboard.add_argument("--dev", action="store_true", help="Also run the Vite dev server (hot reload, npm install on first use) and open that instead of the built frontend.")
+    dashboard.add_argument("--plugin-dir", help="Plugin checkout to load into launched sessions (default: this checkout, else the Claude Code install).")
+    dashboard.add_argument("--dev-port", type=int, default=5173, help="Port for the Vite dev server with --dev.")
+    dashboard.set_defaults(func=cmd_dashboard)
 
     resource = sub.add_parser("resource")
     resource_sub = resource.add_subparsers(dest="command", required=True)

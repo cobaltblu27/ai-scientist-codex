@@ -1,0 +1,16 @@
+{
+  "research_contract": {
+    "contract_id": "uci-electricity",
+    "title": "Hourly energy demand forecasting, 24h horizon",
+    "goal": "Hourly energy demand forecasting, 24h horizon",
+    "dataset": {
+      "name": "uci-electricity",
+      "version": "1.0"
+    },
+    "split_protocol": "official train/test split, 10% of train held out for validation, seed 13",
+    "primary_metric": "mae",
+    "primary_metric_direction": "lower_is_better",
+    "success_threshold": 0.15,
+    "evaluator_command": "python eval.py --split test"
+  }
+}

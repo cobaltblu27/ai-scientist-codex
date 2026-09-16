@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Tag must match pyproject.toml
+        run: |
+          version="$(uv version --short)"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != pyproject version $version"; exit 1; }
+
+      - name: Build the dashboard frontend
+        run: npm ci --prefix src/frontend && npm run build --prefix src/frontend
+
+      - name: Install the project and run the tests
+        run: uv sync --extra dashboard && uv run pytest -q
+        env:
+          AI_SCIENTIST_PACKAGING_TESTS: "1"
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Smoke-test the wheel in a fresh virtualenv
+        run: |
+          uv venv /tmp/wheel-venv --python 3.12
+          uv pip install --python /tmp/wheel-venv "$(ls dist/ai_scientist-*.whl)[dashboard]"
+          /tmp/wheel-venv/bin/ai-scientist --version
+          AI_SCIENTIST_PLUGIN_ROOT="$PWD" /tmp/wheel-venv/bin/ai-scientist doctor
+
+      - name: Create the GitHub release with the wheel and sdist attached
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

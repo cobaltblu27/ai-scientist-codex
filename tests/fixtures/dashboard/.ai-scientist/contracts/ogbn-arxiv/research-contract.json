@@ -1,0 +1,16 @@
+{
+  "research_contract": {
+    "contract_id": "ogbn-arxiv",
+    "title": "Node classification on ogbn-arxiv",
+    "goal": "Node classification on ogbn-arxiv",
+    "dataset": {
+      "name": "ogbn-arxiv",
+      "version": "1.0"
+    },
+    "split_protocol": "official train/test split, 10% of train held out for validation, seed 13",
+    "primary_metric": "accuracy",
+    "primary_metric_direction": "higher_is_better",
+    "success_threshold": 0.73,
+    "evaluator_command": "python eval.py --split test"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "message-box/<message-id>.json (docs/SCHEMA.md section 3.11)",
+  "type": "object",
+  "required": ["id", "run_id", "node_id", "kind", "prompt", "created_at", "status"],
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "node_id": {"type": "string"},
+    "kind": {"enum": ["revision", "branch"]},
+    "prompt": {"type": "string"},
+    "created_at": {"type": "string"},
+    "status": {"enum": ["pending", "acknowledged", "completed", "rejected", "cancelled"]},
+    "updated_at": {"type": ["string", "null"]},
+    "work_id": {"type": ["string", "null"]},
+    "result_node_id": {"type": ["string", "null"]},
+    "note": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

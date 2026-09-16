@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "journal.jsonl record (docs/SCHEMA.md section 3.4)",
+  "type": "object",
+  "required": ["event_type", "timestamp", "run_id", "details"],
+  "properties": {
+    "event_type": {
+      "enum": [
+        "state_transition",
+        "api_call",
+        "resource_event",
+        "subagent_event",
+        "critic_event",
+        "handoff",
+        "validation",
+        "selection",
+        "setup",
+        "dependency",
+        "workspace",
+        "note",
+        "finding",
+        "message"
+      ]
+    },
+    "timestamp": {"type": "string"},
+    "run_id": {"type": "string"},
+    "details": {"type": "object"},
+    "transition_id": {"type": "string"},
+    "node_id": {"type": "string"}
+  },
+  "additionalProperties": true
+}
