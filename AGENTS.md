@@ -15,7 +15,7 @@ Many specs to add will require change of CLI or prompt. Same feature can be impl
 
 Default to the prompt. Skills own the loop: they choose actions, write run artifacts under `.ai-scientist/runs/<run-id>/`, and decide when a phase is done. A skill writing `loop-state.json` or `active-run.json` directly is the normal path, not a workaround.
 
-Use `/goal` for workflow persistence in both Claude Code and Codex.
+Use `/goal` for workflow persistence in Codex. In Claude Code, the `ideation` and `research-loop` skills declare a Stop hook in their SKILL.md frontmatter that keeps the session going until the run reaches its terminal status or the user says stop.
 
 Reserve the CLI for artifact shape. Because skills hand-write state, the CLI is what keeps that state parseable and comparable across runs. Validation of a written artifact belongs here even though the writing does not.
 

@@ -2,6 +2,20 @@
 name: ideation
 description: Generate structured research ideas from an inline prompt with Claude Code agents. Explicit use only.
 disable-model-invocation: true
+hooks:
+  Stop:
+    - hooks:
+        - type: agent
+          timeout: 120
+          prompt: |
+            Decide whether the ideation orchestrator may end its turn. Hook input: $ARGUMENTS
+
+            Respond {"ok": true} if any of these holds:
+            - The user's most recent message in the transcript at transcript_path asks to stop, pause, or cancel.
+            - This session's ideation run is finished. Find its run id in the transcript or in `.ai-scientist/active-run.json` under cwd; the run is finished when `.ai-scientist/runs/<run-id>/run.md` begins with `- status: complete` or `- status: cancelled`.
+            - last_assistant_message asks the user a question the run cannot proceed without, such as a missing contract field.
+
+            Otherwise respond {"ok": false, "reason": "The ideation run is not complete. Re-read run.md and continue with the next phase."}
 ---
 
 # Ideation
@@ -27,7 +41,7 @@ Your higher duty is to seed genuine scientific or engineering discovery. The sel
 </Intro>
 
 <Persistence>
-Run the complete ideation workflow under `/goal` in both Claude Code and Codex. The goal is complete only after the selected idea files, pilot reports, `ideas.json`, and final `run.md` status are written and checked. Use `run.md` as durable resume context.
+Run the complete ideation workflow under `/goal` in Codex. In Claude Code, this skill's Stop hook provides the same persistence: it lets you stop only when the run is complete or cancelled, the user says stop, or you need the user's answer to continue. The goal is complete only after the selected idea files, pilot reports, `ideas.json`, and final `run.md` status are written and checked. Use `run.md` as durable resume context.
 </Persistence>
 
 <Big_Picture_And_Flow>

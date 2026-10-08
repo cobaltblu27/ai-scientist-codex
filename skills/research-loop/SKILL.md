@@ -4,6 +4,20 @@ description: >
   Runs the canonical orchestrator-led AI Scientist research loop with
   worker-owned nodes, resource leases, native agents, and durable continuation.
   Use only when the user explicitly invokes research-loop; never auto-select it.
+hooks:
+  Stop:
+    - hooks:
+        - type: agent
+          timeout: 120
+          prompt: |
+            Decide whether the research-loop orchestrator may end its turn. Hook input: $ARGUMENTS
+
+            Respond {"ok": true} if any of these holds:
+            - The user's most recent message in the transcript at transcript_path asks to stop, pause, or cancel.
+            - This session's research run has terminated. Find its run id in the transcript or in `.ai-scientist/active-run.json` under cwd; the run has terminated when `.ai-scientist/runs/<run-id>/loop-state.json` has `active: false` or a `phase_status` of `success`, `exhausted`, `cancelled`, or `blocked`.
+            - last_assistant_message asks the user a question the run cannot proceed without, such as a missing research contract.
+
+            Otherwise respond {"ok": false, "reason": "The research run has not terminated. Reconstruct state from the run artifacts and continue the main loop."}
 ---
 
 # Research Loop
