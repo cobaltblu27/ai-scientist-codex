@@ -40,12 +40,12 @@ export default function App() {
           <div className="topbar-title ellipsis">{selected ?? "Home"}</div>
           <div className="topbar-right">
             {overview.data?.active_run && (
-              <span className="pill lime" title="active-run.json">
+              <span className="pill lime live-chip" title={`active-run.json: ${overview.data.active_run.run_id}`}>
                 live: {overview.data.active_run.run_id}
               </span>
             )}
             <button className="pill start-btn" onClick={() => setStarting(true)} disabled={!overview.data} title="Launch a research loop in a dashboard-owned Claude session">
-              ▶ Start research
+              ▶ Start<span className="start-label">&nbsp;research</span>
             </button>
             <button className="icon-btn" onClick={() => { overview.refresh(); run.refresh(); }} title="Refresh">↻</button>
           </div>

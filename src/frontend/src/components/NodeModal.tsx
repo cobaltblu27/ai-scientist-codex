@@ -108,7 +108,7 @@ function Body({
 
       {notes.some(([, v]) => v) && (
         <section>
-          <dl className="notes">
+          <dl className="notes card">
             {notes.map(([label, v]) => v ? (
               <div key={label}>
                 <dt>{label}</dt>
@@ -233,7 +233,7 @@ function History({ events }: { events: NodeHistoryEvent[] }) {
               <span className="row-main">
                 <span className="row-title">
                   {e.kind === "journal" ? (e.event_type ?? "journal") : e.kind === "work" ? e.work_id : e.name}
-                  {e.kind === "work" && e.status && <span className={`pill tiny ${tone(e.status)}`} style={{ marginLeft: 8 }}>{e.status}</span>}
+                  {e.kind === "work" && e.status && <span className={`pill tiny ${tone(e.status)}`}>{e.status}</span>}
                 </span>
                 <span className="row-sub ellipsis">
                   {e.kind === "journal" && String(e.details.note ?? e.details.command ?? e.subagent_id ?? summarize(e.details))}

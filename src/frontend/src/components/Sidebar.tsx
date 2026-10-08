@@ -98,16 +98,18 @@ function RunGroup({
       <li className="tree-label">{title}</li>
       {runs.map((r) => (
         <li key={r.run_id}>
-          <button className={`tree-item run-item ${selected === r.run_id ? "active" : ""}`} onClick={() => onPick(r.run_id)}>
+          <button className={`tree-item run-item ${selected === r.run_id ? "active" : ""}`} onClick={() => onPick(r.run_id)} title={r.run_id}>
             <span className={`dot ${tone(r.phase_status)}`} />
             <span className="run-main">
               <span className="ellipsis">{r.run_id}</span>
-              <span className="run-sub">
-                {r.phase ?? "—"} · {relTime(r.updated_at ?? r.mtime)}
+              <span className="run-sub-row">
+                <span className="run-sub">
+                  {r.phase ?? "—"} · {relTime(r.updated_at ?? r.mtime)}
+                </span>
+                {r.pending_messages > 0 && <span className="pill tiny pink">{r.pending_messages} msgs</span>}
+                {r.run_id === activeId && <span className="pill tiny lime">live</span>}
               </span>
             </span>
-            {r.pending_messages > 0 && <span className="pill tiny pink">{r.pending_messages} msgs</span>}
-            {r.run_id === activeId && <span className="pill tiny">live</span>}
           </button>
         </li>
       ))}

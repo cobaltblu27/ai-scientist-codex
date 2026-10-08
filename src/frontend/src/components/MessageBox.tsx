@@ -123,8 +123,9 @@ function MessageRow({ m, onOpenNode }: { m: SteerMessage; onOpenNode: (id: strin
       <span className={`dot ${tone(m.status)}`} />
       <span className="row-main">
         <span className="row-title">
-          <span className={`pill tiny ${tone(m.status)}`}>{m.status}</span> <span className="pill tiny">{m.kind}</span>
-          <span className="muted mono"> · {m.id}</span>
+          <span className={`pill tiny ${tone(m.status)}`}>{m.status}</span>
+          <span className="pill tiny">{m.kind}</span>
+          <span className="muted mono ellipsis">{m.id}</span>
         </span>
         {open ? (
           <Markdown source={m.prompt} />

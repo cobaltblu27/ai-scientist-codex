@@ -116,32 +116,36 @@ export function SessionConsole({ session: fromRun, run }: Props) {
           onChange={(e) => setText(e.target.value)}
         />
         <div className="msg-actions">
-          <button type="submit" className="pill ink" disabled={!live || busy !== null || text.trim().length === 0}>
-            {busy === "send" ? "Sending…" : "Send"}
-          </button>
-          {resumable && (
-            <button
-              type="button"
-              className="pill lime"
-              disabled={busy !== null || noteRequired}
-              onClick={resume}
-              title={
-                noteRequired
-                  ? "State the tighter bar in the box first"
-                  : live
-                    ? "Send the resume nudge (the textarea text becomes a note)"
-                    : "Start a process again on the same Claude session (the textarea text goes with it)"
-              }
-            >
-              {busy === "resume" ? "Resuming…" : live ? "▶ Resume" : "▶ Relaunch"}
+          <span className="btn-group">
+            <button type="submit" className="pill ink" disabled={!live || busy !== null || text.trim().length === 0}>
+              {busy === "send" ? "Sending…" : "Send"}
             </button>
-          )}
-          <button type="button" className="pill" disabled={!live || busy !== null} onClick={interrupt} title="Interrupt the current turn; the session stays open">
-            {busy === "interrupt" ? "Interrupting…" : "Interrupt"}
-          </button>
-          <button type="button" className="pill orange" disabled={!live || busy !== null} onClick={stop} title="Terminate the Claude process">
-            {busy === "stop" ? "Stopping…" : "Stop"}
-          </button>
+            {resumable && (
+              <button
+                type="button"
+                className="pill lime"
+                disabled={busy !== null || noteRequired}
+                onClick={resume}
+                title={
+                  noteRequired
+                    ? "State the tighter bar in the box first"
+                    : live
+                      ? "Send the resume nudge (the textarea text becomes a note)"
+                      : "Start a process again on the same Claude session (the textarea text goes with it)"
+                }
+              >
+                {busy === "resume" ? "Resuming…" : live ? "▶ Resume" : "▶ Relaunch"}
+              </button>
+            )}
+          </span>
+          <span className="btn-group end">
+            <button type="button" className="pill" disabled={!live || busy !== null} onClick={interrupt} title="Interrupt the current turn; the session stays open">
+              {busy === "interrupt" ? "Interrupting…" : "Interrupt"}
+            </button>
+            <button type="button" className="pill orange" disabled={!live || busy !== null} onClick={stop} title="Terminate the Claude process">
+              {busy === "stop" ? "Stopping…" : "Stop"}
+            </button>
+          </span>
         </div>
         {error && <div className="msg-note orange">{error}</div>}
         {!error && note && <div className="msg-note muted">{note}</div>}

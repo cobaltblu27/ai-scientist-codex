@@ -18,7 +18,7 @@ export function RunView({ run }: { run: RunDetail }) {
     <>
       <header className="page-head">
         <div className="head-title">
-          <h1 className="ellipsis">{run.run_id}</h1>
+          <h1>{run.run_id}</h1>
           <div className="muted">
             {run.phase ?? "no phase"} · <span className={`pill ${tone(run.phase_status)}`}>{run.phase_status ?? "—"}</span>
             {run.active === false && run.phase_status && <> · finished</>}
@@ -104,7 +104,7 @@ function ResearchBody({ run, live, onOpen }: { run: RunDetail; live: number; onO
               <span className="row-main">
                 <span className="row-title">
                   {e.event_type}
-                  {e.node_id && <span className="pill tiny" style={{ marginLeft: 8 }}>{e.node_id}</span>}
+                  {e.node_id && <span className="pill tiny">{e.node_id}</span>}
                 </span>
                 <span className="row-sub ellipsis">{String(e.details?.note ?? e.details?.command ?? e.transition_id ?? summarize(e.details))}</span>
               </span>

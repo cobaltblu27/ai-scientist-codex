@@ -19,7 +19,7 @@ export function ReportPane({ runId, reports }: { runId: string; reports: ReportE
       ) : (
         <div className="card list">
           {sorted.map((r) => (
-            <div key={r.path}>
+            <div key={r.path} className="list-item">
               <button className={`row row-btn ${open === r.path ? "active" : ""}`} onClick={() => setOpen(open === r.path ? null : r.path)}>
                 <span className="dot ink" />
                 <span className="row-main">

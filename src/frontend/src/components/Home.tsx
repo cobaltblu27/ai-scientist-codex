@@ -49,7 +49,7 @@ export function Home({ overview, onSelect, onStart }: { overview: Overview; onSe
           {runs.map((r, i) => (
             <button key={r.run_id} className={`tile ${i === 0 && r.active ? "lime" : ""}`} onClick={() => onSelect(r.run_id)}>
               <div className="tile-kicker">{r.phase ?? "no phase"}</div>
-              <div className="tile-title ellipsis">{r.run_id}</div>
+              <div className="tile-title clamp-2" title={r.run_id}>{r.run_id}</div>
               <div className="tile-big">{r.node_count}</div>
               <div className="tile-foot">
                 <span className={`pill ${tone(r.phase_status)}`}>{r.phase_status ?? "—"}</span>
@@ -74,12 +74,12 @@ export function Home({ overview, onSelect, onStart }: { overview: Overview; onSe
       ) : (
         <div className="card list">
           {sessions.map((s) => (
-            <div key={s.id} className="row">
+            <div key={s.id} className="row session-row">
               <span className={`dot ${tone(s.status)}`} />
               <span className="row-main">
                 <span className="row-title">
                   {s.run_id ? (
-                    <button type="button" className="link-btn" onClick={() => onSelect(s.run_id!)} title="open run">
+                    <button type="button" className="link-btn ellipsis" onClick={() => onSelect(s.run_id!)} title={`open ${s.run_id}`}>
                       {s.run_id}
                     </button>
                   ) : (
@@ -91,8 +91,10 @@ export function Home({ overview, onSelect, onStart }: { overview: Overview; onSe
                   {s.error && <span className="orange"> · {s.error}</span>}
                 </span>
               </span>
-              <UsageMeter limits={s.rate_limits} compact />
-              <SessionBadge session={s} compact />
+              <span className="session-row-side">
+                <UsageMeter limits={s.rate_limits} compact />
+                <SessionBadge session={s} compact />
+              </span>
             </div>
           ))}
         </div>
