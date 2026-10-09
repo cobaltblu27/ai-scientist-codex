@@ -197,7 +197,81 @@ def test_active_run_for_this_run_is_checked(tmp_path: Path) -> None:
 def test_extra_keys_everywhere_are_tolerated(tmp_path: Path) -> None:
     state = minimal_state(custom_top_level={"anything": 1})
     state["state"]["extra_section"] = [1, 2, 3]
-    state["state"]["nodes"]["N1"]["metrics"] = {"score": 0.1}
+    state["state"]["nodes"]["N1"]["metrics"] = {"score": 0.1, "n_seeds": 1, "fidelity": "full", "train_loss": 0.4}
     state["state"]["work"]["N1-w-001"]["ranking_id"] = "rank-1"
     root, run = write_run(tmp_path, state, journal=[journal_line(transition_id="tr-1", subagent_id="x", custom="y")])
     assert validate_loop_state_run(root, run) == []
+
+
+def scored_node(metrics: dict[str, Any] | None = None, prediction: dict[str, Any] | None = None) -> dict[str, Any]:
+    node: dict[str, Any] = {"status": "completed", "updated_at": TS, "parent_node_id": None}
+    node["metrics"] = metrics if metrics is not None else {"rmse": 2.31, "n_seeds": 3, "seed_std": 0.02, "fidelity": "full", "cost_gpu_hours": 1.5}
+    if prediction is not None:
+        node["prediction"] = prediction
+    return node
+
+
+def write_config(run: Path, primary_metric: str = "rmse") -> None:
+    (run / "config.md").write_text(f"---\nrun_id: run-1\nprimary_metric: {primary_metric}\n---\n")
+
+
+def test_node_metrics_and_prediction_are_accepted(tmp_path: Path) -> None:
+    state = minimal_state()
+    state["state"]["nodes"]["N1"] = scored_node(prediction={"gain": 0.05, "confidence": "low"})
+    root, run = write_run(tmp_path, state)
+    write_config(run)
+    assert validate_loop_state_run(root, run) == []
+
+
+def test_node_metrics_require_seeds_and_fidelity(tmp_path: Path) -> None:
+    state = minimal_state()
+    state["state"]["nodes"]["N1"] = scored_node({"rmse": 2.31})
+    root, run = write_run(tmp_path, state)
+    joined = "\n".join(validate_loop_state_run(root, run))
+    assert "$.state.nodes.N1.metrics missing required key n_seeds" in joined
+    assert "$.state.nodes.N1.metrics missing required key fidelity" in joined
+
+
+def test_node_metrics_require_std_for_several_seeds(tmp_path: Path) -> None:
+    state = minimal_state()
+    state["state"]["nodes"]["N1"] = scored_node({"rmse": 2.31, "n_seeds": 3, "fidelity": "full"})
+    root, run = write_run(tmp_path, state)
+    assert any("seed_std is required when n_seeds >= 2" in p for p in validate_loop_state_run(root, run))
+    state["state"]["nodes"]["N1"] = scored_node({"rmse": 2.31, "n_seeds": 1, "seed_std": None, "fidelity": "screen"})
+    root, run = write_run(tmp_path, state)
+    assert validate_loop_state_run(root, run) == []
+
+
+def test_node_metrics_must_carry_the_configured_primary_metric(tmp_path: Path) -> None:
+    state = minimal_state()
+    state["state"]["nodes"]["N1"] = scored_node({"auroc": 0.8, "n_seeds": 1, "fidelity": "full"})
+    root, run = write_run(tmp_path, state)
+    assert validate_loop_state_run(root, run) == []
+    write_config(run)
+    assert any("missing primary metric 'rmse'" in p for p in validate_loop_state_run(root, run))
+    state["state"]["nodes"]["N1"] = scored_node({"rmse": "2.31", "n_seeds": 1, "fidelity": "full"})
+    root, run = write_run(tmp_path, state)
+    assert any("metrics.rmse must be a number" in p for p in validate_loop_state_run(root, run))
+
+
+def test_node_metrics_reject_bad_values(tmp_path: Path) -> None:
+    state = minimal_state()
+    state["state"]["nodes"]["N1"] = scored_node({"rmse": 2.31, "n_seeds": 0, "seed_std": -1, "fidelity": "Full", "cost_gpu_hours": -2})
+    root, run = write_run(tmp_path, state)
+    joined = "\n".join(validate_loop_state_run(root, run))
+    assert "n_seeds must be an integer >= 1" in joined
+    assert "seed_std must be a number >= 0 or null" in joined
+    assert "fidelity must be a lowercase token" in joined
+    assert "cost_gpu_hours must be a number >= 0" in joined
+
+
+def test_node_prediction_requires_gain_and_known_confidence(tmp_path: Path) -> None:
+    state = minimal_state()
+    state["state"]["nodes"]["N1"]["prediction"] = {"gain": "big", "confidence": "certain"}
+    root, run = write_run(tmp_path, state)
+    joined = "\n".join(validate_loop_state_run(root, run))
+    assert "prediction.gain must be a number" in joined
+    assert "prediction.confidence must be one of low, medium, high" in joined
+    state["state"]["nodes"]["N1"]["prediction"] = {"confidence": "low"}
+    root, run = write_run(tmp_path, state)
+    assert any("$.state.nodes.N1.prediction missing required key gain" in p for p in validate_loop_state_run(root, run))

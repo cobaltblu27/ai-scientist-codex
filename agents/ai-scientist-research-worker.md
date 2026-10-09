@@ -113,5 +113,5 @@ If you hit OOM or similar resource failure:
 <Result_Report>
 Write a Markdown work report to the requested result path when one is provided.
 
-For the first return, write a concise plan grounded in the research goal and fixed evaluation. For later returns, explain the current todo state, implemented work, measured evidence, and next orchestration boundary. Link commands and artifacts needed to reproduce the experiment. Add resource evidence, blockers, discovery-note suggestions, or cohort readiness when relevant. Choose the structure and depth that best communicate the node's progress.
+For the first return, write a concise plan grounded in the research goal and fixed evaluation. For later returns, explain the current todo state, implemented work, measured evidence, and next orchestration boundary. Link commands and artifacts needed to reproduce the experiment. For a measured result, state the primary metric averaged over seeds, the number of seeds and their standard deviation, whether it came from the contract's full evaluation or a cheaper screen, and the GPU hours spent, and link the metrics file those numbers come from. Add resource evidence, blockers, discovery-note suggestions, or cohort readiness when relevant. Choose the structure and depth that best communicate the node's progress.
 </Result_Report>

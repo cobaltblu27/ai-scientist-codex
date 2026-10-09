@@ -37,7 +37,27 @@
             "properties": {
               "status": {"type": "string"},
               "updated_at": {"type": "string"},
-              "parent_node_id": {"type": ["string", "null"]}
+              "parent_node_id": {"type": ["string", "null"]},
+              "metrics": {
+                "type": "object",
+                "required": ["n_seeds", "fidelity"],
+                "properties": {
+                  "n_seeds": {"type": "integer"},
+                  "seed_std": {"type": ["number", "null"]},
+                  "fidelity": {"type": "string"},
+                  "cost_gpu_hours": {"type": "number"}
+                },
+                "additionalProperties": true
+              },
+              "prediction": {
+                "type": "object",
+                "required": ["gain", "confidence"],
+                "properties": {
+                  "gain": {"type": "number"},
+                  "confidence": {"enum": ["low", "medium", "high"]}
+                },
+                "additionalProperties": true
+              }
             },
             "additionalProperties": true
           }

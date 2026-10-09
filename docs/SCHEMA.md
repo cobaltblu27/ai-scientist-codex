@@ -223,7 +223,9 @@ Free beyond these.
   "assignment": "...",
   "result_ref": "logs/workers/N1/w-001/result.md",
   "evidence_summary": "...",
-  "next_action": "..."
+  "next_action": "...",
+  "prediction": {"gain": 0.05, "confidence": "low"},
+  "metrics": {"mean_fold_rmse_ln_ic50": 2.31, "n_seeds": 3, "seed_std": 0.02, "fidelity": "full", "cost_gpu_hours": 1.5}
 }
 ```
 
@@ -232,9 +234,30 @@ Free beyond these.
 | `status` * | terminal when one of `completed`, `cancelled`, `failed`, `abandoned`, `accepted`, `rejected` (the work terminal set from `skills/research-loop/SKILL.md`). Any other lowercase word means the node is live |
 | `updated_at` * | |
 | `parent_node_id` * for branches | parent node id; `null` or absent for roots |
-| `title`, `idea_id`, `assignment`, `result_ref`, `evidence_summary`, `next_action`, `metrics` | conventional; readers show them when present |
+| `metrics` | object, see below. Absent until the node has a measured result |
+| `prediction` | object, see below. Written once at dispatch |
+| `title`, `idea_id`, `assignment`, `result_ref`, `evidence_summary`, `next_action` | conventional; readers show them when present |
 
 Free beyond these.
+
+**`metrics`** holds the node's latest comparable measurement, so search policy can be computed from the ledger instead of read out of reports.
+
+| Field | Notes |
+|---|---|
+| `<primary_metric>` * | number: the `config.md` `primary_metric`, averaged over seeds on the contract's evaluation. The key is the metric token itself |
+| `n_seeds` * | integer ≥ 1: independent runs behind the value |
+| `seed_std` * when `n_seeds` ≥ 2 | number ≥ 0: standard deviation across those runs; `null` or absent for one seed |
+| `fidelity` * | `full` for the contract's evaluation; any other lowercase token (`screen`, `subset`, `short`) names a cheaper evaluation that is not comparable to `full` |
+| `cost_gpu_hours` | number ≥ 0: cumulative GPU hours the node has spent, `0` for CPU-only work |
+
+Free beyond these: other measured metrics may sit beside them.
+
+**`prediction`** is the orchestrator's estimate before the node's work runs; comparing it with the measured result later shows how much those estimates are worth.
+
+| Field | Notes |
+|---|---|
+| `gain` * | number: expected change in the primary metric relative to the parent's value (or the baseline for a root), signed so that positive means better under `primary_metric_direction` |
+| `confidence` * | `low`, `medium`, `high` |
 
 **`state.work`**: object keyed by work id. Minimum shape from `skills/research-loop/references/checkpointing.md` plus the owning node.
 

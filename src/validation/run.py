@@ -30,6 +30,7 @@ LOOP_STATE_PHASES = ("research", "review", "writeup")
 LOOP_STATE_PHASE_STATUSES = ("running", *sorted(TERMINAL_PHASE_STATUSES))
 WORK_REQUIRED = ("status", "agent_thread_id", "result_ref", "node")
 NODE_REQUIRED = ("status", "updated_at")
+PREDICTION_CONFIDENCES = ("low", "medium", "high")
 JOURNAL_REQUIRED = ("event_type", "timestamp", "run_id", "details")
 SELECTION_REQUIRED = ("run_id", "status", "selected_node", "acceptance_rationale")
 ACTIVE_RUN_REQUIRED = ("run_id", "phase", "status", "updated_at", "target_repository")
@@ -198,7 +199,54 @@ def journal_has_transition_id(records: list[dict[str, Any]], transition_id: str)
     return False
 
 
-def loop_state_problems(state: Any, run_id: str) -> list[str]:
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def node_metrics_problems(metrics: Any, primary_metric: str | None, label: str, path: str) -> list[str]:
+    """The typed `metrics` block of a node ledger entry (docs/SCHEMA.md section 3.3)."""
+    if not isinstance(metrics, dict):
+        return [f"{label}: {path} must be of type object"]
+    problems: list[str] = []
+    if primary_metric is not None:
+        if primary_metric not in metrics:
+            problems.append(f"{label}: {path} missing primary metric {primary_metric!r}")
+        elif not _is_number(metrics[primary_metric]):
+            problems.append(f"{label}: {path}.{primary_metric} must be a number")
+    n_seeds = metrics.get("n_seeds")
+    if "n_seeds" not in metrics:
+        problems.append(f"{label}: {path} missing required key n_seeds")
+    elif not (isinstance(n_seeds, int) and not isinstance(n_seeds, bool) and n_seeds >= 1):
+        problems.append(f"{label}: {path}.n_seeds must be an integer >= 1")
+    seed_std = metrics.get("seed_std")
+    if seed_std is not None and not (_is_number(seed_std) and seed_std >= 0):
+        problems.append(f"{label}: {path}.seed_std must be a number >= 0 or null")
+    if isinstance(n_seeds, int) and not isinstance(n_seeds, bool) and n_seeds >= 2 and seed_std is None:
+        problems.append(f"{label}: {path}.seed_std is required when n_seeds >= 2")
+    fidelity = metrics.get("fidelity")
+    if "fidelity" not in metrics:
+        problems.append(f"{label}: {path} missing required key fidelity")
+    elif not (isinstance(fidelity, str) and fidelity and fidelity == fidelity.lower()):
+        problems.append(f"{label}: {path}.fidelity must be a lowercase token")
+    cost = metrics.get("cost_gpu_hours")
+    if "cost_gpu_hours" in metrics and not (_is_number(cost) and cost >= 0):
+        problems.append(f"{label}: {path}.cost_gpu_hours must be a number >= 0")
+    return problems
+
+
+def node_prediction_problems(prediction: Any, label: str, path: str) -> list[str]:
+    """The `prediction` block the orchestrator writes at dispatch (docs/SCHEMA.md section 3.3)."""
+    if not isinstance(prediction, dict):
+        return [f"{label}: {path} must be of type object"]
+    problems = _require_keys(prediction, ("gain", "confidence"), label, path)
+    if "gain" in prediction and not _is_number(prediction["gain"]):
+        problems.append(f"{label}: {path}.gain must be a number")
+    if "confidence" in prediction and prediction["confidence"] not in PREDICTION_CONFIDENCES:
+        problems.append(f"{label}: {path}.confidence must be one of {', '.join(PREDICTION_CONFIDENCES)} (got {prediction['confidence']!r})")
+    return problems
+
+
+def loop_state_problems(state: Any, run_id: str, primary_metric: str | None = None) -> list[str]:
     label = "loop-state.json"
     problems: list[str] = []
     if not isinstance(state, dict):
@@ -247,6 +295,10 @@ def loop_state_problems(state: Any, run_id: str) -> list[str]:
                     parent = node.get("parent_node_id")
                     if isinstance(parent, str) and parent not in nodes:
                         problems.append(f"{label}: $.state.nodes.{node_id}.parent_node_id {parent!r} is not a node")
+                    if "metrics" in node:
+                        problems.extend(node_metrics_problems(node["metrics"], primary_metric, label, f"$.state.nodes.{node_id}.metrics"))
+                    if "prediction" in node:
+                        problems.extend(node_prediction_problems(node["prediction"], label, f"$.state.nodes.{node_id}.prediction"))
     work = phase_state.get("work")
     if "work" in phase_state:
         if not isinstance(work, dict):
@@ -314,7 +366,8 @@ def validate_loop_state_run(root: Path, run: Path) -> list[str]:
         state = json.loads(state_path.read_text())
     except json.JSONDecodeError as exc:
         return [f"loop-state.json: invalid JSON ({exc.msg} at line {exc.lineno})"]
-    problems = loop_state_problems(state, run_id)
+    primary_metric = read_frontmatter(run / "config.md").get("primary_metric")
+    problems = loop_state_problems(state, run_id, primary_metric if isinstance(primary_metric, str) and primary_metric else None)
     records, journal_read_problems = read_journal(run / "journal.jsonl")
     problems.extend(journal_read_problems)
     problems.extend(journal_problems(records, run_id))

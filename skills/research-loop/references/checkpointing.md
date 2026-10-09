@@ -44,6 +44,7 @@ Add these only when they change:
 - `baseline`: baseline readiness, fixed split refs, reproduced score refs.
 - `resource_queue`: queued, released, or completed resource-heavy jobs.
 - `selection`: accepted node and final selection refs.
+- node `prediction` when a node's experiment is dispatched, and node `metrics` when a measured result is harvested (shapes in `docs/SCHEMA.md`).
 - ranking/revision fields: `ranking_id`, `cohort_node_ids`, `top_n`, `ranking_result_ref`, `selected_node_ids`, `revision_plan_ref`, and branch parent/source refs.
 
 ## Merge Behavior

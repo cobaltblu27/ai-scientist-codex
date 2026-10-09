@@ -66,6 +66,17 @@ state to recover the owning node/work, current status, evidence refs, resource
 lease, and next action. Every work item must become terminal or be explicitly
 abandoned before a terminal run outcome.
 
+Each node's ledger entry carries the numbers search decisions are computed
+from; shapes are in `docs/SCHEMA.md`. When dispatching a node's experiment,
+record `prediction`: the primary-metric gain you expect over its parent (or the
+baseline for a root), signed so positive is better, with a `low`, `medium`, or
+`high` confidence. Write it before the result exists and leave it as written.
+When harvesting a measured result, set `metrics` from the worker's metrics
+artifacts: the primary metric averaged over seeds, `n_seeds`, `seed_std`,
+`fidelity` (`full` for the contract evaluation, another token for a cheaper
+screen), and cumulative `cost_gpu_hours`. Compare primary-metric values only
+at the same fidelity.
+
 Keep `discovery-notes.md` as a concise, evidence-linked campaign wiki. Add
 only transferable findings: what worked or failed, data/evaluation traps, and
 branch-worthy bottlenecks. The orchestrator decides what enters it.
