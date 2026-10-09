@@ -70,7 +70,7 @@ If the fixed split is not ready, report `status: blocked` or recommend waiting/p
 <First_Return>
 For a new node, your first return must be a plan. This plan is an amendable execution proposal. Later evidence may justify adding, reordering, refining, or retiring todos.
 
-Cover the ordered execution todos, the intended implementation-to-evaluation path, relevant checks or commands, and any blocker or uncertainty that changes the plan. Use detail in proportion to the node's complexity.
+Cover the ordered execution todos, the intended implementation-to-evaluation path, relevant checks or commands, and any blocker or uncertainty that changes the plan. Use detail in proportion to the node's complexity. Also estimate the primary-metric gain this node will deliver over its parent (or the baseline for a root) and your confidence, and write it once to `.ai-scientist/runs/<run-id>/nodes/<node-id>/prediction.json` (shape in `docs/SCHEMA.md`).
 </First_Return>
 
 <Execution_Todos>
@@ -113,5 +113,5 @@ If you hit OOM or similar resource failure:
 <Result_Report>
 Write a Markdown work report to the requested result path when one is provided.
 
-For the first return, write a concise plan grounded in the research goal and fixed evaluation. For later returns, explain the current todo state, implemented work, measured evidence, and next orchestration boundary. Link commands and artifacts needed to reproduce the experiment. For a measured result, state the primary metric averaged over seeds, the number of seeds and their standard deviation, whether it came from the contract's full evaluation or a cheaper screen, and the GPU hours spent, and link the metrics file those numbers come from. Add resource evidence, blockers, discovery-note suggestions, or cohort readiness when relevant. Choose the structure and depth that best communicate the node's progress.
+For the first return, write a concise plan grounded in the research goal and fixed evaluation. For later returns, explain the current todo state, implemented work, measured evidence, and next orchestration boundary. Link commands and artifacts needed to reproduce the experiment. Whenever you have a measured result, write `.ai-scientist/runs/<run-id>/nodes/<node-id>/metrics.json` with the node's latest primary metric averaged over seeds, seed count and standard deviation, fidelity, and cumulative GPU hours (shape in `docs/SCHEMA.md`). Add resource evidence, blockers, discovery-note suggestions, or cohort readiness when relevant. Choose the structure and depth that best communicate the node's progress.
 </Result_Report>

@@ -66,17 +66,6 @@ state to recover the owning node/work, current status, evidence refs, resource
 lease, and next action. Every work item must become terminal or be explicitly
 abandoned before a terminal run outcome.
 
-Each node's ledger entry carries the numbers search decisions are computed
-from; shapes are in `docs/SCHEMA.md`. When dispatching a node's experiment,
-record `prediction`: the primary-metric gain you expect over its parent (or the
-baseline for a root), signed so positive is better, with a `low`, `medium`, or
-`high` confidence. Write it before the result exists and leave it as written.
-When harvesting a measured result, set `metrics` from the worker's metrics
-artifacts: the primary metric averaged over seeds, `n_seeds`, `seed_std`,
-`fidelity` (`full` for the contract evaluation, another token for a cheaper
-screen), and cumulative `cost_gpu_hours`. Compare primary-metric values only
-at the same fidelity.
-
 Keep `discovery-notes.md` as a concise, evidence-linked campaign wiki. Add
 only transferable findings: what worked or failed, data/evaluation traps, and
 branch-worthy bottlenecks. The orchestrator decides what enters it.
@@ -164,15 +153,12 @@ runnable initial nodes before declaring the campaign nonviable. A failed node
 must leave a failure decomposition, mechanism evidence, or justified next
 hypothesis.
 
-Maintain an exploration–exploitation portfolio within the configurable
-active-node cap. Unless config overrides it, reserve three roles: one
-exploitation branch from the strongest validated node, one adjacent branch
-replacing a diagnosed failed subsystem, and one exploratory branch with a
-substantially different representation, objective, training procedure, data
-source, or clean-sheet architecture. The ranker may remove weak or redundant
-nodes but must preserve a scientifically distinct exploration slot. Rank it on
-the primary score plus causal mechanism evidence, useful slice behavior,
-orthogonal errors, or a newly localized bottleneck.
+Choose where to spend the next expansion from `ai-scientist research
+frontier --run-id <run-id>`, within the configurable active-node cap. It scores
+each measured node by the best full-fidelity result in its subtree plus an
+exploration bonus that shrinks as the node gains children, and caps a node's
+children at the square root of its measured subtree. Expand an expandable
+top-scoring node; when evidence favors another, record why in the checkpoint.
 
 Treat the search as stagnant when comparable cohorts show negligible score
 movement, repeat the same dominant failure decomposition, or differ mainly by

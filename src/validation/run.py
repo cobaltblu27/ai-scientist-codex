@@ -356,6 +356,23 @@ def active_run_problems(active: Any, run_id: str) -> list[str]:
     return _dedupe(problems)
 
 
+def node_file_problems(run: Path, primary_metric: str | None) -> list[str]:
+    """`nodes/<node-id>/metrics.json` and `prediction.json`, the worker-written sources of the ledger blocks."""
+    problems: list[str] = []
+    for path in sorted(run.glob("nodes/*/metrics.json")) + sorted(run.glob("nodes/*/prediction.json")):
+        label = str(path.relative_to(run))
+        try:
+            value = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            problems.append(f"{label}: invalid JSON ({exc.msg})")
+            continue
+        if path.name == "metrics.json":
+            problems.extend(node_metrics_problems(value, primary_metric, label, "$"))
+        else:
+            problems.extend(node_prediction_problems(value, label, "$"))
+    return problems
+
+
 def validate_loop_state_run(root: Path, run: Path) -> list[str]:
     """Every problem with a research run's loop-state.json and its companions; empty when the run is well-formed."""
     run_id = run.name
@@ -384,6 +401,7 @@ def validate_loop_state_run(root: Path, run: Path) -> list[str]:
             else:
                 problems.extend(selection_file_problems(selection, state, run_id))
     problems.extend(message_box_problems(run))
+    problems.extend(node_file_problems(run, primary_metric if isinstance(primary_metric, str) and primary_metric else None))
     active_path = root / "active-run.json"
     if active_path.exists():
         try:

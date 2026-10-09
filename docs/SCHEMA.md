@@ -79,6 +79,8 @@ runs/<run-id>/
 ├── baseline/
 │   └── baseline.json                     baseline manifest, section 3.8
 ├── nodes/<node-id>/workspace/            worker workspace; contents are free
+├── nodes/<node-id>/prediction.json       worker's expected gain, written once; shape of node `prediction`, section 3.3
+├── nodes/<node-id>/metrics.json          worker's latest measured result; shape of node `metrics`, section 3.3
 ├── architectures/                        architecture-tree skill output (optional)
 ├── logs/
 │   ├── baseline/<work-id>/result.md
@@ -235,12 +237,12 @@ Free beyond these.
 | `updated_at` * | |
 | `parent_node_id` * for branches | parent node id; `null` or absent for roots |
 | `metrics` | object, see below. Absent until the node has a measured result |
-| `prediction` | object, see below. Written once at dispatch |
+| `prediction` | object, see below. Set once, before the node's experiment runs |
 | `title`, `idea_id`, `assignment`, `result_ref`, `evidence_summary`, `next_action` | conventional; readers show them when present |
 
 Free beyond these.
 
-**`metrics`** holds the node's latest comparable measurement, so search policy can be computed from the ledger instead of read out of reports.
+**`metrics`** holds the node's latest comparable measurement, so search policy can be computed from the ledger instead of read out of reports. The worker writes it to `nodes/<node-id>/metrics.json`; the checkpoint skill copies it into the ledger. `ai-scientist research frontier` reads it from the ledger.
 
 | Field | Notes |
 |---|---|
@@ -252,7 +254,7 @@ Free beyond these.
 
 Free beyond these: other measured metrics may sit beside them.
 
-**`prediction`** is the orchestrator's estimate before the node's work runs; comparing it with the measured result later shows how much those estimates are worth.
+**`prediction`** is the worker's estimate in its first-return plan, before the node's experiment runs; comparing it with the measured result later shows how much those estimates are worth. The worker writes it to `nodes/<node-id>/prediction.json`; the checkpoint skill copies it into the ledger once and never overwrites it.
 
 | Field | Notes |
 |---|---|
@@ -338,7 +340,8 @@ python_env: uv run python
 | `idea_batch` * | path to the ideation `ideas.json`, or a single idea file |
 | `primary_metric` * | short token |
 | `success_threshold` * | number |
-| `primary_metric_direction`, `active_node_cap`, `ranking_top_n`, `python_env`, `target_repository` | conventional |
+| `primary_metric_direction`, `active_node_cap`, `ranking_top_n`, `python_env`, `target_repository` | conventional; `research frontier` requires `primary_metric_direction` (`higher_is_better` or `lower_is_better`) |
+| `baseline_value`, `search_exploration` | conventional numbers read by `research frontier`: the primary-metric value that scales to 0 (default: median of the root nodes' full-fidelity values) and the exploration weight (default 0.3) |
 | `resource_max_parallel`, `resource_gpus`, `resource_cpu_cores`, `resource_memory_mb`, `resource_scheduler`, `slurm_*` | conventional; read by `ai-scientist resource` as the frozen capacity policy when `state.resources.caps` is absent |
 
 Free beyond these.

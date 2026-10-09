@@ -275,3 +275,16 @@ def test_node_prediction_requires_gain_and_known_confidence(tmp_path: Path) -> N
     state["state"]["nodes"]["N1"]["prediction"] = {"confidence": "low"}
     root, run = write_run(tmp_path, state)
     assert any("$.state.nodes.N1.prediction missing required key gain" in p for p in validate_loop_state_run(root, run))
+
+
+def test_worker_node_files_are_checked(tmp_path: Path) -> None:
+    root, run = write_run(tmp_path)
+    write_config(run)
+    write_json(run / "nodes" / "N1" / "metrics.json", {"rmse": 2.3, "n_seeds": 1, "fidelity": "full"})
+    write_json(run / "nodes" / "N1" / "prediction.json", {"gain": 0.1, "confidence": "medium"})
+    assert validate_loop_state_run(root, run) == []
+    write_json(run / "nodes" / "N1" / "metrics.json", {"n_seeds": 1, "fidelity": "full"})
+    write_json(run / "nodes" / "N1" / "prediction.json", {"gain": 0.1})
+    joined = "\n".join(validate_loop_state_run(root, run))
+    assert "nodes/N1/metrics.json: $ missing primary metric 'rmse'" in joined
+    assert "nodes/N1/prediction.json: $ missing required key confidence" in joined

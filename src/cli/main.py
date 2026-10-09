@@ -21,6 +21,7 @@ from core.state import (
     run_dir,
     validate_active_run_contract,
 )
+from research import frontier as research_frontier
 from research import workflow as research_workflow
 from writeup.state import (
     collect_figures as writeup_collect_figures,
@@ -363,6 +364,10 @@ def build_parser() -> argparse.ArgumentParser:
     research_checkpoint.add_argument("--run-id")
     add_json_file_arg(research_checkpoint)
     research_checkpoint.set_defaults(func=research_workflow.cmd_research_checkpoint)
+    research_frontier_cmd = research_sub.add_parser("frontier", help="Score research nodes for expansion from the node ledger (read-only).")
+    research_frontier_cmd.add_argument("--run-id")
+    research_frontier_cmd.add_argument("--exploration", type=float, help="Exploration weight; defaults to config.md search_exploration, else 0.3.")
+    research_frontier_cmd.set_defaults(func=research_frontier.cmd_research_frontier)
     research_select = research_sub.add_parser("select")
     research_select.add_argument("--run-id")
     research_select.add_argument("--node-id", required=True)
