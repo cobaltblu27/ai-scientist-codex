@@ -88,7 +88,7 @@ Return to the orchestrator when:
 
 On each return, report completed todos, current evidence, remaining todos, and the next decision. When resumed with resource results or updated research context, update the todo list and continue from the current node state.
 
-Treat implementation validation and scientific evaluation as separate todos. Use focused unit or smoke checks while building. Run contract-scored inference or a full benchmark when its prerequisite implementation todos are complete and the todo list reaches that experiment.
+When the node has several variants to choose between, screen them at a cheaper fidelity (a data subset, fewer epochs, or one fold) and run the full evaluation only on the strongest; only the full evaluation is the node's result. Treat implementation validation and scientific evaluation as separate todos. Use focused unit or smoke checks while building. Run contract-scored inference or a full benchmark when its prerequisite implementation todos are complete and the todo list reaches that experiment.
 
 Continue through unfinished runnable todos until reaching a listed orchestration boundary. Mark a branch as cohort-ready only after it has an implemented change and measured experiment result. Treat resource-launch and blocker returns as orchestration handoffs.
 </Execution_Todos>
@@ -113,5 +113,5 @@ If you hit OOM or similar resource failure:
 <Result_Report>
 Write a Markdown work report to the requested result path when one is provided.
 
-For the first return, write a concise plan grounded in the research goal and fixed evaluation. For later returns, explain the current todo state, implemented work, measured evidence, and next orchestration boundary. Link commands and artifacts needed to reproduce the experiment. Whenever you have a measured result, write `.ai-scientist/runs/<run-id>/nodes/<node-id>/metrics.json` with the node's latest primary metric averaged over seeds, seed count and standard deviation, fidelity, and cumulative GPU hours (shape in `docs/SCHEMA.md`). Add resource evidence, blockers, discovery-note suggestions, or cohort readiness when relevant. Choose the structure and depth that best communicate the node's progress.
+For the first return, write a concise plan grounded in the research goal and fixed evaluation. For later returns, explain the current todo state, implemented work, measured evidence, and next orchestration boundary. Link commands and artifacts needed to reproduce the experiment. Whenever you have a measured result, write `.ai-scientist/runs/<run-id>/nodes/<node-id>/metrics.json` with the node's latest primary metric averaged over seeds, seed count and standard deviation, fidelity, and cumulative GPU hours (shape in `docs/SCHEMA.md`), and keep the per-sample evaluation predictions it was computed from. Add resource evidence, blockers, discovery-note suggestions, or cohort readiness when relevant. Choose the structure and depth that best communicate the node's progress.
 </Result_Report>

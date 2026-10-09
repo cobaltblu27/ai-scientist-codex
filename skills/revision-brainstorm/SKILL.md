@@ -16,7 +16,7 @@ You may also run `data-insight-revision` or cite a fresh matching report, to hel
 </Inputs>
 
 <Task>
-Diagnose the bottleneck, then generate distinct revision or branch candidates in proportion to the credible evidence. Recommend one primary action: `revise_same_node`, `branch_from_node`, `abandon_or_reject`, or `escalate`.
+Diagnose the bottleneck, then generate distinct revision or branch candidates in proportion to the credible evidence. Locate the bottleneck in the residual: from the per-sample evaluation predictions of the best node so far, find the samples or slices that carry most of its remaining primary-metric error, and aim the primary candidate at them. Recommend one primary action: `revise_same_node`, `branch_from_node`, `abandon_or_reject`, or `escalate`.
 </Task>
 
 <Architecture>

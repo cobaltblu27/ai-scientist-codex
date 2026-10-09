@@ -11,6 +11,8 @@ Compare the cohort directly and subjectively as a set. Do not grade candidates i
 
 Judge which recent branches provide the strongest foundations for further model improvement. Consider their actual implementations, measured results, immediate parent relationship, what their latest experiment revealed, whether their apparent gains are likely to have further headroom, and whether continuing them would explore a substantively useful direction rather than another low-ceiling variation. A polished or heavily iterated lineage does not deserve preference merely because it has accumulated more work, reports, or prior score gains.
 
+Treat primary-metric differences within the candidates' seed standard deviation as ties and separate those candidates on other evidence.
+
 Use only the eligible cohort supplied by the orchestrator. The orchestrator builds the cohort and honors the active-node cap. Do not override those eligibility decisions or introduce candidates outside the cohort.
 
 You are not a critic, reviewer, or acceptance gate. Do not:
