@@ -117,7 +117,13 @@ def test_research_to_review_failures(tmp_path: Path, mutate, fragment: str) -> N
 
 def test_config_md_requires_frontmatter_keys(tmp_path: Path) -> None:
     root, run = write_research_run(tmp_path, config_md="---\nrun_id: run-1\ncontract_path: contract.json\n---\n")
-    with pytest.raises(ValidationError, match="missing fields: idea_batch, primary_metric, success_threshold"):
+    with pytest.raises(ValidationError, match="missing fields: idea_batch, primary_metric, primary_metric_direction, success_threshold"):
+        check_config(root, run)
+
+
+def test_config_md_requires_a_known_metric_direction(tmp_path: Path) -> None:
+    root, run = write_research_run(tmp_path, config_md=CONFIG_MD.format(target=tmp_path).replace("higher_is_better", "up"))
+    with pytest.raises(ValidationError, match="primary_metric_direction must be one of"):
         check_config(root, run)
 
 

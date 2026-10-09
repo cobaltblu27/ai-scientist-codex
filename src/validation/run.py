@@ -24,7 +24,8 @@ from core.state import (
     open_resource_queue_ids,
 )
 
-REQUIRED_CONFIG_KEYS = ("run_id", "contract_path", "idea_batch", "primary_metric", "success_threshold")
+REQUIRED_CONFIG_KEYS = ("run_id", "contract_path", "idea_batch", "primary_metric", "primary_metric_direction", "success_threshold")
+METRIC_DIRECTIONS = ("higher_is_better", "lower_is_better")
 LOOP_STATE_REQUIRED = ("run_id", "phase", "phase_status", "active", "updated_at", "state")
 LOOP_STATE_PHASES = ("research", "review", "writeup")
 LOOP_STATE_PHASE_STATUSES = ("running", *sorted(TERMINAL_PHASE_STATUSES))
@@ -472,6 +473,8 @@ def check_config(root: Path, run: Path) -> dict[str, Any]:
         raise ValidationError(f"config.md run_id {cfg.get('run_id')!r} does not match run directory {run.name!r}")
     if isinstance(cfg.get("success_threshold"), bool) or not isinstance(cfg.get("success_threshold"), int | float):
         raise ValidationError("config.md success_threshold must be a number")
+    if cfg.get("primary_metric_direction") not in METRIC_DIRECTIONS:
+        raise ValidationError(f"config.md primary_metric_direction must be one of {', '.join(METRIC_DIRECTIONS)}")
     contract_path = Path(str(cfg["contract_path"]))
     if not contract_path.is_absolute():
         contract_path = target_repository(root) / contract_path

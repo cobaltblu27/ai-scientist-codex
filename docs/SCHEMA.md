@@ -340,7 +340,8 @@ python_env: uv run python
 | `idea_batch` * | path to the ideation `ideas.json`, or a single idea file |
 | `primary_metric` * | short token |
 | `success_threshold` * | number |
-| `primary_metric_direction`, `active_node_cap`, `ranking_top_n`, `python_env`, `target_repository` | conventional; `research frontier` requires `primary_metric_direction` (`higher_is_better` or `lower_is_better`) |
+| `primary_metric_direction` * | `higher_is_better` or `lower_is_better` |
+| `active_node_cap`, `ranking_top_n`, `python_env`, `target_repository` | conventional |
 | `baseline_value`, `search_exploration` | conventional numbers read by `research frontier`: the primary-metric value that scales to 0 (default: median of the root nodes' full-fidelity values) and the exploration weight (default 0.3) |
 | `resource_max_parallel`, `resource_gpus`, `resource_cpu_cores`, `resource_memory_mb`, `resource_scheduler`, `slurm_*` | conventional; read by `ai-scientist resource` as the frozen capacity policy when `state.resources.caps` is absent |
 

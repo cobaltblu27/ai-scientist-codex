@@ -34,7 +34,7 @@ Use the validated values from the preflight and the user's explicit request:
 1. Choose a stable run ID. Resolve `.ai-scientist/runs/<run-id>/` under the target repository.
 2. Fail immediately if that run directory or its `config.md` already exists. Never overwrite an existing run during bootstrap.
 3. Create the run directory and `logs/` directory.
-4. Write `config.md` with YAML frontmatter containing the immutable startup values; the frontmatter carries at least `run_id`, `contract_path`, `idea_batch`, `primary_metric`, and `success_threshold`. Include the full idea identities and binding contract in the Markdown body or as clearly referenced artifacts.
+4. Write `config.md` with YAML frontmatter containing the immutable startup values; the frontmatter carries at least `run_id`, `contract_path`, `idea_batch`, `primary_metric`, `primary_metric_direction` (`higher_is_better` or `lower_is_better`), and `success_threshold`, plus `baseline_value` when the contract states the baseline's primary-metric score. Include the full idea identities and binding contract in the Markdown body or as clearly referenced artifacts.
 5. Write `loop-state.json` with the schema-required top-level fields and initial state below:
 
    - `schema_version: 1`, the run ID, `active: true`, `phase: research`, `phase_status: running`, and UTC `updated_at`;
