@@ -8,6 +8,9 @@ UCT-style expansion choice needs; the orchestrator still makes the choice.
 - visits: measured full-fidelity nodes in the subtree, the node included.
 - child_cap: ceil(sqrt(visits)); a node earns breadth through measured depth (progressive widening).
 - bonus: exploration * sqrt(ln(1 + measured nodes in the run) / (1 + children)).
+
+`calibration` compares each node's `prediction.gain` with its measured gain over its parent (or
+over `baseline_value` for a root), in primary-metric units signed so positive is better.
 """
 from __future__ import annotations
 
@@ -45,6 +48,57 @@ def full_value(node: dict[str, Any], metric: str) -> float | None:
     return _number(metrics.get(metric))
 
 
+def _ranks(values: list[float]) -> list[float]:
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        for k in range(i, j + 1):
+            ranks[order[k]] = (i + j) / 2
+        i = j + 1
+    return ranks
+
+
+def spearman(xs: list[float], ys: list[float]) -> float | None:
+    if len(xs) < 3:
+        return None
+    rx, ry = _ranks(xs), _ranks(ys)
+    mx, my = statistics.fmean(rx), statistics.fmean(ry)
+    cov = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    var = math.sqrt(sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry))
+    return None if var == 0 else cov / var
+
+
+def calibration(entries: dict[str, Any], values: dict[str, float | None], sign: float, baseline: float | None) -> dict[str, Any]:
+    pairs = []
+    for node_id, node in entries.items():
+        prediction = node.get("prediction")
+        value = values[node_id]
+        predicted = _number(prediction.get("gain")) if isinstance(prediction, dict) else None
+        if predicted is None or value is None:
+            continue
+        parent = node.get("parent_node_id")
+        before = values.get(parent) if isinstance(parent, str) else baseline
+        if before is None:
+            continue
+        pairs.append((node_id, predicted, sign * (value - before), prediction.get("confidence")))
+    by_confidence = {}
+    for level in ("low", "medium", "high"):
+        errors = [abs(p - a) for _, p, a, c in pairs if c == level]
+        if errors:
+            by_confidence[level] = {"pairs": len(errors), "mean_abs_error": round(statistics.fmean(errors), 6)}
+    rho = spearman([p for _, p, _, _ in pairs], [a for _, _, a, _ in pairs])
+    return {
+        "pairs": len(pairs),
+        "spearman": None if rho is None else round(rho, 4),
+        "mean_bias": round(statistics.fmean(p - a for _, p, a, _ in pairs), 6) if pairs else None,
+        "by_confidence": by_confidence,
+    }
+
+
 def compute_frontier(nodes: dict[str, Any], config: dict[str, Any], exploration: float | None = None) -> dict[str, Any]:
     metric = config.get("primary_metric")
     if not isinstance(metric, str) or not metric:
@@ -69,7 +123,8 @@ def compute_frontier(nodes: dict[str, Any], config: dict[str, Any], exploration:
             children[parent].append(node_id)
     values = {node_id: full_value(node, metric) for node_id, node in entries.items()}
 
-    reference = _number(config.get("baseline_value"))
+    baseline = _number(config.get("baseline_value"))
+    reference = baseline
     reference_source = "baseline_value"
     if reference is None:
         root_values = [v for node_id, v in values.items() if v is not None and not isinstance(entries[node_id].get("parent_node_id"), str)]
@@ -122,6 +177,7 @@ def compute_frontier(nodes: dict[str, Any], config: dict[str, Any], exploration:
         "measured_nodes": measured_total,
         "candidates": candidates,
         "unmeasured": sorted(unmeasured),
+        "calibration": calibration(entries, values, sign, baseline),
     }
 
 

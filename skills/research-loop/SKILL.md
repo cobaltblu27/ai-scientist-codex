@@ -159,6 +159,8 @@ each measured node by the best full-fidelity result in its subtree plus an
 exploration bonus that shrinks as the node gains children, and caps a node's
 children at the square root of its measured subtree. Expand an expandable
 top-scoring node; when evidence favors another, record why in the checkpoint.
+Its `calibration` block shows how well predicted gains have tracked measured
+ones, which is how far such judgment has earned trust in this run.
 
 Treat the search as stagnant when comparable cohorts show negligible score
 movement, repeat the same dominant failure decomposition, or differ mainly by

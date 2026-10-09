@@ -107,3 +107,34 @@ def test_cli_prints_frontier(tmp_path: Path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "ok"
     assert {c["node"] for c in payload["candidates"]} == {"N1", "N2"}
+
+
+def predicted(value: float | None, gain: float, confidence: str = "medium", parent: str | None = None) -> dict[str, Any]:
+    entry = node(value, parent=parent)
+    entry["prediction"] = {"gain": gain, "confidence": confidence}
+    return entry
+
+
+def test_calibration_pairs_predictions_with_gain_over_parent() -> None:
+    nodes = {
+        "N1": node(0.70),
+        "N2": predicted(0.75, 0.10, "high", parent="N1"),
+        "N3": predicted(0.72, 0.01, "low", parent="N1"),
+        "N4": predicted(0.80, 0.20, "high", parent="N1"),
+        "N5": predicted(None, 0.30, parent="N1"),
+    }
+    cal = compute_frontier(nodes, {**CONFIG, "baseline_value": 0.6})["calibration"]
+    assert cal["pairs"] == 3
+    assert cal["spearman"] == pytest.approx(1.0)
+    assert cal["mean_bias"] == pytest.approx(((0.10 - 0.05) + (0.01 - 0.02) + (0.20 - 0.10)) / 3, abs=1e-6)
+    assert cal["by_confidence"]["high"]["pairs"] == 2
+    assert cal["by_confidence"]["low"]["mean_abs_error"] == pytest.approx(0.01, abs=1e-6)
+
+
+def test_calibration_uses_baseline_for_roots_and_signed_gain() -> None:
+    config = {"primary_metric": "acc", "primary_metric_direction": "lower_is_better", "success_threshold": 2.0}
+    nodes = {"N1": predicted(2.5, 0.4)}
+    assert compute_frontier(nodes, config)["calibration"]["pairs"] == 0
+    cal = compute_frontier(nodes, {**config, "baseline_value": 3.0})["calibration"]
+    assert cal["pairs"] == 1 and cal["mean_bias"] == pytest.approx(-0.1, abs=1e-6)
+    assert cal["spearman"] is None

@@ -254,7 +254,7 @@ Free beyond these.
 
 Free beyond these: other measured metrics may sit beside them.
 
-**`prediction`** is the worker's estimate in its first-return plan, before the node's experiment runs; comparing it with the measured result later shows how much those estimates are worth. The worker writes it to `nodes/<node-id>/prediction.json`; the checkpoint skill copies it into the ledger once and never overwrites it.
+**`prediction`** is the worker's estimate in its first-return plan, before the node's experiment runs; `ai-scientist research frontier` reports that comparison as `calibration` (rank correlation, mean bias, error by confidence). The worker writes it to `nodes/<node-id>/prediction.json`; the checkpoint skill copies it into the ledger once and never overwrites it.
 
 | Field | Notes |
 |---|---|
