@@ -88,7 +88,7 @@ Return to the orchestrator when:
 
 On each return, report completed todos, current evidence, remaining todos, and the next decision. When resumed with resource results or updated research context, update the todo list and continue from the current node state.
 
-When the node has several variants to choose between, screen them at a cheaper fidelity (a data subset, fewer epochs, or one fold) and run the full evaluation only on the strongest; only the full evaluation is the node's result. Treat implementation validation and scientific evaluation as separate todos. Use focused unit or smoke checks while building. Run contract-scored inference or a full benchmark when its prerequisite implementation todos are complete and the todo list reaches that experiment.
+When the node has several variants to choose between, screen them at a cheaper fidelity (a data subset, fewer epochs, or one fold) and run the full evaluation only on the strongest; only the full evaluation is the node's result. Run independent pieces of an experiment, such as cross-validation folds, seeds, or screened variants, as parallel jobs when free capacity allows, instead of one after another. Treat implementation validation and scientific evaluation as separate todos. Use focused unit or smoke checks while building. Run contract-scored inference or a full benchmark when its prerequisite implementation todos are complete and the todo list reaches that experiment.
 
 Continue through unfinished runnable todos until reaching a listed orchestration boundary. Mark a branch as cohort-ready only after it has an implemented change and measured experiment result. Treat resource-launch and blocker returns as orchestration handoffs.
 </Execution_Todos>

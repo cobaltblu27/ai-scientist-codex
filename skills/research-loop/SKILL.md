@@ -74,8 +74,8 @@ branch-worthy bottlenecks. The orchestrator decides what enters it.
 <Non_Negotiable_Invariants>
 - The orchestrator assigns, integrates, prioritizes, and records; it never
   implements node work itself.
-- Workers own node execution. A node has its own worker, workspace, evidence
-  trail, and resource records. Initial ideas each receive a node worker.
+- Workers own node execution. A node has its own workspace, evidence trail,
+  and resource records. Initial ideas each receive a node worker.
 - The frozen config, state, journal, and selection artifact are authoritative;
   linked reports are evidence, and chat memory is not evidence.
 - Checkpoint every durable transition: assignment, meaningful worker return,
@@ -126,24 +126,25 @@ relevant node workers.
 <Action_Policy>
 Classify candidate work before assigning it:
 
-- `Enhance`: same mechanism, implementation fix, bounded ablation, or depth on
-  a promising node.
-- `Revise`: bounded architecture, objective, preprocessing, training, or
-  experiment change that preserves the node's direction.
-- `Branch`: a distinct architecture, mechanism, or hypothesis needing its own
-  evidence trail.
+- `Enhance`: same mechanism, more depth, or a bounded ablation on a promising
+  node.
+- `Revise`: architecture, objective, preprocessing, training, or experiment
+  change that preserves the node's direction.
+- `Branch`: a distinct architecture, mechanism, or hypothesis.
+- `Repair`: implementation fix or clean rerun that brings a node to its first
+  valid result.
+
+On a node that already has a measured result, `Enhance`, `Revise`, and `Branch`
+each create a child node; only `Repair` stays in the node.
 - `Diagnose`: data insight, slice/error analysis, ablation, baseline comparison,
   or validation that identifies a bottleneck or selects a direction.
 - `Experiment`: implemented experimental work.
 - `Rank`: scarce follow-up allocation among a comparable completed cohort.
 - `Finalize`: acceptance audit or a justified terminal outcome.
 
-Portfolio balance is a scientific policy, not a quota. Prefer the
-contract-relevant action with the strongest evidence; when choosing another
-same-direction tweak over a branch or diagnostic, record the rationale. Keep
-capacity for the best current node and required validation without fragmenting
-the portfolio. A clean rerun or direct mechanical repair belongs with the node
-worker; reserve revision workers for diagnosis and redesigned scientific work.
+Prefer the contract-relevant action with the strongest evidence. A repair
+belongs with the node worker; reserve revision workers for diagnosis and
+redesigned scientific work.
 </Action_Policy>
 
 <Progress_Portfolio_And_Stagnation>
@@ -227,19 +228,17 @@ terminal failures.
 </Resource_Scheduling>
 
 <Branch_And_Rank>
-A branch is a new normal node with its own worker, workspace, and evidence
-trail. It may come from any evidence-backed parent, not only the champion.
-Create one only for a distinct mechanism or hypothesis with a credible route to
-the binding criteria and within the active-node cap. Keep bounded changes in
-the same node. Record parent, rationale, and source evidence.
+Child nodes are how the search advances: every new measured result after a
+node's first one belongs to a child, so the frontier can score each step. A
+child may come from any measured parent, not only the champion, and its parent's
+worker may run it to keep context. Read
+[branching-policy.md](references/branching-policy.md) when creating one.
 
 The ranker allocates scarce follow-up slots among a comparable completed cohort;
 default to `N = 3` unless the active-node cap or frozen resource policy requires
 fewer slots. It is not a reviewer, validator, acceptance gate, or source of
 worker instructions. Its selection grants follow-up eligibility only. Read
-[branching-policy.md](references/branching-policy.md) or
-[ranking-policy.md](references/ranking-policy.md) when performing those
-decisions.
+[ranking-policy.md](references/ranking-policy.md) when ranking.
 </Branch_And_Rank>
 
 <Research_Implementation_And_Evaluation>
@@ -254,9 +253,14 @@ metrics are diagnostics unless the contract makes them binding. Freeze candidate
 predictions before reading evaluation labels or comparator predictions. An
 entity claimed as held out is excluded from every fitted component—including
 auxiliary pretraining and learned preprocessing—according to the contract.
-Cheap fixed screens may precede full evaluation; promote a node when it improves
-the primary score or supplies strong, reproducible mechanism evidence for a
-subsequent architecture.
+When a full evaluation takes long, node selection may rest on a cheap fixed
+subset, such as a few of the cross-validation folds, as long as the subset
+reliably predicts the full result, for example because it has ranked earlier
+nodes the way their full evaluations did. Screen every compared node on the same
+subset and record it as the metrics fidelity. Promote a node to full evaluation
+when it improves the screened primary score or supplies strong, reproducible
+mechanism evidence for a subsequent architecture; only full evaluations count
+toward acceptance.
 </Research_Implementation_And_Evaluation>
 
 <Terminal_Conditions>

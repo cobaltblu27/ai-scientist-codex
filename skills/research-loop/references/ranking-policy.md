@@ -10,7 +10,7 @@ frozen resource policy cannot support three follow-up slots.
   does not automatically grant another slot.
 - Build the cohort from expandable nodes near the top of `ai-scientist research
   frontier`.
-- Retain at most one selected branch per lineage and honor the active-node cap.
+- Honor the active-node cap.
 
 Pass direct code, parent, experiment, metric, and failure refs plus requested
 top `N`. Persist the cohort, selected nodes, ranking result ref, and rationale.
